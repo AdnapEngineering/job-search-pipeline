@@ -1,0 +1,287 @@
+{
+  "paths": {
+    "filtered_jobs": "data/filtered_jobs.json",
+    "enriched_jobs": "data/enriched_jobs.json",
+    "evaluated_jobs": "data/evaluated_jobs.json",
+    "source_stats": "data/source_stats.json",
+    "blocklist": "data/blocklist.json",
+    "role_blocklist": "data/blocklist_roles.json",
+    "review_cache": "data/review_cache.json",
+    "run_history": "data/run_history.json",
+    "linkedin_details_cache": "data/linkedin_details_cache.json",
+    "candidate_profile": "candidate_profile.md"
+  },
+  "sources": {
+    "lookback_days": 3,
+    "feed_stale_hours": 36,
+    "chunk_concurrency": 20,
+    "github_feed_enabled": true,
+    "github_feed_manifest_url": "https://riley-dorrington.github.io/job-board-data/data/chunks/jobs_manifest.json",
+    "github_feed_base_chunk_url": "https://riley-dorrington.github.io/job-board-data/data/chunks/",
+    "jobspy_enabled": true,
+    "country_indeed": "USA",
+    "linkedin_pause_seconds": 3,
+    "search_terms": [
+      "Target Role Title 1",
+      "Senior Target Role Title",
+      "Specialist Role Title"
+    ],
+    "searches": [
+      ["linkedin", "United States", " remote", 40],
+      ["linkedin", "Your City, ST", "", 20],
+      ["indeed", "Remote", "", 40],
+      ["indeed", "Your City, ST", "", 20]
+    ],
+    "job_boards_enabled": true,
+    "remoteok_enabled": true,
+    "remoteok_url": "https://remoteok.com/api",
+    "jobicy_enabled": true,
+    "jobicy_url": "https://jobicy.com/api/v2/remote-jobs?count=100&geo=usa&industry=engineering",
+    "hn_enabled": true,
+    "hn_search_url": "https://hn.algolia.com/api/v1/search_by_date?tags=story,author_whoishiring&query=who%20is%20hiring&hitsPerPage=5",
+    "hn_item_url": "https://hn.algolia.com/api/v1/items/{}",
+    "hn_thread_max_age_days": 40
+  },
+  "location": {
+    "allow_remote": true,
+    "local_display_name": "Your Metro Area, ST",
+    "local_metro_patterns": [
+      "your city",
+      "nearby suburb 1",
+      "nearby suburb 2"
+    ],
+    "local_metro_exclude_patterns": [
+      "same city name,\\s*(?:other_state)"
+    ],
+    "local_state_only_pattern": "^\\W*(?:your_state_abbr|your_state_name)(?:\\W+(?:us|usa|united states(?: of america)?))?\\W*$",
+    "jd_local_metro_pattern": "\\b(your city,? (?:st|state_name)\\b|nearby suburb 1|nearby suburb 2)",
+    "allowed_country_pattern": "\\b(us|united states|usa)\\b",
+    "country_token_pattern": "(?:US|USA|U\\.S\\.A?\\.?|United States|continental U\\.?S\\.?)",
+    "global_eligible_pattern": "\\b(worldwide|anywhere|global|north america|northern america|americas)\\b",
+    "foreign_exclude_patterns": [
+      "\\bcanada\\b", "\\buk\\b", "\\bunited kingdom\\b", "\\bemea\\b", "\\blatam\\b",
+      "\\bapac\\b", "\\bindia\\b", "\\bgermany\\b", "\\bireland\\b", "\\bmexico\\b",
+      "\\baustralia\\b", "\\beurope\\b", "\\blatin america\\b", "\\bsingapore\\b",
+      "\\bbrazil\\b", "\\bpoland\\b", "\\bfrance\\b", "\\bspain\\b", "\\bnetherlands\\b"
+    ],
+    "jd_non_allowed_locations": [
+      "türkiye", "australia", "new zealand", "uk", "india", "europe", "latam", "canada"
+    ]
+  },
+  "compensation": {
+    "min_salary": 100000,
+    "pay_midpoint_max_cap": 120000,
+    "pay_midpoint_penalty": 10
+  },
+  "experience": {
+    "max_min_yoe": 7,
+    "max_min_secondary_yoe": 3,
+    "secondary_yoe_context_pattern": "secondary_specialty_1|secondary_specialty_2",
+    "primary_yoe_context_pattern": "primary_specialty_1|primary_specialty_2",
+    "yoe_field_terms_pattern": "(?:engineering|development|analytics|design|management|operations|professional)",
+    "max_senior_role_years": 3,
+    "top_yoe_penalty": 10,
+    "reject_clearance": true,
+    "reject_foreign_language_req": true
+  },
+  "titles": {
+    "target_patterns": [
+      "\\banalyst\\b",
+      "\\bengineer\\b",
+      "\\bspecialist\\b",
+      "\\bmanager\\b"
+    ],
+    "strong_target_patterns": [
+      "target role 1",
+      "target role 2",
+      "core specialty"
+    ],
+    "primary_role_groups": [
+      {
+        "label": "Primary Target Role",
+        "pattern": "\\b(target role 1|target role 2)\\b",
+        "points": 20
+      }
+    ],
+    "generic_role_patterns": [
+      "specialist",
+      "analyst",
+      "engineer"
+    ],
+    "generic_role_required_skills": [
+      "core_skill_1",
+      "core_skill_2"
+    ],
+    "generic_body_signal_patterns": [
+      "\\b(target responsibility 1|target responsibility 2)\\b",
+      "end[- ]to[- ]end"
+    ],
+    "generic_body_signal_min": 2,
+    "exclude_seniority_patterns": [
+      "staff", "principal", "director", "vp", "head", "intern", "entry level", "junior"
+    ],
+    "exclude_tech_patterns": [
+      "\\bunwanted_tool_1\\b",
+      "\\bunwanted_tool_2\\b"
+    ],
+    "exclude_role_patterns": [
+      "\\bintern\\b",
+      "\\bco-op\\b",
+      "\\bcontract\\b",
+      "\\bc2c\\b",
+      "\\bcorp[- ]to[- ]corp\\b",
+      "\\bearly[- ]career\\b",
+      "\\bentry[- ]level\\b",
+      "\\bunrelated_department_1\\b",
+      "\\bunrelated_department_2\\b"
+    ],
+    "soft_exclude_role_patterns": [
+      "\\bunrelated_department_1\\b"
+    ],
+    "bad_role_patterns": [
+      "unrelated role 1",
+      "unrelated role 2"
+    ],
+    "soft_bad_role_patterns": [
+      "adjacent role only valid with strong title"
+    ],
+    "hn_role_pattern": "\\b((?:senior |sr\\.? )?(?:target role 1|target role 2|specialist|engineer|analyst))\\b"
+  },
+  "companies": {
+    "exclude_companies": [
+      "excluded_company_1",
+      "excluded_company_2"
+    ],
+    "exclude_recruiters": [
+      "staffing", "recruit\\w*", "talent\\w*", "headhunt\\w*", "search partners",
+      "jobot", "jobgether", "dice", "crossover", "cybercoders", "motion recruitment",
+      "robert half", "randstad", "teksystems", "insight global", "kforce", "adecco", "hays"
+    ],
+    "allow_recruiters": [],
+    "company_aliases": {
+      "exampleparentcorp": "examplebrand"
+    }
+  },
+  "skills_and_scoring": {
+    "base_score": 20,
+    "core_strength_points": 5,
+    "core_strengths_cap": 40,
+    "domain_score_cap": 20,
+    "strong_floor": 75,
+    "secondary_floor": 55,
+    "min_sync_score": 80,
+    "min_review_score": 55,
+    "detect_stack_keywords": [
+      "Core_Skill_1",
+      "Core_Skill_2",
+      "Core_Skill_3",
+      "Tool_A",
+      "Tool_B"
+    ],
+    "core_strengths": [
+      "core_skill_1",
+      "core_skill_2",
+      "core_skill_3",
+      "tool_a",
+      "tool_b"
+    ],
+    "focus_keywords": {
+      "high_priority_domain_1": 15,
+      "high_priority_domain_2": 15,
+      "medium_priority_competency_1": 10,
+      "medium_priority_competency_2": 10,
+      "bonus_topic_1": 5
+    },
+    "hard_exclude_skills": [
+      "incompatible_skill_1",
+      "incompatible_skill_2"
+    ],
+    "accepted_alternative_skills": [
+      "core_skill_1",
+      "core_skill_2"
+    ],
+    "soft_skill_penalty": 5,
+    "avoid_keywords": [
+      "legacy_system_1",
+      "legacy_system_2"
+    ],
+    "penalized_keywords": {
+      "secondary_tool_with_minor_penalty": 5
+    },
+    "conditional_require_any": {
+      "if_present": ["secondary_tool_with_minor_penalty"],
+      "require_any_of": ["core_skill_1"]
+    },
+    "hard_ask_penalties": [
+      {
+        "label": "Stretch certification/skill asked",
+        "pattern": "\\b(stretch_skill_1|stretch_skill_2)\\b",
+        "penalty": 10,
+        "ignore_multi_level": false
+      },
+      {
+        "label": "People/team leadership asked",
+        "pattern": "\\b(team lead(?:ership)?|lead(?:ing)? (?:a )?(?:small )?teams?)\\b",
+        "penalty": 10,
+        "ignore_multi_level": true
+      }
+    ],
+    "specialty_reject_rules": [
+      {
+        "title_pattern": "\\b(off_target_specialty_1|off_target_specialty_2)\\b",
+        "jd_yoe_pattern": "\\b\\d{1,2}\\s*\\+?\\s*(?:years|yrs)\\b[^.\\n]{0,50}\\b(off_target_specialty_1)\\b",
+        "jd_term_pattern": "\\b(off_target_specialty_1|off_target_specialty_2)\\b",
+        "min_mentions": 3
+      }
+    ],
+    "off_center_role_check": {
+      "role_statement_pattern": "\\b(?:as an?|you(?:'ll| will) (?:be|join as) an?)\\s+(?:senior |staff |principal )?off[- ]target role",
+      "off_center_words_pattern": "\\b(off_target_keyword_1|off_target_keyword_2|off_target_keyword_3)\\b",
+      "target_words_pattern": "\\b(core_skill_1|core_skill_2|target_domain_1)\\b",
+      "min_mentions": 6,
+      "ratio": 1.5
+    }
+  },
+  "scraper": {
+    "concurrency": 15
+  },
+  "llm_review": {
+    "model": "gemini-4-hydrogen-medium",
+    "agy_path": "~/.local/bin/agy",
+    "timeout_seconds": 180,
+    "workers": 3,
+    "jd_chars": 9000,
+    "jd_head_chars": 2500,
+    "review_version": "1",
+    "components": {
+      "hard_reqs": 4,
+      "core_work": 3,
+      "evidence": 3,
+      "level": 2
+    },
+    "blocker_cap": 30,
+    "apply_min_score": 75,
+    "stretch_min_score": 50,
+    "quote_match_ratio": 0.85,
+    "rubric_descriptions": {
+      "hard_reqs": "4 = every hard requirement met; 3 = met, with only soft gaps; 2 = one bounded hard gap (one named tool/skill or years 1 over); 1 = several hard gaps; 0 = a clear blocker (years far over, a required specialty/credential the candidate lacks).",
+      "core_work": "3 = directly matches the candidate's primary target role and day-to-day responsibilities; 2 = balanced/adjacent role in the candidate's core domain; 1 = peripheral overlap; 0 = off-target specialty.",
+      "evidence": "3 = the posting itself asks for work that mirrors a specific accomplishment in the candidate profile; 2 = strong skill and domain overlap; 1 = partial overlap; 0 = little overlap. Grade only what the posting says, not what the company is known for.",
+      "level": "2 = matches the candidate's target seniority/level range; 1 = slight stretch in seniority or pay band mismatch; 0 = under-leveled or over-leveled."
+    },
+    "calibration_examples": [
+      "Example Co A, Senior Target Role: asks 4+ years; core domain work that directly mirrors candidate's primary accomplishment. hard 4, core 3, evidence 3, level 2 [100%].",
+      "Example Co B, Mid-level Target Role: 3+ years on core skill stack; exact tools at the candidate's target level. hard 4, core 3, evidence 2, level 2 [92%].",
+      "Example Co C, Off-Target Role: asks 8+ years in an unrelated specialty. hard 0, core 1, evidence 1, level 1 [30%, blocker]."
+    ]
+  },
+  "notion": {
+    "notion_version": "2022-06-28",
+    "database_id": "",
+    "summary_page_id": "",
+    "summary_block_id": ""
+  },
+  "notifications": {
+    "notify_url": ""
+  }
+}

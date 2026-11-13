@@ -1,0 +1,7 @@
+.env
+.run_job_search.lock
+__pycache__/
+*.py[cod]
+cron_job_search.log
+latest_job_summary.md
+data/
