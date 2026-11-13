@@ -119,6 +119,8 @@ NOTIFY_URL="https://ntfy.sh/your-topic"
 
 All three are optional. Without a Notion token and database ID the pipeline still runs end to end; see [Using Your Own Documentation Platform](#using-your-own-documentation-platform-disable-notion--export-to-txt) to send matches to a `.txt` file instead.
 
+The shell wrapper loads `.env` (or `~/.config/notion/job-search.env` if `.env` is absent). Direct `python3` invocations do **not** load either file: export the variables in your shell first.
+
 ---
 
 ## 3. Data Sources, Links & `curl` Commands
@@ -305,7 +307,7 @@ Write an honest summary of the candidate's background. [`llm_review.py`](llm_rev
 | `titles` | Define `target_patterns` (Stage 1 pre-filter), `strong_target_patterns` (titles that override soft exclusions), `primary_role_groups` (+20 pt title bonus), `primary_role_patterns` (+20 pt LinkedIn/Indeed title boost), `exclude_seniority_patterns`, `exclude_tech_patterns`, and `exclude_role_patterns`. |
 | `companies` | List `exclude_companies`, `exclude_recruiters` (staffing agencies/aggregators), `allow_recruiters`, and `company_aliases` (e.g. parent company -> brand name). |
 | `skills_and_scoring` | Define `core_strengths` (+5 pts each, up to `core_strengths_cap`), `focus_keywords` (weighted +5/+10/+15 domain terms, up to `domain_score_cap`), `hard_exclude_skills` (rejected in requirements unless listed as an optional/alternative skill), `hard_ask_penalties`, and `off_center_role_check`. |
-| `llm_review` | Customize `rubric_descriptions` (`hard_reqs`, `core_work`, `evidence`, `level`) and provide 3–8 `calibration_examples` for your career. |
+| `llm_review` | Select `provider` and `model`, customize `rubric_descriptions` (`hard_reqs`, `core_work`, `evidence`, `level`), and provide 3–8 `calibration_examples` for your career. |
 | `notion` | Set `database_id` (or use `NOTION_DATABASE_ID` in `.env`). Optionally set `summary_page_id` (the page that hosts the run-summary Callout; defaults to the database's parent page). `summary_block_id` is filled in automatically the first time the Callout is created. Expects Notion database properties: `Company & Stage` (Title), `Role Title & Compensation` (Text), `Location` (Text), `Why It Matches` (Text), `Match %` (Text), `Link` (URL), `Date Posted` (Date), and `Originally Posted` (Date). |
 | `text_export` | Set `enabled: true` to append new qualified matches to `paths.text_export` (`data/job_matches.txt` by default)—a plain-text alternative or companion to Notion. |
 
@@ -313,6 +315,26 @@ Write an honest summary of the candidate's background. [`llm_review.py`](llm_rev
 - The pipeline reads `config.json` from the repository directory. Set `JOB_PIPELINE_CONFIG=/path/to/other.json` to use a different file (e.g. one per career).
 - If the file is missing, every setting falls back to its built-in default. If it is not valid JSON, a `Could not read ...` warning is printed to stderr and defaults are used, so check the logs after editing.
 - The Notion logger only writes `summary_block_id` back when `config.json` parsed cleanly, so a typo in the file is never overwritten.
+
+### Choose an LLM Provider
+
+The default is `agy`, preserving the existing CLI workflow. Edit the existing `llm_review` object in `config.json`; keep its other rubric settings:
+
+| Provider | Settings to change | Setup |
+| :--- | :--- | :--- |
+| agy (default) | `"provider": "agy", "model": "gemini-4-hydrogen-medium"` | Install and configure `agy`; set `agy_path` if needed. |
+| Claude Code | `"provider": "anthropic", "model": "YOUR_CLAUDE_MODEL"` | Install [Claude Code](https://code.claude.com/docs/en/quickstart) and sign in; optionally set `claude_path`. |
+| OpenAI Codex | `"provider": "openai", "model": "YOUR_CODEX_MODEL"` | Install [Codex CLI](https://developers.openai.com/codex/cli/) and run `codex login`; optionally set `codex_path`. |
+
+Replace the placeholder with a model or alias supported by the selected CLI and available to your account. Switching `provider` alone does not change `model`. `claude_path` and `codex_path` can specify an executable path; otherwise they are found on `PATH`. `timeout_seconds` and `workers` apply to all CLIs.
+
+The pipeline uses CLI authentication; it does not call Anthropic or OpenAI APIs directly or require pipeline-specific API keys. Sign in under the same OS user that runs the pipeline, and check that your plan permits CLI usage. For cron, ensure that user's home directory, authentication, and `PATH` are available; the wrapper supplies a standard PATH including `~/.local/bin`, or configure an explicit CLI path.
+
+CLI reviews send the candidate profile and selected job details to the provider and can consume subscription limits or incur charges depending on authentication and plan. Review the provider's data and retention policies. Each eligible uncached job can trigger a CLI invocation. Cached reviews are separated by provider, model, profile, prompt, and review version. Existing agy cache entries remain compatible.
+
+Claude runs with built-in tools disabled, MCP auto-configuration and slash commands disabled, and session persistence off. Codex runs in a read-only sandbox with ephemeral sessions. Both run from an empty temporary directory, but CLI configuration and managed policies can still affect behavior; review them before running on sensitive data. Codex may still use tools permitted by its sandbox and configuration.
+
+If the CLI is missing, not signed in, times out, fails, or returns an invalid/incomplete review, the pipeline reports the problem and retains the keyword verdict and score for affected jobs. An unknown provider is a configuration error. Use `--no-llm-review` to skip this stage entirely without provider setup.
 
 ---
 

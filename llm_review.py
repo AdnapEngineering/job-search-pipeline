@@ -1,8 +1,8 @@
-"""Second-stage review of keyword-scored matches: asks an LLM (via the agy CLI)
+"""Second-stage review of keyword-scored matches: asks an LLM via a CLI
 to read each JD against `candidate_profile.md` and return apply / stretch / skip
 with a structured rubric and reason.
 
-Fail-open by design: if the LLM CLI is missing, times out, or returns something
+Fail-open by design: if the provider is unavailable, times out, or returns something
 unparseable, the job keeps its keyword verdict and the pipeline carries on.
 """
 import difflib
@@ -29,6 +29,7 @@ PROFILE_PATH = get_path("candidate_profile", "candidate_profile.md")
 CACHE_PATH = get_path("review_cache", "data/review_cache.json")
 
 DEFAULT_MODEL = _LLM_CFG.get("model", "gemini-4-hydrogen-medium")
+PROVIDER = _LLM_CFG.get("provider", "agy")
 DEFAULT_AGY = "~/.local/bin/agy"
 TIMEOUT_SECONDS = int(_LLM_CFG.get("timeout_seconds", 180))
 WORKERS = int(_LLM_CFG.get("workers", 3))
@@ -111,8 +112,11 @@ def _profile_text():
         return f.read()
 
 
-def _profile_hash(profile, model):
-    return hashlib.sha256((profile + "|" + model + "|" + PROMPT + "|" + REVIEW_VERSION).encode()).hexdigest()[:16]
+def _profile_hash(profile, model, provider="agy"):
+    cache_input = profile + "|" + model + "|" + PROMPT + "|" + REVIEW_VERSION
+    if provider != "agy":
+        cache_input += "|cli|" + provider
+    return hashlib.sha256(cache_input.encode()).hexdigest()[:16]
 
 
 def _find_agy():
@@ -248,8 +252,74 @@ def _salary_text(salary):
     return f"${int(salary.get('min') or salary['max']):,} - ${int(salary['max']):,}"
 
 
-def _review_one(agy, model, profile, job, jd_by_url, salary_by_url=None):
-    """Run one agy review; returns the parsed verdict, or None (fail-open) on any problem."""
+def _provider_config(provider):
+    """Resolve the configured provider's CLI executable."""
+    if provider == "agy":
+        executable = _find_agy()
+        name = "agy"
+    elif provider in ("anthropic", "openai"):
+        name = "claude" if provider == "anthropic" else "codex"
+        configured_path = _LLM_CFG.get(f"{name}_path")
+        executable = shutil.which(os.path.expanduser(configured_path or name))
+    else:
+        raise ValueError(f"Unknown llm_review.provider {provider!r}; choose agy, anthropic, or openai.")
+    if not executable:
+        print(f"[AI review] {name} CLI not found; skipping AI review.", file=sys.stderr)
+    return executable
+
+
+def _cli_response(executable, provider, model, prompt):
+    """Run a CLI in an empty directory and extract its final response."""
+    if provider == "agy":
+        command = [executable, "-p", prompt, "--model", model, "--output-format", "json"]
+        stdin = None
+    elif provider == "anthropic":
+        command = [executable, "-p", "--model", model, "--output-format", "json",
+                   "--tools", "", "--strict-mcp-config", "--disable-slash-commands",
+                   "--no-session-persistence", "--settings", '{"disableAllHooks":true}']
+        stdin = prompt
+    elif provider == "openai":
+        command = [executable, "exec", "--model", model, "--json", "--ephemeral",
+                   "--sandbox", "read-only", "--skip-git-repo-check", "-"]
+        stdin = prompt
+    else:
+        raise ValueError("unsupported CLI provider")
+    with tempfile.TemporaryDirectory() as cwd:
+        result = subprocess.run(command, input=stdin, capture_output=True, text=True,
+                                timeout=TIMEOUT_SECONDS, cwd=cwd)
+    if result.returncode != 0:
+        raise RuntimeError(f"CLI exited with code {result.returncode}")
+    if provider == "openai":
+        events = [json.loads(line) for line in result.stdout.splitlines() if line.strip()]
+        if not all(isinstance(event, dict) for event in events):
+            raise ValueError("invalid Codex event")
+        if any(event.get("type") in ("error", "turn.failed") for event in events):
+            raise RuntimeError("Codex turn failed")
+        if not events or events[-1].get("type") != "turn.completed":
+            raise ValueError("Codex turn did not complete")
+        messages = [event["item"].get("text") for event in events
+                    if event.get("type") == "item.completed" and isinstance(event.get("item"), dict)
+                    and event["item"].get("type") == "agent_message"]
+        response = messages[-1] if messages else None
+    else:
+        envelope = json.loads(result.stdout)
+        if not isinstance(envelope, dict):
+            raise ValueError("invalid CLI response")
+        if provider == "agy":
+            if envelope.get("status") != "SUCCESS":
+                raise RuntimeError("agy reported failure")
+            response = envelope.get("response")
+        else:
+            if envelope.get("type") != "result" or envelope.get("is_error") is not False:
+                raise RuntimeError("Claude reported failure")
+            response = envelope.get("result")
+    if not isinstance(response, str):
+        raise ValueError("CLI returned no text")
+    return response
+
+
+def _review_one(executable, model, profile, job, jd_by_url, salary_by_url=None, provider="agy"):
+    """Run one provider review; return the parsed verdict or None on a provider failure."""
     key = normalize_url(job.get("url", ""))
     jd = jd_by_url.get(key) or ""
     salary = (salary_by_url or {}).get(key)
@@ -259,32 +329,26 @@ def _review_one(agy, model, profile, job, jd_by_url, salary_by_url=None):
                            title=job.get("title") or "", location=job.get("location") or "",
                            salary=_salary_text(salary), jd=jd)
     try:
-        with tempfile.TemporaryDirectory() as cwd:
-            res = subprocess.run([agy, "-p", prompt, "--model", model, "--output-format", "json"],
-                                 capture_output=True, text=True, timeout=TIMEOUT_SECONDS, cwd=cwd)
-        if res.returncode != 0:
-            print(f"[AI review] agy exit {res.returncode} for {job.get('company')}: {res.stderr[:200]}", file=sys.stderr)
-            return None
-        envelope = json.loads(res.stdout)
-        if envelope.get("status") != "SUCCESS":
-            print(f"[AI review] agy status {envelope.get('status')} for {job.get('company')}", file=sys.stderr)
-            return None
-        parsed = _parse_verdict(envelope.get("response", ""), jd, salary)
+        response_text = _cli_response(executable, provider, model, prompt)
+        parsed = _parse_verdict(response_text, jd, salary)
         if not parsed:
-            print(f"[AI review] unparseable reply for {job.get('company')}: {envelope.get('response', '')[:120]!r}", file=sys.stderr)
+            print(f"[AI review] unparseable reply for {job.get('company')}", file=sys.stderr)
         return parsed
     except subprocess.TimeoutExpired:
         print(f"[AI review] timeout for {job.get('company')}", file=sys.stderr)
-    except Exception as e:
-        print(f"[AI review] error for {job.get('company')}: {e}", file=sys.stderr)
+    except RuntimeError as error:
+        print(f"[AI review] {provider} {error} for {job.get('company')}; "
+              "check CLI login and model configuration.", file=sys.stderr)
+    except (OSError, ValueError) as error:
+        print(f"[AI review] {provider} CLI error for {job.get('company')}: {type(error).__name__}; "
+              "check CLI installation, login, and model configuration.", file=sys.stderr)
     return None
 
 
 def review_matches(matches, enriched_path, min_score=55):
     """Review every match scoring >= min_score. Returns (kept, skipped)."""
-    agy = _find_agy()
-    if not agy:
-        print("[AI review] agy not found; skipping AI review.", file=sys.stderr)
+    executable = _provider_config(PROVIDER)
+    if not executable:
         return matches, []
     if not os.path.exists(PROFILE_PATH):
         print(f"[AI review] {PROFILE_PATH} not found; skipping AI review.", file=sys.stderr)
@@ -292,7 +356,7 @@ def review_matches(matches, enriched_path, min_score=55):
 
     model = DEFAULT_MODEL
     profile = _profile_text()
-    phash = _profile_hash(profile, model)
+    phash = _profile_hash(profile, model, PROVIDER)
 
     cache = load_json(CACHE_PATH, default={})
     todo, results = [], {}
@@ -306,7 +370,7 @@ def review_matches(matches, enriched_path, min_score=55):
         else:
             todo.append(job)
 
-    print(f"[AI review] {len(results)} cached, {len(todo)} to review with {model} via agy.")
+    print(f"[AI review] {len(results)} cached, {len(todo)} to review with {model} via {PROVIDER}.")
     if todo:
         todo_keys = {normalize_url(j.get("url", "")) for j in todo}
         with open(enriched_path) as f:
@@ -316,7 +380,9 @@ def review_matches(matches, enriched_path, min_score=55):
                      for j in enriched}
         salary_by_url = {normalize_url(j.get("url", "")): j.get("salary") for j in enriched if j.get("salary")}
         with ThreadPoolExecutor(max_workers=WORKERS) as pool:
-            outs = list(pool.map(lambda j: _review_one(agy, model, profile, j, jd_by_url, salary_by_url), todo))
+            outs = list(pool.map(
+                lambda j: _review_one(executable, model, profile, j, jd_by_url, salary_by_url, PROVIDER), todo
+            ))
         for job, out in zip(todo, outs, strict=True):
             if out:
                 key = normalize_url(job.get("url", ""))

@@ -11,7 +11,7 @@ import requests
 
 from blocklist import is_blocked, load_blocklist, load_role_blocklist
 from evaluate_jobs import evaluate_jobs, generate_markdown
-from llm_review import reason_for_notion, review_matches
+from llm_review import PROVIDER, reason_for_notion, review_matches
 from pipeline_config import CFG, SCRIPT_DIR, get_path, load_json
 from sync_notion_db import DEFAULT_DB_ID, log_run_summary_to_notion, sync_jobs_to_notion
 from text_export import TEXT_EXPORT_ENABLED, TEXT_EXPORT_PATH, export_jobs_to_text
@@ -170,7 +170,7 @@ def drop_blocklisted(eval_results):
 
 def ai_review(eval_results, min_score):
     """Re-grade top matches against candidate_profile.md; AI-skipped roles move to eval_results['ai_skipped']."""
-    print_banner("AI Review (agy)")
+    print_banner(f"AI Review ({PROVIDER})")
     started = time.monotonic()
     top_matches, ai_skipped = review_matches(eval_results["top_matches"], ENRICHED_JOBS, min_score=min_score)
     print(f"--> [Step: AI Review] took {time.monotonic() - started:.0f}s")

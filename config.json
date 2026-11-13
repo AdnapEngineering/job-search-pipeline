@@ -251,6 +251,7 @@
     "concurrency": 15
   },
   "llm_review": {
+    "provider": "agy",
     "model": "gemini-4-hydrogen-medium",
     "agy_path": "~/.local/bin/agy",
     "timeout_seconds": 180,
