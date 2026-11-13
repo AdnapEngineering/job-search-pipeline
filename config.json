@@ -9,7 +9,8 @@
     "review_cache": "data/review_cache.json",
     "run_history": "data/run_history.json",
     "linkedin_details_cache": "data/linkedin_details_cache.json",
-    "candidate_profile": "candidate_profile.md"
+    "candidate_profile": "candidate_profile.md",
+    "text_export": "data/job_matches.txt"
   },
   "sources": {
     "lookback_days": 3,
@@ -102,6 +103,10 @@
         "pattern": "\\b(target role 1|target role 2)\\b",
         "points": 20
       }
+    ],
+    "primary_role_patterns": [
+      "target role 1",
+      "core specialty"
     ],
     "generic_role_patterns": [
       "specialist",
@@ -280,6 +285,9 @@
     "database_id": "",
     "summary_page_id": "",
     "summary_block_id": ""
+  },
+  "text_export": {
+    "enabled": false
   },
   "notifications": {
     "notify_url": ""

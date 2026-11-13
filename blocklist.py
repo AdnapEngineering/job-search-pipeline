@@ -78,6 +78,35 @@ def append_to_role_blocklist(keys) -> None:
     print(f"Updated role blocklist with {len(keys)} key(s). Total: {len(merged)}")
 
 
+def select_new_matches(jobs: list[dict], min_score: int, verbose: bool = True) -> list[dict]:
+    """Jobs scoring >= min_score that are not blocklisted, keeping only the first of any same-role reposts."""
+    blocked_urls = load_blocklist()
+    blocked_roles = load_role_blocklist()
+    selected = []
+    for job in jobs:
+        if job.get("score", 0) < min_score or not job.get("url"):
+            continue
+        if normalize_url(job["url"]) in blocked_urls:
+            continue
+        key = role_key(job.get("company"), job.get("title"))
+        if key and key in blocked_roles:
+            if verbose:
+                print(f"Skipping repost of a synced/removed role: {job.get('company')} - {job.get('title')}")
+            continue
+        if key:
+            blocked_roles.add(key)
+        selected.append(job)
+    return selected
+
+
+def record_exported(jobs: list[dict]) -> None:
+    """Blocklist the URLs and role keys of jobs written to Notion or an export, so they are not output again."""
+    if not jobs:
+        return
+    append_to_blocklist([j["url"] for j in jobs])
+    append_to_role_blocklist(role_key(j.get("company"), j.get("title")) for j in jobs)
+
+
 def is_blocked(job: dict, blocked_urls: set[str], blocked_roles: set[str]) -> bool:
     """True when the job's canonical URL or company|title key is already blocklisted."""
     if normalize_url(job.get("url", "")) in blocked_urls:

@@ -7,10 +7,9 @@ from datetime import datetime, timezone
 
 import requests
 
-from blocklist import append_to_blocklist, append_to_role_blocklist, load_blocklist, load_role_blocklist, role_key
+from blocklist import record_exported, select_new_matches
 from evaluate_jobs import skip_reason
 from pipeline_config import CFG, CONFIG_PATH, atomic_write_json, get_path, load_json
-from url_normalizer import normalize_url
 
 _NOTION_CFG = CFG.get("notion") or {}
 
@@ -70,26 +69,6 @@ def _build_notion_payload(job: dict, database_id: str) -> dict:
     return {"parent": {"database_id": database_id}, "properties": properties}
 
 
-def _sync_candidates(evaluated_jobs: list[dict], min_score: int) -> list[dict]:
-    """Jobs at or above min_score that are not blocklisted, keeping only the first of any same-role reposts."""
-    blocked_urls = load_blocklist()
-    blocked_roles = load_role_blocklist()
-    candidates = []
-    for job in evaluated_jobs:
-        if job.get("score", 0) < min_score or not job.get("url"):
-            continue
-        if normalize_url(job["url"]) in blocked_urls:
-            continue
-        key = role_key(job.get("company"), job.get("title"))
-        if key and key in blocked_roles:
-            print(f"Skipping repost of a synced/removed role: {job.get('company')} - {job.get('title')}")
-            continue
-        if key:
-            blocked_roles.add(key)
-        candidates.append(job)
-    return candidates
-
-
 def sync_jobs_to_notion(evaluated_jobs, database_id=DEFAULT_DB_ID, min_score=75):
     """Create a Notion page for each qualified job (score >= min_score); returns the URLs that were created."""
     if not database_id:
@@ -97,13 +76,12 @@ def sync_jobs_to_notion(evaluated_jobs, database_id=DEFAULT_DB_ID, min_score=75)
         return []
     headers = _notion_headers()
 
-    candidates = _sync_candidates(evaluated_jobs, min_score)
+    candidates = select_new_matches(evaluated_jobs, min_score)
     print(f"Found {len(candidates)} jobs eligible for Notion sync (Score >= {min_score}%, not blocked).")
     if not candidates:
         return []
 
-    created_urls = []
-    created_keys = []
+    created = []
     total = len(candidates)
 
     for idx, job in enumerate(candidates, 1):
@@ -114,8 +92,7 @@ def sync_jobs_to_notion(evaluated_jobs, database_id=DEFAULT_DB_ID, min_score=75)
             res = _session.post(f"{NOTION_API}/pages", headers=headers,
                                 json=_build_notion_payload(job, database_id), timeout=REQUEST_TIMEOUT)
             if res.status_code in (200, 201):
-                created_urls.append(job["url"])
-                created_keys.append(role_key(job.get("company"), title))
+                created.append(job)
                 print(f"{prefix} Synced: {company} - {title} ({job.get('score', 0)}%)")
             elif res.status_code == 400:
                 print(f"{prefix} Bad payload for {company}: {res.text}", file=sys.stderr)
@@ -128,12 +105,9 @@ def sync_jobs_to_notion(evaluated_jobs, database_id=DEFAULT_DB_ID, min_score=75)
 
         time.sleep(SYNC_DELAY_SECONDS)
 
-    if created_urls:
-        append_to_blocklist(created_urls)
-        append_to_role_blocklist(created_keys)
-
-    print(f"Notion sync complete: {len(created_urls)}/{total} jobs successfully created.")
-    return created_urls
+    record_exported(created)
+    print(f"Notion sync complete: {len(created)}/{total} jobs successfully created.")
+    return [job["url"] for job in created]
 
 
 def _truncate_text(text, max_len=120):

@@ -1,4 +1,6 @@
 .env
+.venv/
+.ruff_cache/
 .run_job_search.lock
 __pycache__/
 *.py[cod]

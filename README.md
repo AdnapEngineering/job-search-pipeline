@@ -20,6 +20,7 @@ All career-specific rules—target titles, skills, scoring weights, experience c
    - [Notion API & `ntfy` Push Notifications](#37-notion-api--ntfy-push-notifications)
 4. [Configuring for Another Career (`config.json` & `candidate_profile.md`)](#4-configuring-for-another-career-configjson--candidate_profilemd)
 5. [Usage, CLI Flags & Cron Automation](#5-usage-cli-flags--cron-automation)
+   - [Using Your Own Documentation Platform (Disable Notion / Export to .txt)](#using-your-own-documentation-platform-disable-notion--export-to-txt)
 6. [Repository File Reference](#6-repository-file-reference)
 
 ---
@@ -66,9 +67,10 @@ All career-specific rules—target titles, skills, scoring weights, experience c
 └─────────────────────────────────────┬──────────────────────────────────────┘
                                       ▼
 ┌────────────────────────────────────────────────────────────────────────────┐
-│ 5. Notion Sync, Summary & Notifications (sync_notion_db.py + ntfy)         │
-│    • Syncs qualified matches (>= min_score) to a Notion database.          │
-│    • Appends synced URLs and company|title keys to persistent blocklists.  │
+│ 5. Output, Summary & Notifications (sync_notion_db.py / text_export.py)    │
+│    • Syncs qualified matches (>= min_score) to a Notion database and/or    │
+│      appends them to a plain .txt log for any other documentation tool.    │
+│    • Appends output URLs and company|title keys to persistent blocklists.  │
 │    • Updates a Notion Callout dashboard block, saves Markdown summary,     │
 │      and sends a push notification with source-health warnings.            │
 └────────────────────────────────────────────────────────────────────────────┘
@@ -114,6 +116,8 @@ NOTION_TOKEN="ntn_your_secret_token"
 NOTION_DATABASE_ID="your-32-char-database-id"
 NOTIFY_URL="https://ntfy.sh/your-topic"
 ```
+
+All three are optional. Without a Notion token and database ID the pipeline still runs end to end; see [Using Your Own Documentation Platform](#using-your-own-documentation-platform-disable-notion--export-to-txt) to send matches to a `.txt` file instead.
 
 ---
 
@@ -293,16 +297,17 @@ Write an honest summary of the candidate's background. [`llm_review.py`](llm_rev
 ### Step 2: Edit `config.json`
 | Section | What to Customize |
 | :--- | :--- |
-| `paths` | Override where data files (`filtered_jobs`, `enriched_jobs`, `blocklist`, `review_cache`, ...) and `candidate_profile` live. Relative paths resolve from the repository directory, not the directory you run from; `~` is expanded. |
+| `paths` | Override where data files (`filtered_jobs`, `enriched_jobs`, `blocklist`, `review_cache`, `text_export`, ...) and `candidate_profile` live. Relative paths resolve from the repository directory, not the directory you run from; `~` is expanded. |
 | `sources` | Set `lookback_days`, LinkedIn/Indeed `search_terms` and `searches` (`[site, location, suffix, count]`), and `jobicy_url` industry parameter. |
 | `location` | Set `allow_remote`, `local_metro_patterns` (cities/suburbs in your metro area), `local_metro_exclude_patterns` (same-named cities in other states), and `allowed_country_pattern`. |
 | `compensation` | Set `min_salary` (annual USD floor), `pay_midpoint_max_cap`, and `pay_midpoint_penalty`. Set `min_salary: 0` to disable salary filtering. |
 | `experience` | Set `max_min_yoe` (rejects JDs asking for more than N years), `max_min_secondary_yoe` (ceiling for a secondary skill area), `reject_clearance`, and `reject_foreign_language_req`. |
-| `titles` | Define `target_patterns` (Stage 1 pre-filter), `strong_target_patterns` (titles that override soft exclusions), `primary_role_groups` (+20 pt title bonus), `exclude_seniority_patterns`, `exclude_tech_patterns`, and `exclude_role_patterns`. |
+| `titles` | Define `target_patterns` (Stage 1 pre-filter), `strong_target_patterns` (titles that override soft exclusions), `primary_role_groups` (+20 pt title bonus), `primary_role_patterns` (+20 pt LinkedIn/Indeed title boost), `exclude_seniority_patterns`, `exclude_tech_patterns`, and `exclude_role_patterns`. |
 | `companies` | List `exclude_companies`, `exclude_recruiters` (staffing agencies/aggregators), `allow_recruiters`, and `company_aliases` (e.g. parent company -> brand name). |
 | `skills_and_scoring` | Define `core_strengths` (+5 pts each, up to `core_strengths_cap`), `focus_keywords` (weighted +5/+10/+15 domain terms, up to `domain_score_cap`), `hard_exclude_skills` (rejected in requirements unless listed as an optional/alternative skill), `hard_ask_penalties`, and `off_center_role_check`. |
 | `llm_review` | Customize `rubric_descriptions` (`hard_reqs`, `core_work`, `evidence`, `level`) and provide 3–8 `calibration_examples` for your career. |
 | `notion` | Set `database_id` (or use `NOTION_DATABASE_ID` in `.env`). Optionally set `summary_page_id` (the page that hosts the run-summary Callout; defaults to the database's parent page). `summary_block_id` is filled in automatically the first time the Callout is created. Expects Notion database properties: `Company & Stage` (Title), `Role Title & Compensation` (Text), `Location` (Text), `Why It Matches` (Text), `Match %` (Text), `Link` (URL), `Date Posted` (Date), and `Originally Posted` (Date). |
+| `text_export` | Set `enabled: true` to append new qualified matches to `paths.text_export` (`data/job_matches.txt` by default)—a plain-text alternative or companion to Notion. |
 
 **How the config is loaded:**
 - The pipeline reads `config.json` from the repository directory. Set `JOB_PIPELINE_CONFIG=/path/to/other.json` to use a different file (e.g. one per career).
@@ -342,9 +347,63 @@ python3 run_pipeline.py --no-llm-review --min-score 75
 | `--no-notion` | Skip syncing matches to Notion. |
 | `--no-notion-log` | Skip updating the Notion parent-page Callout summary block. |
 | `--no-notify` | Skip sending the `ntfy` push notification. |
-| `--min-score INT` | Minimum Match % to sync to Notion (defaults to `skills_and_scoring.min_sync_score`, `80`). |
+| `--min-score INT` | Minimum Match % to sync to Notion / export to `.txt` (defaults to `skills_and_scoring.min_sync_score`, `80`). |
 | `--review-min-score INT` | Minimum Stage 3 keyword score to send to LLM review (defaults to `55`). |
 | `--md-output PATH` | Write a Markdown summary table of matches, manual reviews, and skips to `PATH`. |
+| `--txt-output PATH` | Append new qualified matches to `PATH` (overrides `text_export` in `config.json`). |
+| `--no-txt-export` | Skip exporting matches to a `.txt` file even when enabled in `config.json`. Cannot be combined with `--txt-output`. |
+
+### Using Your Own Documentation Platform (Disable Notion / Export to .txt)
+
+Notion is optional. If you track applications somewhere else (Obsidian, Confluence, a wiki, a spreadsheet, a plain notes folder), turn off Notion writes and have the pipeline write matches to a text file instead.
+
+**1. Disable Notion writes**
+
+| Scope | How |
+| :--- | :--- |
+| One run | Pass `--no-notion` (skips both the database sync and the run-summary Callout). Pass `--no-notion-log` to keep the sync but skip only the Callout. |
+| Permanently | Leave `notion.database_id` empty in `config.json` and don't set `NOTION_DATABASE_ID` / `NOTION_TOKEN`. Both Notion steps then skip themselves with a notice, and no token is needed. |
+
+**2. Export matches to a `.txt` file**
+
+Enable it permanently in `config.json` (ideal for cron):
+
+```json
+"paths": { "text_export": "data/job_matches.txt" },
+"text_export": { "enabled": true }
+```
+
+Or per run from the command line:
+
+```bash
+# Text file only, no Notion
+python3 run_pipeline.py --no-notion --txt-output ~/Documents/job_matches.txt
+
+# Through the cron wrapper (arguments passed to the wrapper replace its default --md-output)
+./run_job_search.sh --no-notion --txt-output ~/Documents/job_matches.txt --md-output latest_job_summary.md
+```
+
+Each run appends a timestamped block containing only matches at or above `--min-score` that haven't been output before:
+
+```text
+===== Job Search Run 2026-11-13 09:25 — 2 new match(es) (min score 80%) =====
+
+[92%] Example Corp — Senior Specialist
+    Location: Remote
+    Posted: 2026-11-12
+    Why: APPLY: Strong skill alignment (keyword score 85%)
+    Link: https://example.com/jobs/123
+
+[84%] Another Co — Target Role 1
+    Location: Your City, ST
+    Posted: 2026-11-11
+    Why: STRETCH: Matches core work; one tool gap. Gaps: tool_b.
+    Link: https://jobs.example.org/456
+```
+
+**How deduplication works:** exported roles are added to the same URL and `company|title` blocklists (`data/blocklist.json`, `data/blocklist_roles.json`) that Notion sync uses, so a role is written once and reposts on other boards are skipped. If Notion is also active, Notion sync handles the blocklisting instead, so a role that fails to reach Notion is retried on the next run (and may appear in the `.txt` again). To re-export everything from scratch, delete those two blocklist files.
+
+**Other formats:** `--md-output PATH` writes the full Markdown table (matches, manual reviews, AI skips, location drops), overwritten each run. `data/evaluated_jobs.json` holds the raw Stage 3 results as JSON for custom integrations.
 
 ### Automate with Cron
 
@@ -373,4 +432,5 @@ Run 3 times daily (e.g., 7:10 AM, 12:10 PM, 5:10 PM):
 | [`evaluate_jobs.py`](evaluate_jobs.py) | Stage 3 deterministic evaluator, JD logistics/onsite blocker, context-aware requirement parser, and scorer. |
 | [`llm_review.py`](llm_review.py) | Stage 4 LLM reviewer with SHA-256 caching, verbatim quote verification, and deterministic score calculation. |
 | [`sync_notion_db.py`](sync_notion_db.py) | Stage 5 Notion database syncer (records synced roles in the blocklists) and Callout dashboard logger. |
+| [`text_export.py`](text_export.py) | Stage 5 plain-text alternative to Notion: appends new qualified matches to a `.txt` log and records them in the blocklists. |
 | [`url_normalizer.py`](url_normalizer.py) | Canonical URL normalizer (strips tracking parameters, redundant `gh_jid`, and fragments). |

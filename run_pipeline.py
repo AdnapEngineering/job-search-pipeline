@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""End-to-end orchestrator: fetch, scrape, evaluate, AI review, Notion sync, Markdown summary and ntfy notification."""
+"""End-to-end orchestrator: fetch, scrape, evaluate, AI review, .txt export / Notion sync, summary and notification."""
 import argparse
 import os
 import subprocess
@@ -13,7 +13,8 @@ from blocklist import is_blocked, load_blocklist, load_role_blocklist
 from evaluate_jobs import evaluate_jobs, generate_markdown
 from llm_review import reason_for_notion, review_matches
 from pipeline_config import CFG, SCRIPT_DIR, get_path, load_json
-from sync_notion_db import log_run_summary_to_notion, sync_jobs_to_notion
+from sync_notion_db import DEFAULT_DB_ID, log_run_summary_to_notion, sync_jobs_to_notion
+from text_export import TEXT_EXPORT_ENABLED, TEXT_EXPORT_PATH, export_jobs_to_text
 
 FILTERED_JOBS = get_path("filtered_jobs", "data/filtered_jobs.json")
 ENRICHED_JOBS = get_path("enriched_jobs", "data/enriched_jobs.json")
@@ -134,13 +135,27 @@ def parse_args(argv=None):
     parser.add_argument("--no-notion-log", action="store_true", help="Skip logging run summary to Notion")
     parser.add_argument("--no-notify", action="store_true", help="Skip sending push notification")
     parser.add_argument("--min-score", type=int, default=default_min_score,
-                        help=f"Minimum Match %% to sync to Notion (default: {default_min_score})")
+                        help=f"Minimum Match %% to sync to Notion / export to .txt (default: {default_min_score})")
     parser.add_argument("--review-min-score", type=int, default=default_review_score,
                         help=f"Minimum keyword score for the AI review (default: {default_review_score})")
     parser.add_argument("--no-llm-review", action="store_true",
                         help="Skip the AI review of matches against candidate_profile.md")
     parser.add_argument("--md-output", type=str, default=None, help="Optional path to save Markdown summary")
+    txt = parser.add_mutually_exclusive_group()
+    txt.add_argument("--txt-output", type=str, default=None,
+                     help="Append new matches to this .txt file (overrides text_export in config.json)")
+    txt.add_argument("--no-txt-export", action="store_true",
+                     help="Skip the .txt export even when text_export.enabled is true in config.json")
     return parser.parse_args(argv)
+
+
+def text_export_path(args):
+    """Where to append this run's matches as text, or None when the export is off."""
+    if args.txt_output:
+        return args.txt_output
+    if TEXT_EXPORT_ENABLED and not args.no_txt_export:
+        return TEXT_EXPORT_PATH
+    return None
 
 
 def drop_blocklisted(eval_results):
@@ -174,7 +189,7 @@ def write_markdown(eval_results, path):
     print(f"\nSaved Markdown evaluation table to: {path}")
 
 
-def notify_results(eval_results, synced_urls, health, notion_enabled):
+def notify_results(eval_results, synced_urls, exported_urls, health, notion_enabled):
     top_matches = eval_results["top_matches"]
     manual_reviews = eval_results.get("manual_reviews", [])
     ai_skipped = eval_results.get("ai_skipped", [])
@@ -185,6 +200,8 @@ def notify_results(eval_results, synced_urls, health, notion_enabled):
         lines = [f"{len(top_matches)} matches found ({len(synced_urls)} synced to Notion)."]
     else:
         lines = [f"{len(top_matches)} matches found."]
+    if exported_urls:
+        lines.append(f"{len(exported_urls)} new match(es) exported to text file.")
     if manual_reviews:
         lines.append(f"{len(manual_reviews)} manual review(s) needed.")
     if ai_skipped:
@@ -239,7 +256,18 @@ def run(args):
     print(f"Total qualified matches: {len(eval_results['top_matches'])}")
     print(f"Total manual reviews needed: {len(eval_results.get('manual_reviews', []))}")
 
-    # 5. Sync to Notion
+    # 5. Export to .txt / sync to Notion. The export runs first and leaves blocklisting to Notion when
+    # Notion is active, so a role that fails to sync is retried next run instead of being dropped.
+    notion_active = not args.no_notion and bool(DEFAULT_DB_ID)
+    exported_urls = []
+    txt_path = text_export_path(args)
+    if txt_path:
+        print_banner(f"Export to Text File (Min Score: {args.min_score}%)")
+        exported_urls = export_jobs_to_text(eval_results["top_matches"], txt_path, min_score=args.min_score,
+                                            record_in_blocklist=not notion_active)
+    else:
+        print("\n--> [Step: Export to Text File] Skipped.")
+
     synced_urls = []
     if args.no_notion:
         print("\n--> [Step: Batch Sync to Notion] Skipped (--no-notion flag passed).")
@@ -260,7 +288,7 @@ def run(args):
 
     # 7. Push notification
     if not args.no_notify:
-        notify_results(eval_results, synced_urls, health, notion_enabled=not args.no_notion)
+        notify_results(eval_results, synced_urls, exported_urls, health, notion_enabled=not args.no_notion)
 
     print("\n[Pipeline Complete] Done.")
 
