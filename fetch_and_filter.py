@@ -340,7 +340,13 @@ async def main():
     filtered, ats_index, stats = [], {}, {}
 
     if _SOURCES_CFG.get("github_feed_enabled", True):
-        filtered, ats_index = await fetch_github_feed(stats)
+        try:
+            filtered, ats_index = await fetch_github_feed(stats)
+        except (aiohttp.ClientError, asyncio.TimeoutError, ValueError, KeyError) as e:
+            # A down or malformed feed manifest must not cost the run its other sources
+            print(f"GitHub feed fetch failed, continuing with the other sources: {type(e).__name__}: {e}",
+                  file=sys.stderr)
+            stats["github_feed"] = {"fetched": 0, "kept": 0, "error": f"{type(e).__name__}: {e}"[:120]}
     if _SOURCES_CFG.get("jobspy_enabled", True):
         filtered.extend(fetch_jobspy(stats))
         print(f"Combined total (GitHub + Indeed/LinkedIn): {len(filtered)}")

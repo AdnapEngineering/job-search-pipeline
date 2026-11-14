@@ -13,7 +13,7 @@ from blocklist import is_blocked, load_blocklist, load_role_blocklist
 from evaluate_jobs import evaluate_jobs, generate_markdown
 from llm_review import PROVIDER, reason_for_notion, review_matches
 from pipeline_config import CFG, SCRIPT_DIR, get_path, load_json
-from sync_notion_db import DEFAULT_DB_ID, log_run_summary_to_notion, sync_jobs_to_notion
+from sync_notion_db import DEFAULT_DB_ID, log_run_summary_to_notion, match_tally, sync_jobs_to_notion
 from text_export import TEXT_EXPORT_ENABLED, TEXT_EXPORT_PATH, export_jobs_to_text
 
 FILTERED_JOBS = get_path("filtered_jobs", "data/filtered_jobs.json")
@@ -40,6 +40,8 @@ NOTIFY_TOP_MATCHES = 5
 
 def _feed_warnings(feed):
     warnings = []
+    if feed.get("error"):
+        warnings.append(f"GitHub feed fetch failed: {feed['error']}")
     if feed.get("failed_chunks"):
         warnings.append(f"GitHub feed: {feed['failed_chunks']} of {feed.get('chunks')} chunks failed to download")
     try:
@@ -175,7 +177,7 @@ def ai_review(eval_results, min_score):
     top_matches, ai_skipped = review_matches(eval_results["top_matches"], ENRICHED_JOBS, min_score=min_score)
     print(f"--> [Step: AI Review] took {time.monotonic() - started:.0f}s")
     for job in top_matches:
-        if job.get("verdict"):
+        if job.get("verdict") or job.get("review_failed"):
             job["keyword_reason"] = job.get("reason", "")
             job["reason"] = reason_for_notion(job)
     eval_results["top_matches"] = top_matches
@@ -189,19 +191,22 @@ def write_markdown(eval_results, path):
     print(f"\nSaved Markdown evaluation table to: {path}")
 
 
-def notify_results(eval_results, synced_urls, exported_urls, health, notion_enabled):
+def notify_results(eval_results, synced_urls, exported_urls, health, notion_enabled, min_score=80):
     top_matches = eval_results["top_matches"]
+    tally = match_tally(top_matches, min_score)
     manual_reviews = eval_results.get("manual_reviews", [])
     ai_skipped = eval_results.get("ai_skipped", [])
     location_filtered = eval_results.get("location_filtered", [])
     warnings = health["warnings"] if health else []
 
-    if notion_enabled:
-        lines = [f"{len(top_matches)} matches found ({len(synced_urls)} synced to Notion)."]
-    else:
-        lines = [f"{len(top_matches)} matches found."]
+    lines = [f"{len(top_matches)} open match(es), {tally['at_threshold']} at {min_score}%+"
+             + (f" ({len(synced_urls)} synced to Notion)." if notion_enabled else ".")]
     if exported_urls:
         lines.append(f"{len(exported_urls)} new match(es) exported to text file.")
+    if tally["held"]:
+        lines.append(f"{tally['held']} held back: AI review failed, will retry next run.")
+    if tally["third_party"]:
+        lines.append(f"{tally['third_party']} from third-party posters (agency/recruiter/aggregator).")
     if manual_reviews:
         lines.append(f"{len(manual_reviews)} manual review(s) needed.")
     if ai_skipped:
@@ -214,9 +219,16 @@ def notify_results(eval_results, synced_urls, exported_urls, health, notion_enab
     if top_matches:
         lines.extend(["", "Top Matches:"])
         for job in top_matches[:NOTIFY_TOP_MATCHES]:
-            lines.append(f"• {job.get('company', 'Unknown')} — {job.get('title', 'Role')} ({job.get('score', 0)}%)")
+            flag = " [third-party]" if job.get("third_party") else ""
+            lines.append(f"• {job.get('company', 'Unknown')} — {job.get('title', 'Role')} ({job.get('score', 0)}%){flag}")
 
-    title = f"Job Search: {len(top_matches)} Qualified Matches" if top_matches else "Job Search Complete: No Matches"
+    # Headers must stay ASCII: requests encodes them as latin-1
+    if not top_matches:
+        title = "Job Search Complete: No Matches"
+    elif tally["at_threshold"]:
+        title = f"Job Search: {tally['at_threshold']} Match(es) at {min_score}%+"
+    else:
+        title = f"Job Search: No New Matches at {min_score}%+ ({len(top_matches)} below)"
     if warnings:
         title += " (source warning)"
     send_notification(title, "\n".join(lines), priority=PRIORITY_HIGH if warnings else PRIORITY_DEFAULT)
@@ -253,7 +265,9 @@ def run(args):
     else:
         ai_review(eval_results, args.review_min_score)
 
-    print(f"Total qualified matches: {len(eval_results['top_matches'])}")
+    tally = match_tally(eval_results["top_matches"], args.min_score)
+    print(f"Open matches: {len(eval_results['top_matches'])} ({tally['at_threshold']} at {args.min_score}%+, "
+          f"{tally['held']} held for a failed AI review, {tally['third_party']} from third-party posters)")
     print(f"Total manual reviews needed: {len(eval_results.get('manual_reviews', []))}")
 
     # 5. Export to .txt / sync to Notion. The export runs first and leaves blocklisting to Notion when
@@ -288,7 +302,8 @@ def run(args):
 
     # 7. Push notification
     if not args.no_notify:
-        notify_results(eval_results, synced_urls, exported_urls, health, notion_enabled=not args.no_notion)
+        notify_results(eval_results, synced_urls, exported_urls, health, notion_enabled=not args.no_notion,
+                       min_score=args.min_score)
 
     print("\n[Pipeline Complete] Done.")
 

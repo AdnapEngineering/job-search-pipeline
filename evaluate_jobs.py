@@ -4,6 +4,7 @@ Rejects postings whose title, location, JD logistics (onsite/hybrid/residency),
 requirements (excluded skills, clearance, language, years of experience) or
 focus rule them out, then scores the rest from config-driven keyword weights.
 """
+import hashlib
 import json
 import os
 import re
@@ -14,7 +15,7 @@ from blocklist import role_key
 from fetch_and_filter import (
     FOREIGN_PATTERNS, STRONG_TARGET_RE, UNSPECIFIED_LOCATIONS, US_PATTERN, is_local_metro, is_recent, is_valid_title,
 )
-from pipeline_config import CFG, atomic_write_json, compile_alternation, get_path
+from pipeline_config import CFG, atomic_write_json, compile_alternation, get_path, term_regex
 from url_normalizer import is_aggregator_url
 
 _SKILLS_CFG = CFG.get("skills_and_scoring") or {}
@@ -40,10 +41,7 @@ def strip_markdown(text):
     return _MARKDOWN_NOISE_RE.sub('', text)
 
 
-def _term_re(term, allow_suffix=False):
-    """Whole-term match that also works for terms with symbols (e.g. c++, c#, .net, next.js)."""
-    tail = '' if allow_suffix else r'(?![\w+#])'
-    return re.compile(r'(?<![\w.+#])' + re.escape(term) + tail)
+_term_re = term_regex
 
 
 _ALL_TERMS = set(
@@ -163,6 +161,94 @@ _EXTRA_FOREIGN_RE = re.compile(
 )
 
 
+def _onsite_passage(text, patterns):
+    """First passage matching one of `patterns` that is not negated, optional, or one of several options."""
+    for pattern in patterns:
+        for m in pattern.finditer(text):
+            window = text[max(0, m.start() - 80):m.end() + 80]
+            if (_JD_OPTIONS_RE.search(window) or _JD_OPTIONAL_RE.search(window)
+                    or _JD_NEGATED_BEFORE_RE.search(text[max(0, m.start() - 15):m.start()])):
+                continue
+            return text[max(0, m.start() - 40):m.end() + 40].replace('\n', ' ').strip()
+    return ''
+
+
+def hard_onsite_passage(text):
+    """JD passage that flatly requires onsite work or relocation ('' when there is none). Safe to drop on
+    without reading further, unlike hybrid-policy or office-perk wording, which needs the full stage-3 check."""
+    return _onsite_passage(strip_markdown(text or ''), (_JD_HARD_ONSITE_RE,))
+
+
+_US_STATES = {
+    'al': 'alabama', 'ak': 'alaska', 'az': 'arizona', 'ar': 'arkansas', 'ca': 'california', 'co': 'colorado',
+    'ct': 'connecticut', 'de': 'delaware', 'fl': 'florida', 'ga': 'georgia', 'hi': 'hawaii', 'id': 'idaho',
+    'il': 'illinois', 'in': 'indiana', 'ia': 'iowa', 'ks': 'kansas', 'ky': 'kentucky', 'la': 'louisiana',
+    'me': 'maine', 'md': 'maryland', 'ma': 'massachusetts', 'mi': 'michigan', 'mn': 'minnesota',
+    'ms': 'mississippi', 'mo': 'missouri', 'mt': 'montana', 'ne': 'nebraska', 'nv': 'nevada',
+    'nh': 'new hampshire', 'nj': 'new jersey', 'nm': 'new mexico', 'ny': 'new york', 'nc': 'north carolina',
+    'nd': 'north dakota', 'oh': 'ohio', 'ok': 'oklahoma', 'or': 'oregon', 'pa': 'pennsylvania',
+    'ri': 'rhode island', 'sc': 'south carolina', 'sd': 'south dakota', 'tn': 'tennessee', 'tx': 'texas',
+    'ut': 'utah', 'vt': 'vermont', 'va': 'virginia', 'wa': 'washington', 'wv': 'west virginia',
+    'wi': 'wisconsin', 'wy': 'wyoming', 'dc': 'district of columbia',
+}
+_STATE_NAME_TO_ABBR = {name: abbr for abbr, name in _US_STATES.items()}
+_STATE_NAMES = '|'.join(sorted(_STATE_NAME_TO_ABBR, key=len, reverse=True))
+# Abbreviations are matched upper-case only: "in", "or", "me", "ok" and "hi" are words too
+_STATE_TOKEN = r'(?:(?i:' + _STATE_NAMES + r')|' + '|'.join(a.upper() for a in _US_STATES) + r')(?![\w.])'
+_STATE_LIST = _STATE_TOKEN + r'(?:\s*(?:,|/|&|,?\s*(?i:or|and))\s*' + _STATE_TOKEN + r')*'
+_STATE_TOKEN_RE = re.compile(_STATE_TOKEN)
+# The candidate's own state(s) and time zone(s). Both rules below are off until these are configured.
+_HOME_STATES = {_STATE_NAME_TO_ABBR.get(s.lower(), s.lower()) for s in (_LOC_CFG.get("home_states") or [])}
+_HOME_TIMEZONES = {t.lower() for t in (_LOC_CFG.get("home_timezones") or [])}
+# "Remote - CA", "Remote in Texas", "(Remote, NC only)" in a title or a feed location
+_REMOTE_STATE_RE = re.compile(r'(?i:\bremote)\s*(?:(?i:in|within)\s+|[-–—:,]\s*)(' + _STATE_LIST + r')\s*(?:(?i:only)\b|[)\]]|$)')
+# "must reside in MA, IN, or TX", "candidates must be located in one of the following states: ..."
+_RESIDENCY_STATES_RE = re.compile(
+    r'(?i:\b(?:must|required to|need to|needs to|have to|only (?:hire|consider)s? candidates (?:who|that)))'
+    r'[^.\n]{0,40}?(?i:\b(?:resid\w+|live|living|located|based)\s+(?:with)?in)\s+'
+    r'(?i:(?:one of )?(?:the )?(?:following )?(?:states?|locations?)\s*(?:of\s+)?:?\s*)?(' + _STATE_LIST + r')'
+)
+_TZ_NAMES = r'(?:eastern|central|mountain|pacific)'
+_TZ_LIST = _TZ_NAMES + r'(?:\s*(?:,|/|,?\s*(?:or|and))\s*' + _TZ_NAMES + r')*'
+# "must be located in the Eastern or Central time zone", "remote restricted to Central or Eastern time"
+_RESIDENCY_TZ_RE = re.compile(
+    r'\b(?:(?:located|based|resid\w+|live|living)\s+(?:with)?in|restricted to|limited to)\s+(?:the\s+)?'
+    r'(' + _TZ_LIST + r')\s+(?:standard\s+)?time(?:\s*zones?)?\b', re.I
+)
+_TZ_NAME_RE = re.compile(_TZ_NAMES, re.I)
+_REMOTE_ALTERNATIVE_RE = re.compile(r'\bremote(?:ly)?\b|\b(?:anywhere|elsewhere)\b', re.I)
+
+
+def _other_states_only(state_list):
+    """True when a matched list of states names none of the candidate's home states."""
+    states = {_STATE_NAME_TO_ABBR.get(s.lower(), s.lower()) for s in _STATE_TOKEN_RE.findall(state_list)}
+    return bool(states) and not (states & _HOME_STATES)
+
+
+def remote_restriction(job, text):
+    """Wording that limits a remote role to states or time zones the candidate is not in, or ''.
+    These are stated outright in the title, feed location or JD, so they need no AI review."""
+    if _HOME_STATES:
+        fields = [job.get('title') or '']
+        # LinkedIn/Indeed locations are rewritten by fetch_indeed ("Remote (City, ST)"), not a restriction
+        if (job.get('ats') or '').lower() not in ('linkedin', 'indeed'):
+            fields.append(job.get('location') or '')
+        for field in fields:
+            m = _REMOTE_STATE_RE.search(field)
+            if m and _other_states_only(m.group(1)):
+                return m.group(0).strip(' )]')
+        for m in _RESIDENCY_STATES_RE.finditer(text):
+            # "...located in Texas or work remotely" offers a way out; leave those to the AI review
+            if _other_states_only(m.group(1)) and not _REMOTE_ALTERNATIVE_RE.search(text[m.end():m.end() + 60]):
+                return m.group(0).replace('\n', ' ').strip()[:140]
+    if _HOME_TIMEZONES:
+        for m in _RESIDENCY_TZ_RE.finditer(text):
+            zones = {z.lower() for z in _TZ_NAME_RE.findall(m.group(1))}
+            if zones and not (zones & _HOME_TIMEZONES):
+                return m.group(0).replace('\n', ' ').strip()
+    return ''
+
+
 def jd_logistics_block(job):
     """Return the JD passage that rules the job out on location/work-arrangement, or '' when eligible."""
     loc = job.get('location') or ''
@@ -189,18 +275,14 @@ def jd_logistics_block(job):
     inferred = (job.get('ats') or '').lower() in ('linkedin', 'indeed')
     trusted_remote = not inferred and (job.get('remote') is True or 'remote' in loc.lower())
     patterns = (_JD_HARD_ONSITE_RE,) if trusted_remote else (_JD_HARD_ONSITE_RE, _JD_SOFT_ONSITE_RE)
-    for pattern in patterns:
-        for m in pattern.finditer(text):
-            window = text[max(0, m.start() - 80):m.end() + 80]
-            if (_JD_OPTIONS_RE.search(window) or _JD_OPTIONAL_RE.search(window)
-                    or _JD_NEGATED_BEFORE_RE.search(text[max(0, m.start() - 15):m.start()])):
-                continue
-            return text[max(0, m.start() - 40):m.end() + 40].replace('\n', ' ').strip()
+    passage = _onsite_passage(text, patterns)
+    if passage:
+        return passage
 
     m = _JD_FOREIGN_REMOTE_RE.search(text)
     if m and not JD_US_REMOTE_RE.search(text):
         return m.group(0)
-    return ''
+    return remote_restriction(job, text)
 
 
 _PRIMARY_ROLE_GROUPS = [
@@ -231,12 +313,15 @@ _AVOID_KEYWORDS_PATTERN = re.compile(
     r'|(?:obtain|maintain|hold)(?: and maintain)? (?:an? )?(?:active )?(?:u\.?s\.? )?(?:government |security |secret )?clearance)\b'
 )
 _CLEARANCE_NEGATION_RE = re.compile(r"\b(?:no|not|without|doesn't|does not)\b[^.\n]{0,25}$")
+# Matched clearance wording to let through, e.g. ["public trust"] (a background check, not a clearance)
+_CLEARANCE_IGNORE_TERMS = {t.lower() for t in (_EXP_CFG.get("clearance_ignore_terms") or [])}
 
 
 def _requires_clearance(text):
     if not _REJECT_CLEARANCE:
         return False
-    return any(not _CLEARANCE_NEGATION_RE.search(text[max(0, m.start() - 40):m.start()])
+    return any(m.group(0) not in _CLEARANCE_IGNORE_TERMS
+               and not _CLEARANCE_NEGATION_RE.search(text[max(0, m.start() - 40):m.start()])
                for m in _AVOID_KEYWORDS_PATTERN.finditer(text))
 
 
@@ -333,21 +418,50 @@ _PRIMARY_YOE_CONTEXT_RE = re.compile(_PRIMARY_YOE_CTX, re.I) if _PRIMARY_YOE_CTX
 _DEGREE_EQUIV_RE = re.compile(r'degree[^\n]{0,45}\b(?:or|equivalent)\b')
 
 
-def _match_years(m):
+# "5-8+ years": the number a pattern captured may be the top of a range; the minimum is the bottom
+_RANGE_LOW_BEFORE_RE = re.compile(r'(\d{1,2})\s*\+?\s*(?:-|–|—|to)\s*$')
+# "5+ years for senior, 8+ years for staff" / "5+ years (lead consultant)": a figure for another level
+_OTHER_LEVEL_AFTER_RE = re.compile(
+    r'^\s*(?:of (?:[\w-]+ ){0,3}experience\s*)?(?:for|\(|as|at)\s*(?:an? |the )?'
+    r'(?:staff|principal|lead|distinguished|architect|manager|director)\b'
+)
+# "(ideally 8+ years)", "preferably 10 years": a wish, not a minimum
+_SOFT_YEARS_BEFORE_RE = re.compile(r'\b(?:ideally|preferably|preferred|bonus|a plus|nice to have)\b[\s:,(]*(?:with\s+)?$')
+
+
+def _match_years(m, text=None):
+    """Minimum years a YoE match asks for. Given the text, a range ("5-8+ years") counts as its bottom."""
     n = m.group(1)
-    return int(n) if n.isdigit() else _WORD_NUMBERS[n]
+    years = int(n) if n.isdigit() else _WORD_NUMBERS[n]
+    if text is not None:
+        low = _RANGE_LOW_BEFORE_RE.search(text[max(0, m.start(1) - 8):m.start(1)])
+        if low:
+            years = min(years, int(low.group(1)))
+    return years
 
 
 def _yoe_matches(text):
+    """YoE asks that bind this role: skips degree-equivalency boilerplate, figures quoted for another
+    level, and soft asks ("ideally 8+ years", or anything under a nice-to-have heading)."""
     raw = (list(_YOE_AFTER_RE.finditer(text)) + list(_YOE_BEFORE_RE.finditer(text))
            + list(_YOE_IN_FIELD_RE.finditer(text)))
-    return [m for m in raw if not _DEGREE_EQUIV_RE.search(text[max(0, m.start() - 60):m.start()])]
+    kept = []
+    for m in raw:
+        start = m.start(1)  # the number itself; _YOE_BEFORE_RE matches start earlier, at "experience"
+        if _DEGREE_EQUIV_RE.search(text[max(0, m.start() - 60):m.start()]):
+            continue
+        if _OTHER_LEVEL_AFTER_RE.search(text[m.end():m.end() + 50]):
+            continue
+        if _SOFT_YEARS_BEFORE_RE.search(text[max(0, start - 30):start]) or _in_soft_section(text, start):
+            continue
+        kept.append(m)
+    return kept
 
 
 def _requires_high_yoe(text):
     text = strip_markdown(text)
     for m in _yoe_matches(text):
-        years = _match_years(m)
+        years = _match_years(m, text)
         if years > MAX_MIN_YOE:
             return True
         if _SECONDARY_YOE_CONTEXT_RE:
@@ -389,7 +503,8 @@ _OFF_CENTER_RATIO = float(_OFF_CENTER_CFG.get("ratio", 1.5))
 
 
 def _max_min_yoe(text):
-    return max((_match_years(m) for m in _yoe_matches(strip_markdown(text))), default=0)
+    text = strip_markdown(text)
+    return max((_match_years(m, text) for m in _yoe_matches(text)), default=0)
 
 
 STRONG_TITLE_POINTS = 20
@@ -550,7 +665,9 @@ def evaluate_single_job(job):
     title = (job.get('title') or '').lower()
     desc = (job.get('description_ai') or '').lower()
     full_desc = (job.get('description_full') or desc).lower()
-    stack = [s.lower() for s in job.get('stack_detected', [])]
+    # stack_detected is only a fallback for old rows saved without the full JD: skills are matched as whole
+    # terms in the text itself, so a stack list built another way cannot add credit the JD does not support
+    stack = [] if job.get('description_full') else [s.lower() for s in job.get('stack_detected', [])]
     loc = (job.get('location') or '').lower()
 
     # 1. Dead postings and blind company listings
@@ -604,15 +721,49 @@ def _dedupe_key(entry):
     return ('role', key) if key and company != 'unknown' else ('url', entry["url"])
 
 
+_JD_KEY_SKIP, _JD_KEY_LEN, _JD_KEY_MIN = 200, 800, 300
+
+
+def jd_key(job):
+    """'jd:<hash>|<title key>' identifying a posting by its JD text and title, so the same role posted under
+    another company name (a brand vs its parent, an ATS slug, a reposter) still matches. '' for short JDs."""
+    text = re.sub(r'[^a-z0-9]', '', (job.get('description_full') or job.get('description_ai') or '').lower())
+    title = role_key('x', job.get('title')).partition('|')[2]
+    if len(text) < _JD_KEY_MIN or not title:
+        return ''
+    # Skip the opening, which is often a per-source header, when the JD is long enough to spare it
+    body = text[_JD_KEY_SKIP:_JD_KEY_SKIP + _JD_KEY_LEN] if len(text) >= _JD_KEY_SKIP + _JD_KEY_MIN else text
+    return f"jd:{hashlib.sha1(body.encode()).hexdigest()[:16]}|{title}"
+
+
+def _same_posting(a, b):
+    """Same JD text, and the same title or one title extending the other ("Core Engineer" / "Core Engineer New")."""
+    (fp_a, _, title_a), (fp_b, _, title_b) = a.partition('|'), b.partition('|')
+    return fp_a == fp_b and (title_a.startswith(title_b) or title_b.startswith(title_a))
+
+
 def _dedupe_by_role(entries):
-    """Keep one entry per company+title with the highest score, linking to the company's
-    own ATS posting when any duplicate has one instead of an aggregator link."""
+    """Keep one entry per role with the highest score, linking to the company's own ATS posting when any
+    duplicate has one instead of an aggregator link. Entries are the same role when they share a
+    company+title key, or the same JD text and title under different company names."""
     groups = {}
     for e in entries:
         groups.setdefault(_dedupe_key(e), []).append(e)
-    deduped = []
+    merged = []  # (entries, their jd keys) per distinct role
     for dupes in groups.values():
+        keys = {e["jd_key"] for e in dupes if e.get("jd_key")}
+        home = next((g for g in merged if any(_same_posting(a, b) for a in keys for b in g[1])), None)
+        if home is None:
+            merged.append((list(dupes), keys))
+        else:
+            home[0].extend(dupes)
+            home[1].update(keys)
+    deduped = []
+    for dupes, jd_keys in merged:
         best = dict(max(dupes, key=lambda e: e["score"]))
+        # Every name this role was posted under, so blocklisting it also covers the other spellings
+        role_keys = {role_key(e.get("company"), e.get("title")) for e in dupes}
+        best["dup_keys"] = sorted((role_keys | jd_keys) - {""})
         direct = [e for e in dupes if not is_aggregator_url(e["url"])]
         if direct:
             best["url"] = max(direct, key=lambda e: e["score"])["url"]
@@ -666,7 +817,8 @@ def evaluate_jobs(input_path, output_path=None):
             "category": res["category"],
             "url": j.get("url", "#"),
             "first_seen": j.get("first_seen", ""),
-            "posted": j.get("posted") or (j.get("first_seen") or "")[:10]
+            "posted": j.get("posted") or (j.get("first_seen") or "")[:10],
+            "jd_key": jd_key(j),
         }
 
         if res["category"] == "Manual Review":

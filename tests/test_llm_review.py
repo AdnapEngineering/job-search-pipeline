@@ -1,3 +1,5 @@
+import _fixture_config  # noqa: F401  (must come before any pipeline import)
+
 import contextlib
 import hashlib
 import io
@@ -171,7 +173,7 @@ class ProviderTests(unittest.TestCase):
                     self.assertEqual((result["score"], result["verdict"]), (100, "apply"))
 
     @patch("llm_review.subprocess.run")
-    def test_review_matches_caches_success_and_retains_failed_keyword_score(self, run):
+    def test_review_matches_caches_success_and_holds_failed_reviews(self, run):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             profile = root / "profile.md"
@@ -192,9 +194,101 @@ class ProviderTests(unittest.TestCase):
                 with patch.object(review, "PROVIDER", "anthropic"), contextlib.redirect_stderr(io.StringIO()):
                     run.return_value = completed("", 1)
                     kept, skipped = review.review_matches([JOB], str(enriched))
-                    self.assertEqual(kept, [JOB])
+                    # The keyword score is retained, but the job is held back until a review succeeds
+                    self.assertEqual(kept, [dict(JOB, review_failed=True)])
                     self.assertEqual(skipped, [])
                     self.assertEqual(run.call_count, 2)
+
+
+class ScoringAndFlagTests(unittest.TestCase):
+    PARTS = {"hard_reqs": 4, "core_work": 3, "evidence": 2, "level": 2}  # 92%
+
+    def test_third_party_is_a_label_not_a_penalty(self):
+        flagged = review._parse_verdict(json.dumps(dict(json.loads(VERDICT), third_party=True)), JD)
+        plain = review._parse_verdict(VERDICT, JD)
+        self.assertTrue(flagged["third_party"])
+        self.assertFalse(plain["third_party"])
+        self.assertEqual((flagged["score"], flagged["verdict"]), (plain["score"], plain["verdict"]))
+        self.assertIn("third_party", review.PROMPT)
+        job = dict(JOB, verdict="apply", ai_reason="Strong match", blockers=[], keyword_score=80, third_party=True)
+        self.assertTrue(review.reason_for_notion(job).startswith("[Third-party poster] APPLY: Strong match"))
+        self.assertTrue(review.reason_for_notion(dict(job, third_party=False)).startswith("APPLY:"))
+
+    def test_apply_follows_the_sync_threshold(self):
+        self.assertEqual(review.APPLY_MIN, 80)  # fixture sets min_sync_score 80 and no apply_min_score
+        self.assertEqual(review.score_components({"hard_reqs": 2, "core_work": 3, "evidence": 3, "level": 1}),
+                         (75, "stretch"))
+        self.assertEqual(review.score_components({"hard_reqs": 3, "core_work": 3, "evidence": 3, "level": 1}),
+                         (83, "apply"))
+
+    def test_pay_floor_is_a_cliff_by_default(self):
+        self.assertEqual(review.score_components(self.PARTS, pay=(128500.0, 128500.0)), (30, "skip"))
+        self.assertEqual(review.score_components(self.PARTS, pay=(130000.0, 130000.0)), (92, "apply"))
+
+    def test_pay_floor_taper_is_linear_between_taper_from_and_min_salary(self):
+        with patch.object(review, "PAY_FLOOR_TAPER_FROM", 100000.0), patch.object(review, "PAY_MIDPOINT_PENALTY", 0):
+            caps = {top: review.pay_floor_cap((top, top)) for top in (90000.0, 100000.0, 115000.0, 129000.0, 130000.0)}
+            self.assertEqual(caps, {90000.0: 30, 100000.0: 30, 115000.0: 65, 129000.0: 98, 130000.0: 100})
+            self.assertEqual(review.score_components(self.PARTS, pay=(128500.0, 128500.0)), (92, "apply"))
+            self.assertEqual(review.score_components(self.PARTS, pay=(115000.0, 115000.0)), (65, "stretch"))
+            self.assertEqual(review.score_components(self.PARTS, pay=(95000.0, 95000.0)), (30, "skip"))
+            # A hard blocker still caps, whatever the pay
+            blocked = dict(self.PARTS, hard_reqs=0)
+            self.assertEqual(review.score_components(blocked, pay=(200000.0, 200000.0))[0], 30)
+
+    def test_cached_reviews_are_rescored_with_current_rules(self):
+        cached = {"verdict": "apply", "score": 75, "reason": "r", "blockers": [], "pay": None,
+                  "components": {"hard_reqs": 2, "core_work": 3, "evidence": 3, "level": 1, "logistics_ok": True}}
+        self.assertEqual(review._rescored(cached)["verdict"], "stretch")
+        legacy = {"verdict": "apply", "reason": "r", "blockers": []}
+        self.assertEqual(review._rescored(legacy), legacy)
+
+
+class CacheAndHoldTests(unittest.TestCase):
+    def run_review(self, run, cache_seed, jobs, stdout):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "profile.md").write_text("test profile", encoding="utf-8")
+            (root / "jobs.json").write_text(json.dumps([dict(j, description_full=JD) for j in jobs]), encoding="utf-8")
+            cache = root / "cache.json"
+            with (patch.object(review, "PROFILE_PATH", str(root / "profile.md")),
+                  patch.object(review, "CACHE_PATH", str(cache)),
+                  patch.object(review, "_provider_config", return_value="/test/cli"),
+                  contextlib.redirect_stdout(stdout), contextlib.redirect_stderr(io.StringIO())):
+                phash = review._profile_hash("test profile", review.DEFAULT_MODEL, review.PROVIDER)
+                cache.write_text(json.dumps(cache_seed(phash)), encoding="utf-8")
+                kept, skipped = review.review_matches(jobs, str(root / "jobs.json"))
+                return kept, skipped, json.loads(cache.read_text(encoding="utf-8"))
+
+    @patch("llm_review.subprocess.run")
+    def test_old_profile_entries_are_pruned_and_current_ones_kept(self, run):
+        run.return_value = completed(AGY_OUTPUT)
+        current = {"verdict": "skip", "score": 25, "reason": "r", "blockers": [],
+                   "components": {"hard_reqs": 1, "core_work": 1, "evidence": 1, "level": 0, "logistics_ok": True}}
+        seed = lambda phash: {  # noqa: E731
+            "https://example.com/jobs/old-1": {"profile": "0123456789abcdef", "result": {"verdict": "apply"}},
+            "https://example.com/jobs/old-2": {"profile": "fedcba9876543210", "result": {"verdict": "skip"}},
+            "https://example.com/jobs/current": {"profile": phash, "result": current},
+        }
+        out = io.StringIO()
+        _, _, cache = self.run_review(run, seed, [JOB], out)
+        self.assertEqual(set(cache), {"https://example.com/jobs/current", "https://example.com/jobs/123"})
+        self.assertIn("pruned 2 cached review(s)", out.getvalue())
+
+    @patch("llm_review.subprocess.run")
+    def test_failed_review_is_held_and_low_scores_are_not(self, run):
+        run.return_value = completed("", 1)
+        below_review_floor = dict(JOB, url="https://example.com/jobs/low", score=40)
+        out = io.StringIO()
+        kept, skipped, _ = self.run_review(run, lambda phash: {}, [JOB, below_review_floor], out)
+        self.assertEqual(skipped, [])
+        by_url = {j["url"]: j for j in kept}
+        self.assertTrue(by_url[JOB["url"]]["review_failed"])
+        self.assertEqual(by_url[JOB["url"]]["score"], 80)
+        self.assertNotIn("review_failed", by_url[below_review_floor["url"]])
+        self.assertIn("1 not reviewed", out.getvalue())
+        self.assertTrue(review.reason_for_notion(dict(by_url[JOB["url"]], reason="React"))
+                        .startswith("[AI review failed, held for retry]"))
 
 
 if __name__ == "__main__":

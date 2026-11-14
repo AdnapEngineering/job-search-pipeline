@@ -59,7 +59,8 @@ All career-specific rules—target titles, skills, scoring weights, experience c
                                       ▼
 ┌────────────────────────────────────────────────────────────────────────────┐
 │ 4. Calibrated LLM Rubric Review (llm_review.py)                            │
-│    • Drops roles already in Notion blocklists before spending LLM quota.   │
+│    • Drops roles already in Notion blocklists, and remote roles limited to │
+│      other states/time zones, before spending LLM quota.                   │
 │    • Grades each match against candidate_profile.md on a 12-point rubric:  │
 │      hard_reqs (0–4), core_work (0–3), evidence (0–3), level (0–2).        │
 │    • Verifies verbatim evidence_quote against the JD to prevent            │
@@ -301,13 +302,13 @@ Write an honest summary of the candidate's background. [`llm_review.py`](llm_rev
 | :--- | :--- |
 | `paths` | Override where data files (`filtered_jobs`, `enriched_jobs`, `blocklist`, `review_cache`, `text_export`, ...) and `candidate_profile` live. Relative paths resolve from the repository directory, not the directory you run from; `~` is expanded. |
 | `sources` | Set `lookback_days`, LinkedIn/Indeed `search_terms` and `searches` (`[site, location, suffix, count]`), and `jobicy_url` industry parameter. |
-| `location` | Set `allow_remote`, `local_metro_patterns` (cities/suburbs in your metro area), `local_metro_exclude_patterns` (same-named cities in other states), and `allowed_country_pattern`. |
-| `compensation` | Set `min_salary` (annual USD floor), `pay_midpoint_max_cap`, and `pay_midpoint_penalty`. Set `min_salary: 0` to disable salary filtering. |
-| `experience` | Set `max_min_yoe` (rejects JDs asking for more than N years), `max_min_secondary_yoe` (ceiling for a secondary skill area), `reject_clearance`, and `reject_foreign_language_req`. |
+| `location` | Set `allow_remote`, `local_metro_patterns` (cities/suburbs in your metro area), `local_metro_exclude_patterns` (same-named cities in other states), and `allowed_country_pattern`. Set `home_states` (e.g. `["CO"]`) and `home_timezones` (any of `eastern`, `central`, `mountain`, `pacific`) to drop remote roles restricted to other states or time zones ("Remote - TX", "must reside in MA, IN, or TX", "must be located in the Eastern time zone") before the LLM review; both rules are off while the lists are empty. |
+| `compensation` | Set `min_salary` (annual USD floor), `pay_midpoint_max_cap`, and `pay_midpoint_penalty`. Set `min_salary: 0` to disable salary filtering. A posting whose pay band tops out below `min_salary` is capped at `llm_review.blocker_cap`. Set `pay_floor_taper_from` (a figure below `min_salary`) to soften that cliff: the cap then rises in a straight line from `blocker_cap` at `pay_floor_taper_from` to 100 at `min_salary`. `0` keeps the cliff. |
+| `experience` | Set `max_min_yoe` (rejects JDs asking for more than N years; a range such as "5-8+ years" counts as its lower bound, and figures quoted for another level or as "ideally"/nice-to-have are ignored), `max_min_secondary_yoe` (ceiling for a secondary skill area), `reject_clearance`, `clearance_ignore_terms` (clearance wording to let through, e.g. `["public trust"]`), and `reject_foreign_language_req`. |
 | `titles` | Define `target_patterns` (Stage 1 pre-filter), `strong_target_patterns` (titles that override soft exclusions), `primary_role_groups` (+20 pt title bonus), `primary_role_patterns` (+20 pt LinkedIn/Indeed title boost), `exclude_seniority_patterns`, `exclude_tech_patterns`, and `exclude_role_patterns`. |
 | `companies` | List `exclude_companies`, `exclude_recruiters` (staffing agencies/aggregators), `allow_recruiters`, and `company_aliases` (e.g. parent company -> brand name). |
 | `skills_and_scoring` | Define `core_strengths` (+5 pts each, up to `core_strengths_cap`), `focus_keywords` (weighted +5/+10/+15 domain terms, up to `domain_score_cap`), `hard_exclude_skills` (rejected in requirements unless listed as an optional/alternative skill), `hard_ask_penalties`, and `off_center_role_check`. |
-| `llm_review` | Select `provider` and `model`, customize `rubric_descriptions` (`hard_reqs`, `core_work`, `evidence`, `level`), and provide 3–8 `calibration_examples` for your career. |
+| `llm_review` | Select `provider` and `model`, customize `rubric_descriptions` (`hard_reqs`, `core_work`, `evidence`, `level`), and provide 3–8 `calibration_examples` for your career. `apply_min_score` is the Match % at which the verdict reads APPLY; leave it out to follow `skills_and_scoring.min_sync_score`, so that APPLY always means "will be synced". |
 | `notion` | Set `database_id` (or use `NOTION_DATABASE_ID` in `.env`). Optionally set `summary_page_id` (the page that hosts the run-summary Callout; defaults to the database's parent page). `summary_block_id` is filled in automatically the first time the Callout is created. Expects Notion database properties: `Company & Stage` (Title), `Role Title & Compensation` (Text), `Location` (Text), `Why It Matches` (Text), `Match %` (Text), `Link` (URL), `Date Posted` (Date), and `Originally Posted` (Date). |
 | `text_export` | Set `enabled: true` to append new qualified matches to `paths.text_export` (`data/job_matches.txt` by default)—a plain-text alternative or companion to Notion. |
 
@@ -334,7 +335,11 @@ CLI reviews send the candidate profile and selected job details to the provider 
 
 Claude runs with built-in tools disabled, MCP auto-configuration and slash commands disabled, and session persistence off. Codex runs in a read-only sandbox with ephemeral sessions. Both run from an empty temporary directory, but CLI configuration and managed policies can still affect behavior; review them before running on sensitive data. Codex may still use tools permitted by its sandbox and configuration.
 
-If the CLI is missing, not signed in, times out, fails, or returns an invalid/incomplete review, the pipeline reports the problem and retains the keyword verdict and score for affected jobs. An unknown provider is a configuration error. Use `--no-llm-review` to skip this stage entirely without provider setup.
+If a review times out, fails, or returns an invalid/incomplete reply, the pipeline reports the problem and keeps the job's keyword score, but **holds the job back**: it is listed in the summary as `[AI review failed, held for retry]`, is not synced or exported, and is reviewed again on the next run. If the CLI is not installed at all (or `candidate_profile.md` is missing), the stage is skipped and matches are output on their keyword scores, as with `--no-llm-review`. An unknown provider is a configuration error.
+
+**Third-party posters.** The review also flags postings that come from a staffing agency, recruiter, consultancy or aggregator rather than the employer. The flag never changes the score: flagged roles sync as usual, with `[Third-party poster]` at the start of the "Why It Matches" text in Notion, the Markdown summary and the `.txt` export, and a count in the push notification.
+
+**Cache upkeep.** Cached reviews made under an older profile, prompt, model or provider can never be read again and are pruned on the next run. The Match % and verdict of a cached review are recomputed from its stored grades on every run, so changes to `min_sync_score`, `apply_min_score` or the pay rules apply without paying for new reviews. Editing the profile, rubric or calibration examples still re-reviews every open match once.
 
 ---
 
@@ -423,17 +428,28 @@ Each run appends a timestamped block containing only matches at or above `--min-
     Link: https://jobs.example.org/456
 ```
 
-**How deduplication works:** exported roles are added to the same URL and `company|title` blocklists (`data/blocklist.json`, `data/blocklist_roles.json`) that Notion sync uses, so a role is written once and reposts on other boards are skipped. If Notion is also active, Notion sync handles the blocklisting instead, so a role that fails to reach Notion is retried on the next run (and may appear in the `.txt` again). To re-export everything from scratch, delete those two blocklist files.
+**How deduplication works:** roles are matched by `company|title`, and also by JD text plus title, so the same posting under another company name (a brand and its parent, a reposter) is one role. Exported roles are added to the same URL and role blocklists (`data/blocklist.json`, `data/blocklist_roles.json`) that Notion sync uses, so a role is written once and reposts on other boards are skipped. If Notion is also active, Notion sync handles the blocklisting instead, so a role that fails to reach Notion is retried on the next run (and may appear in the `.txt` again). To re-export everything from scratch, delete those two blocklist files.
 
 **Other formats:** `--md-output PATH` writes the full Markdown table (matches, manual reviews, AI skips, location drops), overwritten each run. `data/evaluated_jobs.json` holds the raw Stage 3 results as JSON for custom integrations.
 
 ### Automate with Cron
 
-Run 3 times daily (e.g., 7:10 AM, 12:10 PM, 5:10 PM):
+Run 3 times daily (e.g., 7:10 AM, 12:10 PM, 7:10 PM):
 
 ```cron
-10 7,12,17 * * * /path/to/job-search-pipeline/run_job_search.sh
+10 7,12,19 * * * /path/to/job-search-pipeline/run_job_search.sh
 ```
+
+The wrapper appends every run to `cron_job_search.log` next to the scripts and does not rotate it. Trim it yourself or point `logrotate` at it (use `copytruncate`, since the wrapper reopens the file by name on each run).
+
+### Run the Tests
+
+```bash
+ruff check .
+python3 -m unittest discover -s tests
+```
+
+The tests load `tests/fixtures/config.json` (a made-up search) through `tests/_fixture_config.py` and write only to a temporary directory, so they pass whatever your own `config.json` says and never touch `data/`.
 
 ---
 
@@ -441,7 +457,7 @@ Run 3 times daily (e.g., 7:10 AM, 12:10 PM, 5:10 PM):
 
 | File | Purpose |
 | :--- | :--- |
-| [`run_job_search.sh`](run_job_search.sh) | Shell wrapper with `flock` concurrency lock, `.env` loading, and log rotation. |
+| [`run_job_search.sh`](run_job_search.sh) | Shell wrapper with `flock` concurrency lock and `.env` loading; appends each run to `cron_job_search.log` (not rotated). |
 | [`run_pipeline.py`](run_pipeline.py) | End-to-end orchestrator, source-health monitor, pre-LLM blocklist filter, and notifier. |
 | [`pipeline_config.py`](pipeline_config.py) | Central loader for `config.json`, path resolution (relative `paths` entries resolve from the repo directory), shared JSON read/atomic-write helpers, and regex compilation helpers. |
 | [`blocklist.py`](blocklist.py) | Shared dedup state: `company\|title` role keys plus the URL and role blocklists used by every stage. |
@@ -456,3 +472,4 @@ Run 3 times daily (e.g., 7:10 AM, 12:10 PM, 5:10 PM):
 | [`sync_notion_db.py`](sync_notion_db.py) | Stage 5 Notion database syncer (records synced roles in the blocklists) and Callout dashboard logger. |
 | [`text_export.py`](text_export.py) | Stage 5 plain-text alternative to Notion: appends new qualified matches to a `.txt` log and records them in the blocklists. |
 | [`url_normalizer.py`](url_normalizer.py) | Canonical URL normalizer (strips tracking parameters, redundant `gh_jid`, and fragments). |
+| [`tests/`](tests) | Unit and regression tests, run against the generic `tests/fixtures/config.json`. |

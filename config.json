@@ -56,6 +56,8 @@
     ],
     "local_state_only_pattern": "^\\W*(?:your_state_abbr|your_state_name)(?:\\W+(?:us|usa|united states(?: of america)?))?\\W*$",
     "jd_local_metro_pattern": "\\b(your city,? (?:st|state_name)\\b|nearby suburb 1|nearby suburb 2)",
+    "home_states": [],
+    "home_timezones": [],
     "allowed_country_pattern": "\\b(us|united states|usa)\\b",
     "country_token_pattern": "(?:US|USA|U\\.S\\.A?\\.?|United States|continental U\\.?S\\.?)",
     "global_eligible_pattern": "\\b(worldwide|anywhere|global|north america|northern america|americas)\\b",
@@ -72,7 +74,8 @@
   "compensation": {
     "min_salary": 100000,
     "pay_midpoint_max_cap": 120000,
-    "pay_midpoint_penalty": 10
+    "pay_midpoint_penalty": 10,
+    "pay_floor_taper_from": 0
   },
   "experience": {
     "max_min_yoe": 7,
@@ -83,6 +86,7 @@
     "max_senior_role_years": 3,
     "top_yoe_penalty": 10,
     "reject_clearance": true,
+    "clearance_ignore_terms": [],
     "reject_foreign_language_req": true
   },
   "titles": {
@@ -266,7 +270,7 @@
       "level": 2
     },
     "blocker_cap": 30,
-    "apply_min_score": 75,
+    "apply_min_score": 80,
     "stretch_min_score": 50,
     "quote_match_ratio": 0.85,
     "rubric_descriptions": {

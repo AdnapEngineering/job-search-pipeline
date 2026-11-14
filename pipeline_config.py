@@ -58,6 +58,13 @@ def get_path(key: str, default_rel: str) -> str:
     return os.path.join(SCRIPT_DIR, os.path.expanduser(val))
 
 
+def term_regex(term: str, allow_suffix: bool = False) -> re.Pattern:
+    """Whole-term match that also works for terms with symbols (c++, c#, .net, next.js), so 'java'
+    does not match inside 'javascript'. With allow_suffix the term may continue (design system -> systems)."""
+    tail = '' if allow_suffix else r'(?![\w+#])'
+    return re.compile(r'(?<![\w.+#])' + re.escape(term) + tail)
+
+
 def compile_regex_list(patterns: list[str] | None, flags: int = 0) -> list[re.Pattern]:
     return [re.compile(p, flags) for p in (patterns or []) if p]
 

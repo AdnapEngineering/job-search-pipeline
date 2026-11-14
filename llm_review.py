@@ -36,17 +36,23 @@ WORKERS = int(_LLM_CFG.get("workers", 3))
 JD_CHARS = int(_LLM_CFG.get("jd_chars", 9000))
 JD_HEAD_CHARS = int(_LLM_CFG.get("jd_head_chars", 2500))
 VERDICTS = ("apply", "stretch", "skip")
+THIRD_PARTY_LABEL = "[Third-party poster]"
+REVIEW_FAILED_LABEL = "[AI review failed, held for retry]"
 REVIEW_VERSION = str(_LLM_CFG.get("review_version", "1"))
 
 COMPONENTS = _LLM_CFG.get("components") or {"hard_reqs": 4, "core_work": 3, "evidence": 3, "level": 2}
 MAX_TOTAL = sum(COMPONENTS.values())
 BLOCKER_CAP = int(_LLM_CFG.get("blocker_cap", 30))
-APPLY_MIN = int(_LLM_CFG.get("apply_min_score", 75))
+# "apply" means "will be synced": unless set explicitly, the verdict line follows the sync threshold
+APPLY_MIN = int(_LLM_CFG.get("apply_min_score") or (CFG.get("skills_and_scoring") or {}).get("min_sync_score") or 80)
 STRETCH_MIN = int(_LLM_CFG.get("stretch_min_score", 50))
 
 MIN_SALARY = float(_COMP_CFG.get("min_salary", 0))
 PAY_MIDPOINT_MAX_CAP = float(_COMP_CFG.get("pay_midpoint_max_cap", 0))
 PAY_MIDPOINT_PENALTY = int(_COMP_CFG.get("pay_midpoint_penalty", 10))
+# With pay_floor_taper_from set (below min_salary), a band topping out between the two is capped on a
+# straight line from BLOCKER_CAP (at taper_from) to 100 (at min_salary) instead of dropping to the cap at once
+PAY_FLOOR_TAPER_FROM = float(_COMP_CFG.get("pay_floor_taper_from", 0))
 QUOTE_MATCH_RATIO = float(_LLM_CFG.get("quote_match_ratio", 0.85))
 HOURS_PER_YEAR = 2080
 
@@ -98,10 +104,12 @@ PROMPT = (
     "pay_min, pay_max: the lowest and highest annual base salary figures in the posting, in dollars "
     "(null when the posting gives none; hourly rates times 2080). Do not count pay in hard_reqs.\n"
     "logistics_ok: false if the location, hybrid/onsite requirement, or work authorization rules the candidate out.\n"
+    "third_party: true if the posting comes from a staffing agency, recruiter, consultancy placing people with "
+    "its clients, or a job aggregator rather than from the employer itself. This does not change any grade.\n"
     f"{_CALIBRATION_BLOCK}\n"
     "Reply with one JSON object and nothing else, in this shape:\n"
     "{{\"hard_reqs\": 0, \"core_work\": 0, \"evidence\": 0, \"evidence_quote\": \"verbatim sentence from the posting\", "
-    "\"level\": 0, \"logistics_ok\": true, \"pay_min\": null, \"pay_max\": null, \"verdict\": \"apply|stretch|skip\", "
+    "\"level\": 0, \"logistics_ok\": true, \"third_party\": false, \"pay_min\": null, \"pay_max\": null, \"verdict\": \"apply|stretch|skip\", "
     "\"reason\": \"one plain sentence, under 160 characters, naming the deciding factor\", "
     "\"blockers\": [\"short phrases for each hard gap, empty if none\"]}}"
 )
@@ -172,6 +180,16 @@ def _below_pay_floor(pay):
     return MIN_SALARY > 0 and bool(pay) and pay[1] < MIN_SALARY
 
 
+def pay_floor_cap(pay):
+    """Highest Match % a band topping out below min_salary may keep (100 when the floor does not apply)."""
+    if not _below_pay_floor(pay):
+        return 100
+    if not 0 < PAY_FLOOR_TAPER_FROM < MIN_SALARY or pay[1] <= PAY_FLOOR_TAPER_FROM:
+        return BLOCKER_CAP
+    share = (pay[1] - PAY_FLOOR_TAPER_FROM) / (MIN_SALARY - PAY_FLOOR_TAPER_FROM)
+    return round(BLOCKER_CAP + (100 - BLOCKER_CAP) * share)
+
+
 def _parse_verdict(text, jd="", salary=None):
     """Pull the JSON object out of the model's reply, tolerating code fences and stray prose."""
     text = re.sub(r"```(?:json)?", "", text or "")
@@ -207,6 +225,7 @@ def _parse_verdict(text, jd="", salary=None):
         "score": score,
         "components": dict(parts, logistics_ok=logistics_ok),
         "evidence_quote": quote[:300] if quote_ok else "",
+        "third_party": obj.get("third_party") is True,
         "pay": list(pay) if pay else None,
         "model_verdict": model_verdict if model_verdict in VERDICTS else "",
         "reason": str(obj.get("reason", "")).strip()[:200],
@@ -219,8 +238,9 @@ def score_components(parts, logistics_ok=True, pay=None):
     score = round(100 * sum(parts.values()) / MAX_TOTAL)
     if _below_pay_midpoint(pay):
         score -= PAY_MIDPOINT_PENALTY
-    if parts["hard_reqs"] == 0 or not logistics_ok or _below_pay_floor(pay):
+    if parts["hard_reqs"] == 0 or not logistics_ok:
         score = min(score, BLOCKER_CAP)
+    score = min(score, pay_floor_cap(pay))
     verdict = "apply" if score >= APPLY_MIN else "stretch" if score >= STRETCH_MIN else "skip"
     return score, verdict
 
@@ -345,8 +365,23 @@ def _review_one(executable, model, profile, job, jd_by_url, salary_by_url=None, 
     return None
 
 
+def _rescored(result):
+    """A cached result with its Match % and verdict recomputed, so threshold and pay-rule changes in
+    config.json apply to reviews already paid for (the model's grades themselves are unchanged)."""
+    parts = result.get("components")
+    if not isinstance(parts, dict) or any(name not in parts for name in COMPONENTS):
+        return result
+    pay = tuple(result["pay"]) if result.get("pay") else None
+    score, verdict = score_components({name: parts[name] for name in COMPONENTS},
+                                      parts.get("logistics_ok") is not False, pay)
+    return dict(result, score=score, verdict=verdict)
+
+
 def review_matches(matches, enriched_path, min_score=55):
-    """Review every match scoring >= min_score. Returns (kept, skipped)."""
+    """Review every match scoring >= min_score. Returns (kept, skipped).
+
+    A match that was due a review and did not get one (timeout, CLI failure, unparseable reply, JD too
+    short) is kept with review_failed=True: it is shown but not synced or exported, and is retried next run."""
     executable = _provider_config(PROVIDER)
     if not executable:
         return matches, []
@@ -366,7 +401,7 @@ def review_matches(matches, enriched_path, min_score=55):
         key = normalize_url(job.get("url", ""))
         hit = cache.get(key)
         if hit and hit.get("profile") == phash:
-            results[key] = hit["result"]
+            results[key] = _rescored(hit["result"])
         else:
             todo.append(job)
 
@@ -388,27 +423,41 @@ def review_matches(matches, enriched_path, min_score=55):
                 key = normalize_url(job.get("url", ""))
                 results[key] = out
                 cache[key] = {"profile": phash, "result": out}
+    # Entries reviewed under another profile, prompt, model or provider can never be read again
+    stale = [key for key, hit in cache.items() if not isinstance(hit, dict) or hit.get("profile") != phash]
+    if todo or stale:
+        for key in stale:
+            del cache[key]
         atomic_write_json(CACHE_PATH, cache, indent=1)
+        if stale:
+            print(f"[AI review] pruned {len(stale)} cached review(s) from an older profile or prompt.")
 
-    kept, skipped = [], []
+    kept, skipped, failed = [], [], 0
     for job in matches:
         out = results.get(normalize_url(job.get("url", "")))
         if out:
             job = dict(job, verdict=out["verdict"], ai_reason=out["reason"], blockers=out["blockers"],
-                       components=out.get("components"))
+                       components=out.get("components"), third_party=bool(out.get("third_party")))
             if out.get("score") is not None:
                 job["keyword_score"], job["score"] = job.get("score", 0), out["score"]
+        elif job.get("score", 0) >= min_score:
+            job = dict(job, review_failed=True)
+            failed += 1
         (skipped if out and out["verdict"] == "skip" else kept).append(job)
     kept.sort(key=lambda j: j.get("score", 0), reverse=True)
-    print(f"[AI review] kept {len(kept)}, skipped {len(skipped)}.")
+    print(f"[AI review] kept {len(kept)}, skipped {len(skipped)}"
+          + (f", {failed} not reviewed (held back until a review succeeds)." if failed else "."))
     return kept, skipped
 
 
 def reason_for_notion(job):
     """Text for the Notion 'Why It Matches' column: the AI verdict when there is one."""
     if not job.get("verdict"):
+        if job.get("review_failed"):
+            return f"{REVIEW_FAILED_LABEL} {job.get('reason', '')}".strip()
         return job.get("reason", "")
-    text = f"{job['verdict'].upper()}: {job.get('ai_reason', '')}"
+    text = f"{THIRD_PARTY_LABEL} " if job.get("third_party") else ""
+    text += f"{job['verdict'].upper()}: {job.get('ai_reason', '')}"
     if job.get("blockers"):
         text += f" Gaps: {'; '.join(job['blockers'])}."
     if job.get("keyword_score") is not None:
@@ -422,4 +471,4 @@ if __name__ == "__main__":
     kept, skipped = review_matches(data["top_matches"], sys.argv[2], int(sys.argv[3]) if len(sys.argv) > 3 else 55)
     for j in kept + skipped:
         print(f"{j.get('verdict', '-'):8} {j.get('score', 0):>3}% (kw {j.get('keyword_score', '-')}) "
-              f"{j['company']} | {j['title'][:50]} | {j.get('ai_reason', '')}")
+              f"{j['company']} | {j['title'][:50]} | {reason_for_notion(j)}")

@@ -107,15 +107,30 @@ def detect_stack(text):
     ]
 
 
+_api_failures = {}  # host -> count of ATS API calls that failed for a reason other than "no such posting"
+
+
+def _note_api_failure(url, why):
+    host = urlparse(url).netloc
+    _api_failures[host] = _api_failures.get(host, 0) + 1
+    print(f"[scrape] ATS API call failed ({why}): {url}", file=sys.stderr)
+
+
 async def _get_json(session, url, headers=None, timeout=None):
-    """GET that returns a parsed JSON object, or None on any error or non-object response, without raising."""
+    """GET that returns a parsed JSON object, or None when the API has no such posting (404/410) or the call
+    fails. Network errors, bad JSON and unexpected statuses are logged and counted, since the caller then
+    falls back to HTML scraping; anything else (a bug) is raised."""
     try:
         async with session.get(url, headers=headers or HEADERS, timeout=timeout or _TIMEOUT_SHORT) as r:
             if r.status == 200:
                 data = await r.json(content_type=None)
                 return data if isinstance(data, dict) else None
-    except Exception:
-        pass
+            if r.status not in (404, 410):
+                _note_api_failure(url, f"HTTP {r.status}")
+    except asyncio.TimeoutError:
+        _note_api_failure(url, "timeout")
+    except (aiohttp.ClientError, ValueError) as e:
+        _note_api_failure(url, type(e).__name__)
     return None
 
 
@@ -233,6 +248,18 @@ def _description_from_html(html):
     return None
 
 
+def _redirected_to_board(path, final_path):
+    """True when a posting URL was redirected up to its job board (a closed posting). A redirect to another
+    posting-level page is not: some boards re-issue a live posting under a new id and forward the old link."""
+    if final_path is None:
+        return False
+    job_id = path.rstrip('/').split('/')[-1]
+    if not job_id or job_id in final_path:
+        return False
+    depth = len([p for p in path.split('/') if p])
+    return len([p for p in final_path.split('/') if p]) < depth
+
+
 async def _fetch_html(session, url, path):
     """Scrape the posting page itself, detecting expired postings by status code, redirect, or page text."""
     try:
@@ -241,8 +268,7 @@ async def _fetch_html(session, url, path):
                 return f"Posting expired (HTTP {r.status})"
             if r.status != 200:
                 return _NO_DESCRIPTION
-            job_id = path.rstrip('/').split('/')[-1]
-            if r.history and job_id and job_id not in str(r.url):
+            if _redirected_to_board(path, r.url.path if r.history else None):
                 return "Posting expired (redirected to job board)"
             return _description_from_html(await r.text(errors='replace')) or _NO_DESCRIPTION
     except asyncio.TimeoutError:
@@ -342,6 +368,10 @@ async def main():
         if len(j.get('description_ai', '')) > 100 and not j.get('description_ai', '').startswith('Posting expired')
     )
     print(f"Completed: {success_count}/{len(jobs_to_scrape)} new descriptions successfully extracted.")
+    if _api_failures:
+        detail = ", ".join(f"{host} x{n}" for host, n in sorted(_api_failures.items()))
+        print(f"WARNING: {sum(_api_failures.values())} ATS API call(s) failed and fell back to HTML scraping: {detail}",
+              file=sys.stderr)
 
     merged_by_url = {**existing_by_url, **{j['url']: j for j in new_enriched if j.get('url')}}
     seen = set()

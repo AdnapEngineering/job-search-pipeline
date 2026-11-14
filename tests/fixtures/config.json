@@ -1,0 +1,99 @@
+{
+  "sources": {"lookback_days": 3},
+  "location": {
+    "allow_remote": true,
+    "local_display_name": "Denver, CO",
+    "local_metro_patterns": [
+      "denver", "aurora", "lakewood", "arvada", "westminster", "boulder", "littleton",
+      "golden,? co", "jefferson county,? co"
+    ],
+    "local_metro_exclude_patterns": ["aurora,?\\s*(?:il|illinois)", "westminster,?\\s*(?:ca|md)"],
+    "local_state_only_pattern": "^\\W*(?:co|colorado)(?:\\W+(?:us|usa|united states(?: of america)?))?\\W*$",
+    "jd_local_metro_pattern": "\\b(denver,? (?:co|colorado)\\b|aurora,? (?:co|colorado)\\b|lakewood|boulder)",
+    "home_states": ["CO"],
+    "home_timezones": ["mountain"],
+    "allowed_country_pattern": "\\b(us|united states|usa)\\b",
+    "foreign_exclude_patterns": [
+      "\\bcanada\\b", "\\buk\\b", "\\bunited kingdom\\b", "\\bgbr\\b", "\\bindia\\b", "\\bgermany\\b",
+      "\\beurope\\b", "\\bromania\\b", "\\bbc\\b", "\\bbritish columbia\\b"
+    ],
+    "jd_non_allowed_locations": ["uk", "india", "europe", "canada"]
+  },
+  "compensation": {"min_salary": 130000, "pay_midpoint_max_cap": 145000, "pay_midpoint_penalty": 10},
+  "experience": {
+    "max_min_yoe": 7,
+    "max_min_secondary_yoe": 2,
+    "secondary_yoe_context_pattern": "backend|back-end|distributed systems|java\\b|golang",
+    "primary_yoe_context_pattern": "front[- ]?end|full[- ]?stack|react|typescript|javascript",
+    "reject_clearance": true,
+    "reject_foreign_language_req": true
+  },
+  "titles": {
+    "target_patterns": [
+      "\\bengineer\\b", "\\bdeveloper\\b", "\\bfrontend\\b", "\\bfront-end\\b", "\\bfront end\\b",
+      "\\bfull-stack\\b", "\\bfullstack\\b", "\\bfull stack\\b"
+    ],
+    "strong_target_patterns": [
+      "front[- ]?end", "full[- ]?stack", "ui (?:engineer|developer)", "design systems?", "product engineer"
+    ],
+    "primary_role_groups": [
+      {"label": "Full-Stack", "pattern": "\\b(full-stack|fullstack|full stack)\\b", "points": 20},
+      {"label": "Frontend", "pattern": "\\b(frontend|front-end|ui)\\b", "points": 20}
+    ],
+    "primary_role_patterns": ["frontend", "front end", "front-end", "react"],
+    "generic_role_patterns": ["software engineer", "software developer", "engineer", "developer"],
+    "generic_role_required_skills": ["react", "typescript"],
+    "generic_body_signal_patterns": ["\\b(full-stack|fullstack|full stack)\\b", "\\b(frontend|front-end|ui)\\b"],
+    "generic_body_signal_min": 2,
+    "exclude_seniority_patterns": [
+      "staff", "principal", "director", "manager", "vp", "head", "architect", "lead(?![- ]gen)", "intern",
+      "contract", "entry level", "junior"
+    ],
+    "exclude_tech_patterns": ["\\bc#(?!\\w)", "\\bruby\\b", "\\bgolang\\b", "\\brust\\b", "\\bc\\+\\+(?!\\w)", "\\bphp\\b"],
+    "exclude_role_patterns": [
+      "\\.net\\b", "\\bjunior\\b", "\\bstaff\\b", "\\bprincipal\\b", "\\bmanager\\b", "\\blead\\b", "\\bintern\\b",
+      "\\bcontract\\b", "\\bdata\\b", "\\bsystems?\\b", "\\bidentity\\b", "\\bbackend\\b", "\\bback-end\\b",
+      "\\bsalesforce\\b", "\\bnetsuite\\b", "\\btableau\\b", "\\bgraduates?\\b", "\\bc2c\\b"
+    ],
+    "soft_exclude_role_patterns": ["\\bsystems?\\b", "\\bidentity\\b", "\\bdata\\b", "\\blead\\b"],
+    "bad_role_patterns": ["solutions engineer", "data engineer", "devops", "sales engineer"],
+    "soft_bad_role_patterns": ["platform engineer", "security engineer"]
+  },
+  "companies": {
+    "exclude_companies": ["megacorp"],
+    "exclude_recruiters": ["staffing", "recruit\\w*", "talent\\w*", "acme ?teck", "bodyshop:? verified engineers"],
+    "allow_recruiters": ["northwind talentsource"],
+    "company_aliases": {"globex": "initech", "initechholdingsglobex": "initech"}
+  },
+  "skills_and_scoring": {
+    "base_score": 20,
+    "core_strength_points": 5,
+    "core_strengths_cap": 40,
+    "domain_score_cap": 20,
+    "strong_floor": 75,
+    "secondary_floor": 55,
+    "min_sync_score": 80,
+    "min_review_score": 55,
+    "detect_stack_keywords": ["TypeScript", "JavaScript", "React", "Node", "Java", "Python", "SQL", "AWS"],
+    "core_strengths": ["typescript", "javascript", "react", "node", "graphql", "aws", "java", "python", "sql"],
+    "focus_keywords": {"design system": 10, "accessibility": 10, "payments": 10, "saas": 5},
+    "hard_exclude_skills": ["c++", "rust", "golang", "c#", ".net", "ruby"],
+    "accepted_alternative_skills": ["node", "typescript", "javascript", "java", "python", "react"],
+    "soft_skill_penalty": 5,
+    "avoid_keywords": ["soap"],
+    "hard_ask_penalties": [
+      {"label": "Distributed/event-driven asked", "pattern": "\\b(distributed systems?|event[- ]driven)\\b", "penalty": 10}
+    ]
+  },
+  "llm_review": {
+    "provider": "agy",
+    "model": "test-model",
+    "review_version": "1",
+    "components": {"hard_reqs": 4, "core_work": 3, "evidence": 3, "level": 2},
+    "blocker_cap": 30,
+    "stretch_min_score": 50
+  },
+  "notion": {"database_id": ""},
+  "text_export": {"enabled": false},
+  "notifications": {"notify_url": ""}
+}

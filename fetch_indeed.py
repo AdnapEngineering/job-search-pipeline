@@ -14,11 +14,13 @@ from datetime import datetime, timezone
 import pandas as pd
 from jobspy import scrape_jobs
 
-from evaluate_jobs import JD_HYBRID_ONSITE_RE, JD_US_REMOTE_RE
+from evaluate_jobs import JD_HYBRID_ONSITE_RE, JD_US_REMOTE_RE, hard_onsite_passage
 from fetch_and_filter import (
     FILTERED_JOBS_PATH, FOREIGN_PATTERNS, LOOKBACK_DAYS, MIN_SALARY, US_PATTERN, is_local_metro, is_valid_company,
 )
-from pipeline_config import CFG, atomic_write_json, compile_alternation, compile_regex_list, get_path, load_json
+from pipeline_config import (
+    CFG, atomic_write_json, compile_alternation, compile_regex_list, get_path, load_json, term_regex,
+)
 from url_normalizer import is_aggregator_url, normalize_url
 
 _TITLES_CFG = CFG.get("titles") or {}
@@ -44,14 +46,13 @@ _JD_OFFICE_RE = re.compile(
     r'|\b(?:\d+|three|four|five) days? (?:a|per) week\b', re.I
 )
 
-_HEAVY_EXCLUSIONS = [
-    re.compile(r'(?<![\w.#+])' + re.escape(t.lower()) + r'(?![\w#+])')
-    for t in (_SKILLS_CFG.get("hard_exclude_skills") or [])
-]
+_HEAVY_EXCLUSIONS = [term_regex(t.lower()) for t in (_SKILLS_CFG.get("hard_exclude_skills") or [])]
 
 _CORE_STRENGTHS = [s.lower() for s in (_SKILLS_CFG.get("core_strengths") or [])]
 _FOCUS_AREAS = [k.lower() for k in (_SKILLS_CFG.get("focus_keywords") or {})]
 _PRIMARY_ROLE_TERMS = [t.lower() for t in (_TITLES_CFG.get("primary_role_patterns") or [])]
+_CORE_STRENGTH_RES = {s: term_regex(s) for s in _CORE_STRENGTHS}
+_FOCUS_AREA_RES = {f: term_regex(f, allow_suffix=True) for f in _FOCUS_AREAS}
 
 SEARCH_TERMS = _SOURCES_CFG.get("search_terms") or ["Software Engineer"]
 SEARCHES = [tuple(s) for s in (_SOURCES_CFG.get("searches") or [
@@ -74,14 +75,21 @@ def is_valid_jobspy_title(title):
 
 
 def remote_evidence(loc, desc="", remote_flag=False):
-    """Return 'onsite', 'remote', 'unverified' or 'none' for a non-local row."""
+    """Return 'onsite', 'remote', 'unverified' or 'none' for a non-local row.
+
+    Only a flat onsite/relocation requirement is 'onsite' here. Hybrid-policy and office-perk wording
+    ("three days a week for employees near an office", "we do not offer relocation assistance") is often
+    conditional or negated, so those rows are kept as 'unverified' and judged by the stage-3 logistics
+    check, which reads the context and lists what it drops in the run summary."""
     loc_lower = (loc or "").lower()
     text = (desc or "").replace("\\", "")
-    if JD_HYBRID_ONSITE_RE.search(text) or _JD_OFFICE_RE.search(text):
+    if hard_onsite_passage(text):
         return "onsite"
-    if ("remote" in loc_lower or "work from home" in loc_lower
-            or JD_US_REMOTE_RE.search(text) or _JD_STRONG_REMOTE_RE.search(text)):
-        return "remote"
+    office_hint = bool(JD_HYBRID_ONSITE_RE.search(text) or _JD_OFFICE_RE.search(text))
+    stated_remote = ("remote" in loc_lower or "work from home" in loc_lower
+                     or JD_US_REMOTE_RE.search(text) or _JD_STRONG_REMOTE_RE.search(text))
+    if stated_remote:
+        return "unverified" if office_hint else "remote"
     if remote_flag or _JD_WEAK_REMOTE_RE.search(text):
         return "unverified"
     return "none"
@@ -108,18 +116,22 @@ def score_job(title, desc):
     if heavy_count >= 2:
         return 0, []
 
+    # The score is only a loose keep/drop gate, so it counts substrings ("reactjs" is a signal for "react").
+    # The matched list becomes stack_detected, so it holds whole-term matches only: "javascript" is not "java".
     matched = set()
     score = 0
 
     for s in _CORE_STRENGTHS:
         if s in desc_lower:
             score += 12
-            matched.add(s.capitalize())
+            if _CORE_STRENGTH_RES[s].search(desc_lower):
+                matched.add(s.capitalize())
 
     for f in _FOCUS_AREAS:
         if f in desc_lower or f in t_lower:
             score += 15
-            matched.add(f.capitalize())
+            if _FOCUS_AREA_RES[f].search(desc_lower) or _FOCUS_AREA_RES[f].search(t_lower):
+                matched.add(f.capitalize())
 
     if any(term in t_lower for term in _PRIMARY_ROLE_TERMS):
         score += 20
@@ -213,8 +225,9 @@ def _salary_from_row(sal_min, sal_max):
     return None
 
 
-def _row_to_job(row):
-    """Convert one jobspy row to a pipeline job dict, or None when it fails filters."""
+def _row_to_job(row, counts=None):
+    """Convert one jobspy row to a pipeline job dict, or None when it fails filters.
+    `counts` (optional dict) tallies rows dropped for a flat onsite requirement."""
     direct = row.get("job_url_direct")
     url = (normalize_url(direct) if isinstance(direct, str) and direct and not is_aggregator_url(direct)
            else row.get("job_url"))
@@ -234,6 +247,8 @@ def _row_to_job(row):
     row_remote = row.get("is_remote")
     remote_flag = pd.notna(row_remote) and bool(row_remote)
     if not is_valid_jobspy_location(raw_loc, desc, remote_flag):
+        if counts is not None and not is_local_metro(raw_loc) and remote_evidence(raw_loc, desc, remote_flag) == "onsite":
+            counts["onsite_dropped"] = counts.get("onsite_dropped", 0) + 1
         return None
     evidence = "local" if is_local_metro(raw_loc) else remote_evidence(raw_loc, desc, remote_flag)
 
@@ -272,7 +287,7 @@ def _scrape_site(site, lookback_hours, terms):
     counter = _ErrorCounter()
     logger.addHandler(counter)
     finish_cache = _install_linkedin_details_cache() if site == "linkedin" else (lambda: 0)
-    jobs, raw, failed = [], 0, 0
+    jobs, raw, failed, counts = [], 0, 0, {}
     try:
         for location, suffix, wanted in [(loc, sfx, n) for s, loc, sfx, n in SEARCHES if s == site]:
             for term in terms:
@@ -293,7 +308,7 @@ def _scrape_site(site, lookback_hours, terms):
                     continue
                 raw += len(df)
                 for _, row in df.iterrows():
-                    job = _row_to_job(row)
+                    job = _row_to_job(row, counts)
                     if job:
                         jobs.append(job)
                 if site == "linkedin":
@@ -302,7 +317,7 @@ def _scrape_site(site, lookback_hours, terms):
         logger.removeHandler(counter)
         cache_hits = finish_cache()
     return jobs, {"raw": raw, "kept": len(jobs), "failed_queries": failed,
-                  "errors": counter.count, "rate_limited": counter.rate_limited, "cached_details": cache_hits}
+                  "onsite_dropped": counts.get("onsite_dropped", 0), "errors": counter.count, "rate_limited": counter.rate_limited, "cached_details": cache_hits}
 
 
 def fetch_indeed_jobs(lookback_hours=LOOKBACK_DAYS * 24, stats=None, terms=None):
@@ -320,6 +335,8 @@ def fetch_indeed_jobs(lookback_hours=LOOKBACK_DAYS * 24, stats=None, terms=None)
                 seen.add(job["url"])
                 scraped_jobs.append(job)
         print(f"  {site}: {site_stats['raw']} rows, {site_stats['kept']} passed filters"
+              + (f", {site_stats['onsite_dropped']} dropped for a stated onsite requirement"
+                 if site_stats.get('onsite_dropped') else "")
               + (f", {site_stats['cached_details']} job pages from cache" if site_stats['cached_details'] else "")
               + (f", {site_stats['rate_limited']} rate-limited (429)" if site_stats['rate_limited'] else "")
               + (f", {site_stats['failed_queries']} failed queries" if site_stats['failed_queries'] else ""))

@@ -20,6 +20,8 @@ RUN_HISTORY_PATH = get_path("run_history", "data/run_history.json")
 REQUEST_TIMEOUT = 15
 SYNC_DELAY_SECONDS = 0.35  # stays under Notion's ~3 requests/second rate limit
 RUN_HISTORY_KEEP = 10
+RATE_LIMIT_RETRIES = 3
+RATE_LIMIT_MAX_WAIT = 30  # seconds; caps a Retry-After header
 
 _session = requests.Session()
 _session.mount("https://", requests.adapters.HTTPAdapter(
@@ -69,8 +71,30 @@ def _build_notion_payload(job: dict, database_id: str) -> dict:
     return {"parent": {"database_id": database_id}, "properties": properties}
 
 
+def _retry_after_seconds(res, attempt):
+    try:
+        wait = float(res.headers.get("Retry-After", ""))
+    except (TypeError, ValueError):
+        wait = 2 ** attempt
+    return max(0.0, min(wait, RATE_LIMIT_MAX_WAIT))
+
+
+def _create_page(payload, headers):
+    """POST one page, waiting out HTTP 429. The session's own retries skip POST (not idempotent), but a
+    rate-limited request was never processed, so repeating it cannot create a duplicate page."""
+    for attempt in range(RATE_LIMIT_RETRIES + 1):
+        res = _session.post(f"{NOTION_API}/pages", headers=headers, json=payload, timeout=REQUEST_TIMEOUT)
+        if res.status_code != 429 or attempt == RATE_LIMIT_RETRIES:
+            return res
+        wait = _retry_after_seconds(res, attempt)
+        print(f"Notion rate limit (429); retrying in {wait:.0f}s ({attempt + 1}/{RATE_LIMIT_RETRIES}).", file=sys.stderr)
+        time.sleep(wait)
+    return res
+
+
 def sync_jobs_to_notion(evaluated_jobs, database_id=DEFAULT_DB_ID, min_score=75):
-    """Create a Notion page for each qualified job (score >= min_score); returns the URLs that were created."""
+    """Create a Notion page for each qualified job (score >= min_score); returns the URLs that were created.
+    Each page is blocklisted as soon as it exists, so an interrupted run cannot create it again."""
     if not database_id:
         print("Skipping Notion sync: no Notion database_id configured.", file=sys.stderr)
         return []
@@ -89,10 +113,10 @@ def sync_jobs_to_notion(evaluated_jobs, database_id=DEFAULT_DB_ID, min_score=75)
         title = job.get("title") or "Unknown Role"
         prefix = f"[{idx}/{total}]"
         try:
-            res = _session.post(f"{NOTION_API}/pages", headers=headers,
-                                json=_build_notion_payload(job, database_id), timeout=REQUEST_TIMEOUT)
+            res = _create_page(_build_notion_payload(job, database_id), headers)
             if res.status_code in (200, 201):
                 created.append(job)
+                record_exported([job])
                 print(f"{prefix} Synced: {company} - {title} ({job.get('score', 0)}%)")
             elif res.status_code == 400:
                 print(f"{prefix} Bad payload for {company}: {res.text}", file=sys.stderr)
@@ -105,9 +129,17 @@ def sync_jobs_to_notion(evaluated_jobs, database_id=DEFAULT_DB_ID, min_score=75)
 
         time.sleep(SYNC_DELAY_SECONDS)
 
-    record_exported(created)
     print(f"Notion sync complete: {len(created)}/{total} jobs successfully created.")
     return [job["url"] for job in created]
+
+
+def match_tally(top_matches, min_score):
+    """Counts behind the run summary. top_matches holds every open match the AI did not skip (50%+ by
+    default), so the number at or above the sync threshold is reported separately from the total."""
+    held = sum(1 for j in top_matches if j.get("review_failed"))
+    at_threshold = sum(1 for j in top_matches if j.get("score", 0) >= min_score and not j.get("review_failed"))
+    return {"at_threshold": at_threshold, "held": held,
+            "third_party": sum(1 for j in top_matches if j.get("third_party"))}
 
 
 def _truncate_text(text, max_len=120):
@@ -148,14 +180,17 @@ def _build_summary_rich_text(eval_results, synced_urls, min_score=65, history=No
     ai_skipped = eval_results.get("ai_skipped", [])
     location_filtered = eval_results.get("location_filtered", [])
     total_eval = eval_results.get("total_evaluated", len(top_matches) + len(manual_reviews) + len(ai_skipped))
+    tally = match_tally(top_matches, min_score)
 
     now_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     rich_text = [_text(f"📋 Job Search Run Summary — {now_str}\n", bold=True)]
 
     counts = [
         ("Evaluated: ", total_eval, {}),
-        (f"  |  Qualified ({min_score}%+): ", len(top_matches), {}),
+        ("  |  Open matches: ", len(top_matches), {}),
+        (f"  |  At {min_score}%+: ", tally["at_threshold"], {}),
         ("  |  Synced: ", len(synced_urls), {}),
+        ("  |  Held (AI review failed): ", tally["held"], {"color": "orange" if tally["held"] else "default"}),
         ("  |  Manual Reviews: ", len(manual_reviews), {"color": "orange" if manual_reviews else "default"}),
         ("  |  AI Skipped: ", len(ai_skipped), {}),
         ("  |  Location/Onsite Dropped: ", len(location_filtered), {}),
@@ -181,7 +216,7 @@ def _build_summary_rich_text(eval_results, synced_urls, min_score=65, history=No
 
     if top_matches:
         shown = top_matches[:5]
-        rich_text.append(_text(f"🎯 Top Qualified Matches (showing {len(shown)} of {len(top_matches)}):\n", bold=True))
+        rich_text.append(_text(f"🎯 Open Matches, best first (showing {len(shown)} of {len(top_matches)}):\n", bold=True))
         for tm in shown:
             reason = _truncate_text(tm.get("reason", ""), 85)
             rich_text.extend(_role_line(tm, f" ({tm.get('score', 0)}%) — {reason}\n"))
@@ -205,7 +240,7 @@ def _build_summary_rich_text(eval_results, synced_urls, min_score=65, history=No
     return rich_text
 
 
-def _record_run(eval_results, synced_urls) -> list[dict]:
+def _record_run(eval_results, synced_urls, min_score=80) -> list[dict]:
     """Append this run to the persisted history and return the previous runs."""
     top_matches = eval_results.get("top_matches", [])
     manual_reviews = eval_results.get("manual_reviews", [])
@@ -216,8 +251,9 @@ def _record_run(eval_results, synced_urls) -> list[dict]:
     previous = list(history)
     history.append({
         "time": datetime.now().strftime("%Y-%m-%d %H:%M"),
-        "summary": f"{total_eval} eval, {len(top_matches)} qualified, {len(synced_urls)} synced, "
-                   f"{len(manual_reviews)} reviews",
+        "summary": f"{total_eval} eval, {len(top_matches)} open matches "
+                   f"({match_tally(top_matches, min_score)['at_threshold']} at {min_score}%+), "
+                   f"{len(synced_urls)} synced, {len(manual_reviews)} reviews",
     })
     _save_run_history(history)
     return previous
@@ -297,7 +333,7 @@ def log_run_summary_to_notion(eval_results, synced_urls, min_score=65, database_
     notion_cfg = cfg.get("notion") or {}
     summary_block_id = notion_cfg.get("summary_block_id") or cfg.get("summary_block_id")
 
-    previous_runs = _record_run(eval_results, synced_urls)
+    previous_runs = _record_run(eval_results, synced_urls, min_score)
     rich_text = _build_summary_rich_text(eval_results, synced_urls, min_score=min_score, history=previous_runs)
 
     if summary_block_id and _update_summary_block(summary_block_id, rich_text, headers):
