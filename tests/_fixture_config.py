@@ -12,7 +12,7 @@ import sys
 import tempfile
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-FIXTURE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "fixtures", "config.json")
+FIXTURE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "fixtures", "search_config.json")
 _DATA_FILES = {
     "filtered_jobs": "filtered_jobs.json", "enriched_jobs": "enriched_jobs.json",
     "evaluated_jobs": "evaluated_jobs.json", "source_stats": "source_stats.json",

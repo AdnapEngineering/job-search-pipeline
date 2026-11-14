@@ -449,7 +449,7 @@ ruff check .
 python3 -m unittest discover -s tests
 ```
 
-The tests load `tests/fixtures/config.json` (a made-up search) through `tests/_fixture_config.py` and write only to a temporary directory, so they pass whatever your own `config.json` says and never touch `data/`.
+The tests load `tests/fixtures/search_config.json` (a made-up search) through `tests/_fixture_config.py` and write only to a temporary directory, so they pass whatever your own `config.json` says and never touch `data/`.
 
 ---
 
@@ -472,4 +472,4 @@ The tests load `tests/fixtures/config.json` (a made-up search) through `tests/_f
 | [`sync_notion_db.py`](sync_notion_db.py) | Stage 5 Notion database syncer (records synced roles in the blocklists) and Callout dashboard logger. |
 | [`text_export.py`](text_export.py) | Stage 5 plain-text alternative to Notion: appends new qualified matches to a `.txt` log and records them in the blocklists. |
 | [`url_normalizer.py`](url_normalizer.py) | Canonical URL normalizer (strips tracking parameters, redundant `gh_jid`, and fragments). |
-| [`tests/`](tests) | Unit and regression tests, run against the generic `tests/fixtures/config.json`. |
+| [`tests/`](tests) | Unit and regression tests, run against the generic `tests/fixtures/search_config.json`. |

@@ -1,6 +1,6 @@
 """Regression cases for the location, title, company, dedup-key and clearance rules.
 
-They run against tests/fixtures/config.json (a made-up Denver-metro frontend/full-stack search), so they
+They run against tests/fixtures/search_config.json (a made-up Denver-metro frontend/full-stack search), so they
 hold whatever the real config.json says. Each case is the phrasing of a posting a rule once got wrong;
 add one whenever a rule changes.
 """
