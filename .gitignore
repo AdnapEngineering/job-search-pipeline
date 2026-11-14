@@ -1,5 +1,6 @@
 .env
 config.json
+candidate_profile.md
 .venv/
 .ruff_cache/
 .run_job_search.lock

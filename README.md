@@ -2,7 +2,7 @@
 
 An automated, idempotent, two-stage job search and screening pipeline that aggregates postings from **~1.4M+ direct ATS listings**, **LinkedIn**, **Indeed**, **Remote OK**, **Jobicy**, and **Hacker News ("Who is hiring?")**, enriches them with full job descriptions via direct ATS JSON APIs, scores them deterministically, performs a calibrated LLM rubric review against a candidate profile, and syncs top matches to **Notion** with push notifications via **ntfy**.
 
-All career-specific rules—target titles, skills, scoring weights, experience ceilings, compensation floors, location rules, company/recruiter blocklists, and LLM rubric calibration—are externalized into `config.json` and [`candidate_profile.md`](candidate_profile.md). You can adapt the entire pipeline to **any career or industry** without editing Python code.
+All career-specific rules—target titles, skills, scoring weights, experience ceilings, compensation floors, location rules, company/recruiter blocklists, and LLM rubric calibration—are externalized into `config.json` and `candidate_profile.md`, your own copies of the tracked templates [`config.example.json`](config.example.json) and [`candidate_profile.example.md`](candidate_profile.example.md). You can adapt the entire pipeline to **any career or industry** without editing Python code.
 
 ---
 
@@ -92,18 +92,19 @@ cd job-search-pipeline
 git pull origin main
 ```
 
-Your settings live in `config.json`, which git ignores, so pulling never touches them. New settings arrive in the tracked template `config.example.json`; after a pull, `git diff HEAD@{1} -- config.example.json` shows what was added so you can copy the keys you want into your own file. Any key you leave out keeps its built-in default.
+Your settings live in `config.json` and your background in `candidate_profile.md`. Git ignores both, so pulling never touches them. New settings arrive in the tracked template `config.example.json`; after a pull, `git diff HEAD@{1} -- config.example.json` shows what was added so you can copy the keys you want into your own file. Any key you leave out keeps its built-in default.
 
-> **Upgrading from a version where `config.json` was tracked (one time only).** That pull removes `config.json` from the repository, so git refuses to run it while your edited copy is in the way. Set your copy aside, pull, and put it back:
+> **Upgrading from a version where `config.json` and `candidate_profile.md` were tracked (one time only).** That pull removes both files from the repository, so git refuses to run it while your edited copies are in the way. Set your copies aside, pull, and put them back:
 >
 > ```bash
-> cp config.json ~/job-pipeline-config.backup.json   # keep your settings
-> git checkout -- config.json                        # restore the tracked version so the pull can remove it
+> mkdir -p ~/job-pipeline-backup
+> cp config.json candidate_profile.md ~/job-pipeline-backup/   # keep your settings and profile
+> git checkout -- config.json candidate_profile.md             # restore the tracked versions so the pull can remove them
 > git pull origin main
-> cp ~/job-pipeline-config.backup.json config.json   # your settings, now ignored by git
+> cp ~/job-pipeline-backup/config.json ~/job-pipeline-backup/candidate_profile.md .   # yours again, now ignored by git
 > ```
 >
-> If you never edited `config.json`, just pull: the pipeline reads the template until you create your own copy.
+> If you never edited either file, just pull, then create your copies as described under [Create Your Config and Profile](#create-your-config-and-profile).
 
 ### Install Python Dependencies
 
@@ -116,13 +117,14 @@ pip install --upgrade pip
 pip install -r requirements.txt
 ```
 
-### Create Your Config
+### Create Your Config and Profile
 
 ```bash
 cp config.example.json config.json
+cp candidate_profile.example.md candidate_profile.md
 ```
 
-Edit `config.json`, not the template: see [Configuring for Another Career](#4-configuring-for-another-career-configjson--candidate_profilemd). Until `config.json` exists the pipeline runs on the template's placeholder values and prints a reminder.
+Edit the copies, not the templates: see [Configuring for Another Career](#4-configuring-for-another-career-configjson--candidate_profilemd). Until `config.json` exists the pipeline runs on the template's placeholder values and prints a reminder. Until `candidate_profile.md` exists the AI review is skipped (the placeholder profile is never sent to the LLM) and matches are output on their keyword scores.
 
 ### Set Up Environment Variables
 
@@ -312,7 +314,7 @@ curl -X POST "${NOTIFY_URL}" \
 To adapt the pipeline for a new career (e.g., Data Science, Product Management, DevOps, Design, Finance, Marketing, Healthcare):
 
 ### Step 1: Edit `candidate_profile.md`
-Write an honest summary of the candidate's background. [`llm_review.py`](llm_review.py) hashes `candidate_profile.md`—any edit automatically invalidates stale cached LLM reviews:
+Create it from the template first if you have not already (`cp candidate_profile.example.md candidate_profile.md`). Write an honest summary of the candidate's background. [`llm_review.py`](llm_review.py) hashes `candidate_profile.md`—any edit automatically invalidates stale cached LLM reviews:
 - Total years of experience and years per core tool/skill.
 - Explicit list of tools/certifications/specialties the candidate **does not** have.
 - Specific accomplishments ("Strongest Evidence") that a top-matching job description should mirror.
@@ -359,7 +361,7 @@ CLI reviews send the candidate profile and selected job details to the provider 
 
 Claude runs with built-in tools disabled, MCP auto-configuration and slash commands disabled, and session persistence off. Codex runs in a read-only sandbox with ephemeral sessions. Both run from an empty temporary directory, but CLI configuration and managed policies can still affect behavior; review them before running on sensitive data. Codex may still use tools permitted by its sandbox and configuration.
 
-If a review times out, fails, or returns an invalid/incomplete reply, the pipeline reports the problem and keeps the job's keyword score, but **holds the job back**: it is listed in the summary as `[AI review failed, held for retry]`, is not synced or exported, and is reviewed again on the next run. If the CLI is not installed at all (or `candidate_profile.md` is missing), the stage is skipped and matches are output on their keyword scores, as with `--no-llm-review`. An unknown provider is a configuration error.
+If a review times out, fails, or returns an invalid/incomplete reply, the pipeline reports the problem and keeps the job's keyword score, but **holds the job back**: it is listed in the summary as `[AI review failed, held for retry]`, is not synced or exported, and is reviewed again on the next run. If the CLI is not installed at all (or `candidate_profile.md` has not been created from its template), the stage is skipped and matches are output on their keyword scores, as with `--no-llm-review`. An unknown provider is a configuration error.
 
 **Third-party posters.** The review also flags postings that come from a staffing agency, recruiter, consultancy or aggregator rather than the employer. The flag never changes the score: flagged roles sync as usual, with `[Third-party poster]` at the start of the "Why It Matches" text in Notion, the Markdown summary and the `.txt` export, and a count in the push notification.
 
@@ -487,7 +489,8 @@ The tests load `tests/fixtures/search_config.json` (a made-up search) through `t
 | [`blocklist.py`](blocklist.py) | Shared dedup state: `company\|title` role keys plus the URL and role blocklists used by every stage. |
 | [`config.example.json`](config.example.json) | Tracked template for the career-agnostic configuration (sources, locations, pay, titles, skills, LLM rubric). |
 | `config.json` | Your own copy of the template, ignored by git; this is the file the pipeline reads and the one you edit. |
-| [`candidate_profile.md`](candidate_profile.md) | Candidate profile read by `llm_review.py` during Stage 4 rubric grading. |
+| [`candidate_profile.example.md`](candidate_profile.example.md) | Tracked template for the candidate profile. |
+| `candidate_profile.md` | Your own copy of the template, ignored by git; read by `llm_review.py` during Stage 4 rubric grading. |
 | [`fetch_and_filter.py`](fetch_and_filter.py) | Stage 1 async downloader for the GitHub ATS chunk feed + orchestrator for board scrapers. |
 | [`fetch_indeed.py`](fetch_indeed.py) | Stage 1 LinkedIn & Indeed scraper (`python-jobspy`) with detail caching and remote evidence checks. |
 | [`fetch_job_boards.py`](fetch_job_boards.py) | Stage 1 connector for Remote OK, Jobicy, and Hacker News "Who is hiring?". |

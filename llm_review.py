@@ -386,7 +386,8 @@ def review_matches(matches, enriched_path, min_score=55):
     if not executable:
         return matches, []
     if not os.path.exists(PROFILE_PATH):
-        print(f"[AI review] {PROFILE_PATH} not found; skipping AI review.", file=sys.stderr)
+        print(f"[AI review] {PROFILE_PATH} not found; skipping AI review. Copy candidate_profile.example.md "
+              "to that path and fill it in to enable it.", file=sys.stderr)
         return matches, []
 
     model = DEFAULT_MODEL

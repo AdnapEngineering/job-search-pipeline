@@ -1,4 +1,4 @@
-# Candidate Profile (read by `llm_review.py`; edit freely — changes automatically invalidate cached verdicts)
+# Candidate Profile (copy this template to `candidate_profile.md` and edit the copy; `llm_review.py` reads it and changes automatically invalidate cached verdicts)
 
 [Candidate Name / Role Summary]. Based in [Your City, State]. Seeking [Remote / Local Metro] opportunities.
 

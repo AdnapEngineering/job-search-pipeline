@@ -244,6 +244,20 @@ class ScoringAndFlagTests(unittest.TestCase):
         self.assertEqual(review._rescored(legacy), legacy)
 
 
+class MissingProfileTests(unittest.TestCase):
+    def test_review_is_skipped_and_points_at_the_template(self):
+        jobs = [{"company": "Acme", "title": "Frontend Engineer", "score": 90, "url": "https://example.com/1"}]
+        stderr = io.StringIO()
+        with tempfile.TemporaryDirectory() as tmp:
+            with (patch.object(review, "PROFILE_PATH", str(Path(tmp) / "candidate_profile.md")),
+                  patch.object(review, "_provider_config", return_value="/test/cli"),
+                  patch.object(review.subprocess, "run", side_effect=AssertionError("no review without a profile")),
+                  contextlib.redirect_stderr(stderr)):
+                kept, skipped = review.review_matches(jobs, str(Path(tmp) / "jobs.json"))
+        self.assertEqual((kept, skipped), (jobs, []))
+        self.assertIn("candidate_profile.example.md", stderr.getvalue())
+
+
 class CacheAndHoldTests(unittest.TestCase):
     def run_review(self, run, cache_seed, jobs, stdout):
         with tempfile.TemporaryDirectory() as tmp:
