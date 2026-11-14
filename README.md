@@ -2,7 +2,7 @@
 
 An automated, idempotent, two-stage job search and screening pipeline that aggregates postings from **~1.4M+ direct ATS listings**, **LinkedIn**, **Indeed**, **Remote OK**, **Jobicy**, and **Hacker News ("Who is hiring?")**, enriches them with full job descriptions via direct ATS JSON APIs, scores them deterministically, performs a calibrated LLM rubric review against a candidate profile, and syncs top matches to **Notion** with push notifications via **ntfy**.
 
-All career-specific rules—target titles, skills, scoring weights, experience ceilings, compensation floors, location rules, company/recruiter blocklists, and LLM rubric calibration—are externalized into [`config.json`](config.json) and [`candidate_profile.md`](candidate_profile.md). You can adapt the entire pipeline to **any career or industry** without editing Python code.
+All career-specific rules—target titles, skills, scoring weights, experience ceilings, compensation floors, location rules, company/recruiter blocklists, and LLM rubric calibration—are externalized into `config.json` and [`candidate_profile.md`](candidate_profile.md). You can adapt the entire pipeline to **any career or industry** without editing Python code.
 
 ---
 
@@ -92,6 +92,19 @@ cd job-search-pipeline
 git pull origin main
 ```
 
+Your settings live in `config.json`, which git ignores, so pulling never touches them. New settings arrive in the tracked template `config.example.json`; after a pull, `git diff HEAD@{1} -- config.example.json` shows what was added so you can copy the keys you want into your own file. Any key you leave out keeps its built-in default.
+
+> **Upgrading from a version where `config.json` was tracked (one time only).** That pull removes `config.json` from the repository, so git refuses to run it while your edited copy is in the way. Set your copy aside, pull, and put it back:
+>
+> ```bash
+> cp config.json ~/job-pipeline-config.backup.json   # keep your settings
+> git checkout -- config.json                        # restore the tracked version so the pull can remove it
+> git pull origin main
+> cp ~/job-pipeline-config.backup.json config.json   # your settings, now ignored by git
+> ```
+>
+> If you never edited `config.json`, just pull: the pipeline reads the template until you create your own copy.
+
 ### Install Python Dependencies
 
 Python 3.10+ is required:
@@ -102,6 +115,14 @@ source .venv/bin/activate
 pip install --upgrade pip
 pip install -r requirements.txt
 ```
+
+### Create Your Config
+
+```bash
+cp config.example.json config.json
+```
+
+Edit `config.json`, not the template: see [Configuring for Another Career](#4-configuring-for-another-career-configjson--candidate_profilemd). Until `config.json` exists the pipeline runs on the template's placeholder values and prints a reminder.
 
 ### Set Up Environment Variables
 
@@ -206,7 +227,7 @@ curl -sL "https://hn.algolia.com/api/v1/items/<OBJECT_ID>" \
 ### 3.5 LinkedIn & Indeed (`python-jobspy`)
 
 - **Used in:** [`fetch_indeed.py`](fetch_indeed.py)
-- Queries LinkedIn and Indeed in parallel threads via [`python-jobspy`](https://github.com/Bunsly/JobSpy) using the `sources.search_terms` and `sources.searches` arrays in [`config.json`](config.json).
+- Queries LinkedIn and Indeed in parallel threads via [`python-jobspy`](https://github.com/Bunsly/JobSpy) using the `sources.search_terms` and `sources.searches` arrays in `config.json`.
 - Automatically caches LinkedIn job detail pages in `data/linkedin_details_cache.json` across runs to avoid `HTTP 429` rate limits and extracts `job_url_direct` when an offsite company ATS link is available.
 
 ---
@@ -298,6 +319,8 @@ Write an honest summary of the candidate's background. [`llm_review.py`](llm_rev
 - Target seniority levels and hard blockers.
 
 ### Step 2: Edit `config.json`
+Create it from the template first if you have not already (`cp config.example.json config.json`). The template [`config.example.json`](config.example.json) lists every setting.
+
 | Section | What to Customize |
 | :--- | :--- |
 | `paths` | Override where data files (`filtered_jobs`, `enriched_jobs`, `blocklist`, `review_cache`, `text_export`, ...) and `candidate_profile` live. Relative paths resolve from the repository directory, not the directory you run from; `~` is expanded. |
@@ -313,9 +336,10 @@ Write an honest summary of the candidate's background. [`llm_review.py`](llm_rev
 | `text_export` | Set `enabled: true` to append new qualified matches to `paths.text_export` (`data/job_matches.txt` by default)—a plain-text alternative or companion to Notion. |
 
 **How the config is loaded:**
-- The pipeline reads `config.json` from the repository directory. Set `JOB_PIPELINE_CONFIG=/path/to/other.json` to use a different file (e.g. one per career).
-- If the file is missing, every setting falls back to its built-in default. If it is not valid JSON, a `Could not read ...` warning is printed to stderr and defaults are used, so check the logs after editing.
-- The Notion logger only writes `summary_block_id` back when `config.json` parsed cleanly, so a typo in the file is never overwritten.
+- The pipeline reads `config.json` from the repository directory. It is your own copy of the tracked template `config.example.json` and is ignored by git. Set `JOB_PIPELINE_CONFIG=/path/to/other.json` to use a different file (e.g. one per career).
+- If `config.json` does not exist yet, the template `config.example.json` is read instead and a reminder is printed to stderr. The template itself is never written to.
+- If a file named by `JOB_PIPELINE_CONFIG` is missing, every setting falls back to its built-in default. If it is not valid JSON, a `Could not read ...` warning is printed to stderr and defaults are used, so check the logs after editing.
+- The Notion logger only writes `summary_block_id` back when `config.json` parsed cleanly, so a typo in the file is never overwritten. If `config.json` does not exist yet, it is created as a copy of the template with the block id added.
 
 ### Choose an LLM Provider
 
@@ -461,7 +485,8 @@ The tests load `tests/fixtures/search_config.json` (a made-up search) through `t
 | [`run_pipeline.py`](run_pipeline.py) | End-to-end orchestrator, source-health monitor, pre-LLM blocklist filter, and notifier. |
 | [`pipeline_config.py`](pipeline_config.py) | Central loader for `config.json`, path resolution (relative `paths` entries resolve from the repo directory), shared JSON read/atomic-write helpers, and regex compilation helpers. |
 | [`blocklist.py`](blocklist.py) | Shared dedup state: `company\|title` role keys plus the URL and role blocklists used by every stage. |
-| [`config.json`](config.json) | Career-agnostic configuration file (sources, locations, pay, titles, skills, LLM rubric). |
+| [`config.example.json`](config.example.json) | Tracked template for the career-agnostic configuration (sources, locations, pay, titles, skills, LLM rubric). |
+| `config.json` | Your own copy of the template, ignored by git; this is the file the pipeline reads and the one you edit. |
 | [`candidate_profile.md`](candidate_profile.md) | Candidate profile read by `llm_review.py` during Stage 4 rubric grading. |
 | [`fetch_and_filter.py`](fetch_and_filter.py) | Stage 1 async downloader for the GitHub ATS chunk feed + orchestrator for board scrapers. |
 | [`fetch_indeed.py`](fetch_indeed.py) | Stage 1 LinkedIn & Indeed scraper (`python-jobspy`) with detail caching and remote evidence checks. |

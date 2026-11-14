@@ -9,7 +9,7 @@ import requests
 
 from blocklist import record_exported, select_new_matches
 from evaluate_jobs import skip_reason
-from pipeline_config import CFG, CONFIG_PATH, atomic_write_json, get_path, load_json
+from pipeline_config import CFG, CONFIG_PATH, atomic_write_json, config_source, get_path, load_json
 
 _NOTION_CFG = CFG.get("notion") or {}
 
@@ -310,11 +310,15 @@ def _create_summary_block(parent_page_id, database_id, rich_text, headers):
 
 
 def _remember_summary_block(block_id):
-    """Persist the new block id in config.json so later runs update it in place."""
-    if os.path.exists(CONFIG_PATH) and load_json(CONFIG_PATH) is None:
-        print(f"[Notion Log] {CONFIG_PATH} is unreadable; not saving summary_block_id {block_id}.", file=sys.stderr)
+    """Persist the new block id in config.json so later runs update it in place.
+
+    While config.json does not exist yet the settings come from the tracked template, so the new
+    config.json starts as a copy of it: a file holding only the block id would hide every other setting."""
+    source = config_source(CONFIG_PATH)
+    if os.path.exists(source) and load_json(source) is None:
+        print(f"[Notion Log] {source} is unreadable; not saving summary_block_id {block_id}.", file=sys.stderr)
         return
-    cfg = load_json(CONFIG_PATH, default={})
+    cfg = load_json(source, default={})
     cfg.setdefault("notion", {})["summary_block_id"] = block_id
     try:
         atomic_write_json(CONFIG_PATH, cfg)
@@ -329,7 +333,7 @@ def log_run_summary_to_notion(eval_results, synced_urls, min_score=65, database_
     headers = _notion_headers()
 
     # Read config.json fresh rather than CFG: _remember_summary_block rewrites it between runs
-    cfg = load_json(CONFIG_PATH, default={}) or {}
+    cfg = load_json(config_source(CONFIG_PATH), default={}) or {}
     notion_cfg = cfg.get("notion") or {}
     summary_block_id = notion_cfg.get("summary_block_id") or cfg.get("summary_block_id")
 

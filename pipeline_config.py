@@ -4,6 +4,9 @@ All career-specific settings (titles, skills, scoring weights, compensation,
 locations, company filters, search queries, and LLM rubric text) are loaded
 from `config.json` so the pipeline can be adapted to any career without
 editing Python source files.
+
+`config.json` is your own, untracked copy of the tracked template `config.example.json`
+(`cp config.example.json config.json`). Until that copy exists the template is read instead.
 """
 import contextlib
 import json
@@ -14,7 +17,9 @@ import tempfile
 from typing import Any
 
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
-CONFIG_PATH = os.environ.get("JOB_PIPELINE_CONFIG") or os.path.join(SCRIPT_DIR, "config.json")
+DEFAULT_CONFIG_PATH = os.path.join(SCRIPT_DIR, "config.json")
+EXAMPLE_CONFIG_PATH = os.path.join(SCRIPT_DIR, "config.example.json")
+CONFIG_PATH = os.environ.get("JOB_PIPELINE_CONFIG") or DEFAULT_CONFIG_PATH
 
 
 def load_json(path: str, default: Any = None) -> Any:
@@ -44,9 +49,21 @@ def atomic_write_json(path: str, data: Any, indent: int = 2) -> None:
         raise
 
 
+def config_source(path: str = CONFIG_PATH) -> str:
+    """The file settings are read from: `path`, or the tracked template while the default
+    `config.json` has not been created yet. Writes always go to `path`, never to the template."""
+    if path == DEFAULT_CONFIG_PATH and not os.path.exists(path) and os.path.exists(EXAMPLE_CONFIG_PATH):
+        return EXAMPLE_CONFIG_PATH
+    return path
+
+
 def load_config(path: str = CONFIG_PATH) -> dict:
     """The pipeline config; an empty dict (all defaults) when missing or malformed."""
-    return load_json(path, default={}) or {}
+    source = config_source(path)
+    if source != path:
+        print(f"No {os.path.basename(path)} found; using the template {os.path.basename(source)}. "
+              f"Run `cp {os.path.basename(source)} {os.path.basename(path)}` and edit the copy.", file=sys.stderr)
+    return load_json(source, default={}) or {}
 
 
 CFG = load_config()
