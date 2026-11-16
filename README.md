@@ -1,18 +1,20 @@
-# Automated End-to-End Job Search Pipeline
+# Job Search Pipeline
 
-An automated, idempotent, two-stage job search and screening pipeline that aggregates postings from **~1.4M+ direct ATS listings** (via [job-board-aggregator](https://github.com/Riley-Dorrington/job-board-aggregator)), **LinkedIn**, **Indeed**, **Remote OK**, **Jobicy**, and **Hacker News ("Who is hiring?")**, enriches them with full job descriptions via direct ATS JSON APIs, scores them deterministically, performs a calibrated LLM rubric review against a candidate profile, and syncs top matches to **Notion** or **Obsidian** with push notifications via **ntfy**.
+Finds job postings that fit you and sends the best ones to Notion, Obsidian, a text file or a web page, with an optional phone notification.
+
+Each run pulls postings from about 1.4 million company job boards (through [job-board-aggregator](https://github.com/Riley-Dorrington/job-board-aggregator)), LinkedIn, Indeed, Remote OK, Jobicy and Hacker News's monthly "Who is hiring?" thread. It drops the ones that break your location, title, pay and experience rules, fetches the full description for the rest, scores them against your skills, and has an AI command-line tool (agy, Claude Code or Codex) grade the best of them against a profile you write.
 
 > **Credit:** the ATS listings, the largest source by far, come from Riley Dorrington's [job-board-aggregator](https://github.com/Riley-Dorrington/job-board-aggregator) (MIT). It indexes 1M+ active postings from 20,000+ companies' Greenhouse, Lever, Ashby, Workday and other boards, refreshed daily by GitHub Actions and published to [job-board-data](https://github.com/Riley-Dorrington/job-board-data). If this pipeline helps you, give that project a star.
 
-All career-specific rules—target titles, skills, scoring weights, experience ceilings, compensation floors, location rules, company/recruiter blocklists, and LLM rubric calibration—are externalized into `config.json` and `candidate_profile.md`, your own copies of the tracked templates [`config.example.json`](config.example.json) and [`candidate_profile.example.md`](candidate_profile.example.md). You can adapt the entire pipeline to **any career or industry** without editing Python code.
+Everything specific to your search lives in two files you own: `config.json` (titles, skills, scoring, pay and experience limits, locations, companies to skip, the AI rubric) and `candidate_profile.md` (your background). Both start as copies of tracked templates, [`config.example.json`](config.example.json) and [`candidate_profile.example.md`](candidate_profile.example.md). None of the Python code is tied to one career.
 
-Every run writes a self-contained page of matches, with no account or setup needed (shown here with made-up data):
+Every run also writes a page of matches you can open in a browser, with no account needed. This one uses made-up data:
 
 ![The HTML digest: stat tiles, search and filters, and match cards with Match %, AI verdict, reason, gap chips and badges](docs/digest.png)
 
 ---
 
-## Quickstart (5 Minutes)
+## Quickstart
 
 Get a first list of matches in your browser, with no Notion, AI reviewer or push notifications. Each can be added later.
 
@@ -30,51 +32,51 @@ xdg-open data/digest.html            # macOS: open data/digest.html
 
 [`config.starter.json`](config.starter.json) holds only the settings you have to change. Replace its placeholders with:
 
-- **`sources.search_terms` / `searches`:** the job titles to search LinkedIn and Indeed for, and where (your city, or `Remote`).
-- **`location`:** your metro area's name and cities, and `home_states` / `home_timezones` if remote roles must match them.
-- **`titles`:** regexes for titles to keep (`target_patterns`), titles that score highest (`strong_target_patterns`, `primary_role_groups`) and levels to skip.
-- **`skills_and_scoring`:** your skills (`core_strengths`), weighted domain terms (`focus_keywords`) and skills that rule a job out (`hard_exclude_skills`).
-- **`compensation.min_salary` / `experience.max_min_yoe`:** the pay floor and the most years of experience a posting may ask for.
+- `sources.search_terms` / `searches`: the job titles to search LinkedIn and Indeed for, and where (your city, or `Remote`).
+- `location`: your metro area's name and cities, and `home_states` / `home_timezones` if remote roles must match them.
+- `titles`: regexes for titles to keep (`target_patterns`), titles that score highest (`strong_target_patterns`, `primary_role_groups`) and levels to skip.
+- `skills_and_scoring`: your skills (`core_strengths`), weighted domain terms (`focus_keywords`) and skills that rule a job out (`hard_exclude_skills`).
+- `compensation.min_salary` / `experience.max_min_yoe`: the pay floor and the most years of experience a posting may ask for.
 
-Every other setting keeps its built-in default; [`config.example.json`](config.example.json) lists them all with what they do (see [Configuring for Another Career](#3-configuring-for-another-career-configjson--candidate_profilemd)). Next steps: write [`candidate_profile.md`](#step-1-edit-candidate_profilemd) and [choose an LLM provider](#choose-an-llm-provider) for the AI review, add [Notion](#setting-up-notion) or [Obsidian](#write-matches-to-an-obsidian-vault) and [ntfy](#environment-variables), and [schedule it with cron](#automate-with-cron).
+Every other setting keeps its built-in default; [`config.example.json`](config.example.json) lists them all with what they do (see [Configuration](#configuration)). Next steps: write [`candidate_profile.md`](#candidate_profilemd) and [choose an LLM provider](#ai-reviewer) for the AI review, add [Notion](#notion) or [Obsidian](#obsidian) and [ntfy](#environment-variables), and [schedule it with cron](#cron).
 
 ---
 
-## Table of Contents
+## Contents
 
-- [Quickstart (5 Minutes)](#quickstart-5-minutes)
-1. [What It Does & Pipeline Architecture](#1-what-it-does--pipeline-architecture)
-   - [How Scores Are Calculated](#how-scores-are-calculated)
-2. [Installation & Setup](#2-installation--setup)
-   - [Pull Updates](#pull-updates)
-   - [Install Options](#install-options)
-   - [Create Your Config and Profile](#create-your-config-and-profile)
-   - [Environment Variables](#environment-variables)
-   - [Setting Up Notion](#setting-up-notion)
-   - [Check Your Setup](#check-your-setup)
-3. [Configuring for Another Career (`config.json` & `candidate_profile.md`)](#3-configuring-for-another-career-configjson--candidate_profilemd)
-   - [Location Rules in Detail](#location-rules-in-detail)
-   - [Choose an LLM Provider](#choose-an-llm-provider)
-   - [AI Review Spend and Caps](#ai-review-spend-and-caps)
-4. [Usage, CLI Flags & Cron Automation](#4-usage-cli-flags--cron-automation)
-   - [All CLI Flags](#all-cli-flags)
-   - [Write Matches to an Obsidian Vault](#write-matches-to-an-obsidian-vault)
-   - [Using Your Own Documentation Platform (Disable Notion / Export to .txt)](#using-your-own-documentation-platform-disable-notion--export-to-txt)
-   - [View Matches in Your Browser (HTML Digest)](#view-matches-in-your-browser-html-digest)
-   - [Automate with Cron](#automate-with-cron)
-   - [Run the Tests](#run-the-tests)
-5. [Troubleshooting & FAQ](#5-troubleshooting--faq)
-6. [Data Sources, Links & `curl` Commands](#6-data-sources-links--curl-commands)
-7. [Repository File Reference](#7-repository-file-reference)
+- [Quickstart](#quickstart)
+- [How it works](#how-it-works)
+   - [How scores are calculated](#how-scores-are-calculated)
+- [Setup](#setup)
+   - [Updating](#updating)
+   - [Install options](#install-options)
+   - [Your config and profile](#your-config-and-profile)
+   - [Environment variables](#environment-variables)
+   - [Notion](#notion)
+   - [Checking the setup](#checking-the-setup)
+- [Configuration](#configuration)
+   - [Location rules](#location-rules)
+   - [AI reviewer](#ai-reviewer)
+   - [AI review spend and caps](#ai-review-spend-and-caps)
+- [Running it](#running-it)
+   - [Flags](#flags)
+   - [Obsidian](#obsidian)
+   - [Without Notion](#without-notion)
+   - [HTML digest](#html-digest)
+   - [Cron](#cron)
+   - [Tests](#tests)
+- [Troubleshooting](#troubleshooting)
+- [Data sources](#data-sources)
+- [Files](#files)
 - [License](#license)
 
 ---
 
-## 1. What It Does & Pipeline Architecture
+## How it works
 
 ```
 ┌────────────────────────────────────────────────────────────────────────────┐
-│ 1. Fetch & Filter (sources/: filter.py, linkedin_indeed.py, job_boards.py) │
+│ 1. Fetch & filter (sources/: filter.py, linkedin_indeed.py, job_boards.py) │
 │    • Streams gzipped ATS chunks (~1.4M rows), LinkedIn, Indeed, Remote OK, │
 │      Jobicy, and HN Who's Hiring.                                          │
 │    • Applies fast pre-filters (recency, company/recruiter exclusions,      │
@@ -84,9 +86,9 @@ Every other setting keeps its built-in default; [`config.example.json`](config.e
 └─────────────────────────────────────┬──────────────────────────────────────┘
                                       ▼
 ┌────────────────────────────────────────────────────────────────────────────┐
-│ 2. Batch Scrape JDs (scrape.py)                                            │
-│    • Idempotently fetches full Job Descriptions (skips already-enriched).  │
-│      Descriptions that previously failed with an error are retried.        │
+│ 2. Fetch job descriptions (scrape.py)                                      │
+│    • Fetches each new posting's full description; ones that failed with    │
+│      an error last time are tried again.                                   │
 │    • Queries structured JSON APIs first (Ashby, Lever, Greenhouse,         │
 │      BambooHR, Workday CXS) before HTML fallback.                          │
 │    • Detects closed/expired postings, separates requirements sections      │
@@ -94,7 +96,7 @@ Every other setting keeps its built-in default; [`config.example.json`](config.e
 └─────────────────────────────────────┬──────────────────────────────────────┘
                                       ▼
 ┌────────────────────────────────────────────────────────────────────────────┐
-│ 3. Deterministic Evaluation (evaluate.py)                                  │
+│ 3. Keyword scoring (evaluate.py)                                           │
 │    • Screens JD body for hidden onsite/hybrid/foreign-residency rules.     │
 │    • Distinguishes hard requirements from "nice-to-have / preferred"       │
 │      sections and multi-language alternatives ("Skill A or Skill B").      │
@@ -103,7 +105,7 @@ Every other setting keeps its built-in default; [`config.example.json`](config.e
 └─────────────────────────────────────┬──────────────────────────────────────┘
                                       ▼
 ┌────────────────────────────────────────────────────────────────────────────┐
-│ 4. Calibrated LLM Rubric Review (review.py)                                │
+│ 4. AI review (review.py)                                                   │
 │    • Reuses cached reviews (also for reposts), records token/USD spend,    │
 │      and stops at the configured per-run / per-day caps.                   │
 │    • Drops roles already in Notion blocklists, and remote roles limited to │
@@ -111,11 +113,11 @@ Every other setting keeps its built-in default; [`config.example.json`](config.e
 │    • Grades each match against candidate_profile.md on a 12-point rubric:  │
 │      hard_reqs (0–4), core_work (0–3), evidence (0–3), level (0–2).        │
 │    • Verifies verbatim evidence_quote against the JD to prevent            │
-│      hallucinated top scores; computes final Match % and verdict in Python.│
+│      made-up evidence; Python computes the final Match % and verdict.      │
 └─────────────────────────────────────┬──────────────────────────────────────┘
                                       ▼
 ┌────────────────────────────────────────────────────────────────────────────┐
-│ 5. Output, Summary & Notifications (outputs/: notion.py, obsidian.py,      │
+│ 5. Outputs and notifications (outputs/: notion.py, obsidian.py,            │
 │    text_export.py, html_digest.py)                                         │
 │    • Rewrites data/digest.html, a self-contained page of matches.          │
 │    • Syncs qualified matches (>= min_score) to a Notion database, writes   │
@@ -126,31 +128,31 @@ Every other setting keeps its built-in default; [`config.example.json`](config.e
 └────────────────────────────────────────────────────────────────────────────┘
 ```
 
-### How Scores Are Calculated
+### How scores are calculated
 
 A posting gets two scores. Stage 3 computes a **keyword score** from the JD text; Stage 4's AI review then replaces it with the final **Match %**, which is what `--min-score` and the outputs use. Default values are shown; every one is a setting in `config.json`.
 
 | | Stage 3: keyword score (`evaluate.py`) | Stage 4: Match % (`review.py`) |
 | :--- | :--- | :--- |
 | **Start** | `base_score` (20) | `round(100 × (hard_reqs + core_work + evidence + level) / 12)`, graded 0–4, 0–3, 0–3, 0–2 (`llm_review.components`) |
-| **Add** | Title credit: a `primary_role_groups` match (its `points`, 20) or a `strong_target_patterns` match (20); a generic title with your core stack scores 10, or 20 when the JD shows enough target work (`generic_body_signal_min`) | — |
-| | `core_strengths`: 5 each (`core_strength_points`), up to `core_strengths_cap` (40) | — |
-| | `focus_keywords`: their weights, up to `domain_score_cap` (20) | — |
+| **Add** | Title credit: a `primary_role_groups` match (its `points`, 20) or a `strong_target_patterns` match (20); a generic title with your core stack scores 10, or 20 when the JD shows enough target work (`generic_body_signal_min`) |  |
+| | `core_strengths`: 5 each (`core_strength_points`), up to `core_strengths_cap` (40) |  |
+| | `focus_keywords`: their weights, up to `domain_score_cap` (20) |  |
 | **Subtract** | `soft_skill_penalty` (5) when an excluded skill is listed as optional; each `penalized_keywords` weight; each matching `hard_ask_penalties` entry; `top_yoe_penalty` (10) when the JD asks `max_min_yoe`+ years | `pay_midpoint_penalty` (10) when the pay band's midpoint is under `min_salary` (unless its top reaches `pay_midpoint_max_cap`); an evidence grade of 3 without a verbatim quote from the JD counts as 2 |
-| **Cap** | 100 | `blocker_cap` (30) when hard_reqs is 0 or logistics fail; `level_mismatch_cap` when level is 0; the pay-floor cap when the band tops out under `min_salary` (see [`compensation`](#3-configuring-for-another-career-configjson--candidate_profilemd)) |
+| **Cap** | 100 | `blocker_cap` (30) when hard_reqs is 0 or logistics fail; `level_mismatch_cap` when level is 0; the pay-floor cap when the band tops out under `min_salary` (see [`compensation`](#configuration)) |
 | **Then** | ≥ `strong_floor` (75): Strong; ≥ `secondary_floor` (55): Secondary; below: dropped. Matches ≥ `--review-min-score` (55) go to the AI review | ≥ `apply_min_score` (follows `min_sync_score`, 80): **APPLY**; ≥ `stretch_min_score` (50): **STRETCH**; below: **SKIP** (listed as filtered by AI review). APPLY is what gets synced at the default `--min-score` |
 
-**Worked example.** A posting whose title matches a primary role group, that names 6 of your core strengths and one 15-point focus keyword, and that asks for `max_min_yoe`+ years scores 20 + 20 + 30 + 15 − 10 = **75** (Strong), so it goes to review. The reviewer grades hard_reqs 3, core_work 3, evidence 3 (with a verified quote) and level 2: 11/12 = **92%**, APPLY, synced. Had its pay midpoint been under your floor, it would be 82%: still APPLY. Had the reviewer graded hard_reqs 0, it would be capped at 30%: SKIP.
+For example, a posting whose title matches a primary role group, that names 6 of your core strengths and one 15-point focus keyword, and that asks for `max_min_yoe`+ years scores 20 + 20 + 30 + 15 − 10 = **75** (Strong), so it goes to review. The reviewer grades hard_reqs 3, core_work 3, evidence 3 (with a verified quote) and level 2: 11/12 = **92%**, APPLY, synced. Had its pay midpoint been under your floor, it would be 82%: still APPLY. Had the reviewer graded hard_reqs 0, it would be capped at 30%: SKIP.
 
 With `--no-llm-review` (or no AI reviewer installed), the keyword score is the Match %. Cached reviews are rescored from their stored grades on every run, so changing these settings never requires new reviews.
 
 ---
 
-## 2. Installation & Setup
+## Setup
 
-The [Quickstart](#quickstart-5-minutes) covers cloning, the virtualenv, dependencies and your first config. This section covers the rest: updates, install options, secrets, Notion and the setup check. Python 3.10+ is required.
+The [Quickstart](#quickstart) covers cloning, the virtualenv, dependencies and your first config. This section covers the rest: updates, install options, secrets, Notion and the setup check. Python 3.10+ is required.
 
-### Pull Updates
+### Updating
 
 ```bash
 git pull origin main
@@ -161,9 +163,9 @@ Your settings live in `config.json` and your background in `candidate_profile.md
 <details>
 <summary>Upgrading from an earlier version? (one-time steps)</summary>
 
-**From before the `job_search_pipeline/` package.** The code moved from loose scripts at the root into the `job_search_pipeline/` folder. `run_job_search.sh`, cron lines that call it, your `config.json`, `candidate_profile.md`, `.env` and `data/` all keep working unchanged. If you ran a script directly, use the new command: `python3 run_pipeline.py` is now `python3 -m job_search_pipeline`, and `python3 check_setup.py` is `python3 -m job_search_pipeline --check`.
+If you're upgrading from before the `job_search_pipeline/` package: the code moved from loose scripts at the root into the `job_search_pipeline/` folder. `run_job_search.sh`, cron lines that call it, your `config.json`, `candidate_profile.md`, `.env` and `data/` all keep working unchanged. If you ran a script directly, use the new command: `python3 run_pipeline.py` is now `python3 -m job_search_pipeline`, and `python3 check_setup.py` is `python3 -m job_search_pipeline --check`.
 
-**From a version where `config.json` and `candidate_profile.md` were tracked.** That pull removes both files from the repository, so git refuses to run it while your edited copies are in the way. Set your copies aside, pull, and put them back:
+If you're upgrading from a version where `config.json` and `candidate_profile.md` were tracked: that pull removes both files from the repository, so git refuses to run it while your edited copies are in the way. Set your copies aside, pull, and put them back:
 
 ```bash
 mkdir -p ~/job-pipeline-backup
@@ -173,20 +175,20 @@ git pull origin main
 cp ~/job-pipeline-backup/config.json ~/job-pipeline-backup/candidate_profile.md .   # yours again, now ignored by git
 ```
 
-If you never edited either file, just pull, then create your copies as described under [Create Your Config and Profile](#create-your-config-and-profile).
+If you never edited either file, just pull, then create your copies as described under [Your config and profile](#your-config-and-profile).
 
 </details>
 
-### Install Options
+### Install options
 
 The Quickstart's `pip install -r requirements.txt` inside `.venv` is all a run needs; `run_job_search.sh` uses `.venv`'s Python automatically when it exists, even from cron. Two extras:
 
 ```bash
 pip install -e .                      # adds a `job-search` command, same as `python3 -m job_search_pipeline`
-pip install -r requirements-dev.txt   # ruff, for development (see Run the Tests)
+pip install -r requirements-dev.txt   # ruff, for development (see Tests)
 ```
 
-### Create Your Config and Profile
+### Your config and profile
 
 ```bash
 cp config.starter.json config.json         # just the settings you must change; or copy config.example.json for all of them
@@ -195,9 +197,9 @@ cp candidate_profile.example.md candidate_profile.md
 
 Run the pipeline (and cron) straight from your clone: `config.json`, `candidate_profile.md`, `.env`, `data/`, the log and the summary are all ignored by git, so `git pull` updates the code and leaves them alone. To keep extra personal files in the clone (your own scripts or notes), list them in `.git/info/exclude`, which works like `.gitignore` but is never committed.
 
-Edit the copies, not the templates: see [Configuring for Another Career](#3-configuring-for-another-career-configjson--candidate_profilemd). Until `config.json` exists the pipeline runs on the template's placeholder values and prints a reminder. Until `candidate_profile.md` exists the AI review is skipped (the placeholder profile is never sent to the LLM) and matches are output on their keyword scores.
+Edit the copies, not the templates: see [Configuration](#configuration). Until `config.json` exists the pipeline runs on the template's placeholder values and prints a reminder. Until `candidate_profile.md` exists the AI review is skipped (the placeholder profile is never sent to the LLM) and matches are output on their keyword scores.
 
-### Environment Variables
+### Environment variables
 
 Secrets and machine-specific values go in `.env` (or `~/.config/notion/job-search.env`), never in git:
 
@@ -220,17 +222,17 @@ Every variable is optional; without them the pipeline still runs end to end and 
 | `NOTION_DATABASE_ID` | The Notion database to sync matches to. | `notion.database_id` |
 | `OBSIDIAN_VAULT` | Path of the Obsidian vault to write notes to (`obsidian.enabled` must still be true). | `obsidian.vault_path` |
 | `NOTIFY_URL` | `ntfy` topic URL for push notifications. | `notifications.notify_url` |
-| `JOB_PIPELINE_CONFIG` | Path of a different config file, e.g. one per career. | — |
-| `JOB_SEARCH_LOG_MAX_BYTES` | Size at which `cron_job_search.log` is trimmed (default 5 MB; `0` turns trimming off). Read by `run_job_search.sh` only. | — |
+| `JOB_PIPELINE_CONFIG` | Path of a different config file, e.g. one per career. |  |
+| `JOB_SEARCH_LOG_MAX_BYTES` | Size at which `cron_job_search.log` is trimmed (default 5 MB; `0` turns trimming off). Read by `run_job_search.sh` only. |  |
 
-**Where they are read from.** The pipeline reads these from its process environment. `run_job_search.sh` (and so cron) loads `~/.config/notion/job-search.env` and then `.env` first, so a value in `.env` wins when both set it; `--check` reads both files the same way. A direct `python3 -m job_search_pipeline` run does **not** load either file: export the variables in your shell first, or run through the wrapper.
+The pipeline reads these from its process environment. `run_job_search.sh` (and so cron) loads `~/.config/notion/job-search.env` and then `.env` first, so a value in `.env` wins when both set it; `--check` reads both files the same way. A direct `python3 -m job_search_pipeline` run does **not** load either file: export the variables in your shell first, or run through the wrapper.
 
-### Setting Up Notion
+### Notion
 
-Notion is optional (see [Obsidian](#write-matches-to-an-obsidian-vault) and [other platforms](#using-your-own-documentation-platform-disable-notion--export-to-txt)). To use it:
+Notion is optional (see [Obsidian](#obsidian) and [other platforms](#without-notion)). To use it:
 
-1. **Create an integration** at [notion.so/my-integrations](https://www.notion.so/my-integrations) and copy its secret into `NOTION_TOKEN`.
-2. **Create a database** with these properties, named exactly as shown (any other properties you add are left alone), and copy its ID (the 32 characters in its URL) into `NOTION_DATABASE_ID`:
+1. Create an integration at [notion.so/my-integrations](https://www.notion.so/my-integrations) and copy its secret into `NOTION_TOKEN`.
+2. Create a database with these properties, named exactly as shown (any other properties you add are left alone), and copy its ID (the 32 characters in its URL) into `NOTION_DATABASE_ID`:
 
    | Property | Type |
    | :--- | :--- |
@@ -243,12 +245,12 @@ Notion is optional (see [Obsidian](#write-matches-to-an-obsidian-vault) and [oth
    | `Date Posted` | Date |
    | `Originally Posted` | Date (optional) |
 
-3. **Connect the integration to the database:** open the database, then **••• → Connections**, and add your integration. Without this step every call fails with 404, the most common setup error.
-4. **Run `python3 -m job_search_pipeline --check`.** It confirms the token works, the database is reachable, and every property exists with the right type.
+3. Connect the integration to the database: open the database, choose **••• → Connections** and add your integration. Skipping this is the usual cause of 404 errors.
+4. Run `python3 -m job_search_pipeline --check`. It confirms the token works, the database is reachable, and every property exists with the right type.
 
 The first run also adds a run-summary Callout below the database on its parent page, and remembers it in `notion.summary_block_id`.
 
-### Check Your Setup
+### Checking the setup
 
 ```bash
 python3 -m job_search_pipeline --check
@@ -258,44 +260,42 @@ The check fetches no jobs, spends no AI quota and writes nothing. It reports, on
 
 ---
 
-## 3. Configuring for Another Career (`config.json` & `candidate_profile.md`)
+## Configuration
 
-To adapt the pipeline for a new career (e.g., Data Science, Product Management, DevOps, Design, Finance, Marketing, Healthcare):
+### candidate_profile.md
+Create it from the template first if you have not already (`cp candidate_profile.example.md candidate_profile.md`). Describe your background honestly; the AI review grades every posting against it. Editing the file makes the cached reviews out of date, so open matches are reviewed again on the next run. Include:
+- Your total years of experience, and years with each core tool or skill.
+- The tools, certifications and specialties you don't have.
+- Specific accomplishments ("Strongest Evidence") that a well-matched job description would mirror.
+- The levels you're aiming for, and anything that rules a job out.
 
-### Step 1: Edit `candidate_profile.md`
-Create it from the template first if you have not already (`cp candidate_profile.example.md candidate_profile.md`). Write an honest summary of the candidate's background. [`review.py`](job_search_pipeline/review.py) hashes `candidate_profile.md`—any edit automatically invalidates stale cached LLM reviews:
-- Total years of experience and years per core tool/skill.
-- Explicit list of tools/certifications/specialties the candidate **does not** have.
-- Specific accomplishments ("Strongest Evidence") that a top-matching job description should mirror.
-- Target seniority levels and hard blockers.
-
-### Step 2: Edit `config.json`
+### config.json
 Create it first if you have not already: `cp config.starter.json config.json` gives you only the career-specific settings, while `cp config.example.json config.json` copies every setting. The template [`config.example.json`](config.example.json) lists every setting: built-in defaults for the general ones, placeholders for the career-specific ones. In your copy, delete any setting you leave at its default; a missing key uses the built-in default, so only what you change needs to be there, and later default improvements reach you.
 
-| Section | What to Customize |
+| Section | What to set |
 | :--- | :--- |
 | `paths` | Where data files (`filtered_jobs`, `enriched_jobs`, `blocklist`, `review_cache`, `llm_spend`, `text_export`, `html_digest`, `digest_store`, ...) and `candidate_profile` live. Relative paths resolve from the repository directory; `~` is expanded. |
 | `sources` | `lookback_days`, LinkedIn/Indeed `search_terms` and `searches` (`[site, location, suffix, count]`), the `*_enabled` switches, and the `jobicy_url` industry parameter. |
-| `location` | `allow_remote`, your metro (`local_metro_patterns`, `local_metro_exclude_patterns`), `home_states` / `home_timezones` for state- or zone-limited remote roles, and the foreign-place lists. See [Location Rules in Detail](#location-rules-in-detail). |
+| `location` | `allow_remote`, your metro (`local_metro_patterns`, `local_metro_exclude_patterns`), `home_states` / `home_timezones` for state- or zone-limited remote roles, and the foreign-place lists. See [Location rules](#location-rules). |
 | `compensation` | `min_salary` (annual USD floor; `min_salary: 0` disables pay filtering), `pay_midpoint_max_cap` and `pay_midpoint_penalty`, and `pay_floor_taper_from` to soften the floor's cap.<sup>1</sup> |
 | `experience` | `max_min_yoe` (most years a JD may ask), `max_min_secondary_yoe`, `reject_clearance` with `clearance_ignore_terms` (e.g. `["public trust"]`), and `reject_foreign_language_req`.<sup>2</sup> |
 | `titles` | `target_patterns` (Stage 1 pre-filter), `strong_target_patterns`, `primary_role_groups` (title bonus), `primary_role_patterns`, and the lists that reject titles: `exclude_seniority_patterns`, `exclude_tech_patterns`, `exclude_role_patterns` and `soft_exclude_role_patterns`.<sup>3</sup> |
 | `companies` | `exclude_companies`, `exclude_recruiters` (staffing agencies/aggregators), `allow_recruiters`, and `company_aliases` (parent company → brand). |
-| `skills_and_scoring` | `core_strengths`, `focus_keywords`, `hard_exclude_skills`, `hard_ask_penalties`, `off_center_role_check`, and the score floors and caps in [How Scores Are Calculated](#how-scores-are-calculated). |
+| `skills_and_scoring` | `core_strengths`, `focus_keywords`, `hard_exclude_skills`, `hard_ask_penalties`, `off_center_role_check`, and the score floors and caps in [How scores are calculated](#how-scores-are-calculated). |
 | `llm_review` | `provider` and `model`, `rubric_descriptions` and 3–8 `calibration_examples` for your career, score caps and verdict thresholds, `hide_third_party`, spending limits in `budget` and prices in `pricing`.<sup>4</sup> |
 | `url_normalization` | `aggregator_hosts` (job boards whose links are re-pointed to the employer's posting) and `extra_tracking_params`. The defaults suit most searches. |
-| `notion` | `database_id` (or `NOTION_DATABASE_ID`), and optionally `summary_page_id` for the run-summary Callout. `summary_block_id` is filled in automatically. See [Setting Up Notion](#setting-up-notion). |
-| `obsidian` | `enabled`, `vault_path` (or `OBSIDIAN_VAULT`), `folder`, `summary_note` and `tag`. See [Write Matches to an Obsidian Vault](#write-matches-to-an-obsidian-vault). |
+| `notion` | `database_id` (or `NOTION_DATABASE_ID`), and optionally `summary_page_id` for the run-summary Callout. `summary_block_id` is filled in automatically. See [Notion](#notion). |
+| `obsidian` | `enabled`, `vault_path` (or `OBSIDIAN_VAULT`), `folder`, `summary_note` and `tag`. See [Obsidian](#obsidian). |
 | `text_export` | `enabled: true` appends new qualified matches to `paths.text_export` (`data/job_matches.txt`). |
-| `html_digest` | On by default, written to `paths.html_digest` (`enabled: false` turns it off); set `title`, `keep_days` (default 30) and `url` if you host the page. See [View Matches in Your Browser](#view-matches-in-your-browser-html-digest). |
+| `html_digest` | On by default, written to `paths.html_digest` (`enabled: false` turns it off); set `title`, `keep_days` (default 30) and `url` if you host the page. See [HTML digest](#html-digest). |
 
-<sup>1</sup> **Pay floor.** A posting whose band tops out below `min_salary` is capped at `llm_review.blocker_cap`. With `pay_floor_taper_from` (a figure below `min_salary`), the cap instead rises in a straight line from `blocker_cap` at `pay_floor_taper_from` to 100 at `min_salary`; `0` keeps the cliff.
+<sup>1</sup> A posting whose band tops out below `min_salary` is capped at `llm_review.blocker_cap`. With `pay_floor_taper_from` (a figure below `min_salary`), the cap instead rises in a straight line from `blocker_cap` at `pay_floor_taper_from` to 100 at `min_salary`; `0` keeps the cliff.
 
-<sup>2</sup> **Years of experience.** A range such as "5-8+ years" counts as its lower bound, and figures quoted for another level or as "ideally"/nice-to-have are ignored.
+<sup>2</sup> For years of experience, a range such as "5-8+ years" counts as its lower bound, and figures quoted for another level or as "ideally"/nice-to-have are ignored.
 
-<sup>3</sup> **Title lists.** `primary_role_groups` give their `points` (default +20); `primary_role_patterns` boost LinkedIn/Indeed titles by 20. `exclude_role_patterns` reject a title outright; `soft_exclude_role_patterns` reject it unless it also matches `strong_target_patterns`, so there's no need to repeat them in both.
+<sup>3</sup> `primary_role_groups` give their `points` (default +20); `primary_role_patterns` boost LinkedIn/Indeed titles by 20. `exclude_role_patterns` reject a title outright; `soft_exclude_role_patterns` reject it unless it also matches `strong_target_patterns`, so there's no need to repeat them in both.
 
-<sup>4</sup> **AI review settings.** `apply_min_score` is the Match % at which the verdict reads APPLY; leave it out to follow `skills_and_scoring.min_sync_score`, so APPLY always means "will be synced". `level_mismatch_cap` caps a role graded level 0 (under- or over-leveled), so strong skill overlap cannot lift a junior or executive role to APPLY; the template sets 65, and leaving it out means no cap. `hide_third_party: true` drops postings flagged as coming from a staffing agency, recruiter or aggregator, as if skipped; the default `false` only labels them. Tune `repost_similarity` too; see [AI Review Spend and Caps](#ai-review-spend-and-caps).
+<sup>4</sup> `apply_min_score` is the Match % at which the verdict reads APPLY; leave it out to follow `skills_and_scoring.min_sync_score`, so APPLY always means "will be synced". `level_mismatch_cap` caps a role graded level 0 (under- or over-leveled), so strong skill overlap cannot lift a junior or executive role to APPLY; the template sets 65, and leaving it out means no cap. `hide_third_party: true` drops postings flagged as coming from a staffing agency, recruiter or aggregator, as if skipped; the default `false` only labels them. Tune `repost_similarity` too; see [AI review spend and caps](#ai-review-spend-and-caps).
 
 <details>
 <summary>Legacy key names that are still read</summary>
@@ -310,22 +310,23 @@ Configs written before some lists were merged keep working; these keys are read 
 
 </details>
 
-#### Location Rules in Detail
+#### Location rules
 
-- **State and time-zone limits.** Set `home_states` (e.g. `["CO"]`) and `home_timezones` (any of `eastern`, `central`, `mountain`, `pacific`) to drop remote roles restricted to other states or zones ("Remote - TX", "must reside in MA, IN, or TX", "must be located in the Eastern time zone") before the LLM review. Both rules are off while the lists are empty.
-- **Foreign places.** `foreign_places` (countries, regions, provinces) rules out a feed location or title that names one and not your country, JD residency wording ("remote within Canada", "anywhere in Australia") and a JD `Location:` line. `foreign_cities` only rules out a JD `Location:` line, since a city name alone can be a town in your country (Dublin, OH). Entries are lower-case regex fragments matched as whole words.
-- **Same-named cities.** `local_metro_exclude_patterns` drops a city in your metro's name that is in another state.
-- **Searching from outside the US.** Both foreign lists default to a US-based candidate's (shown in the template). Set `allowed_country_pattern` and `country_token_pattern` to your own country and replace both lists.
+- Set `home_states` (e.g. `["CO"]`) and `home_timezones` (any of `eastern`, `central`, `mountain`, `pacific`) to drop remote roles restricted to other states or zones ("Remote - TX", "must reside in MA, IN, or TX", "must be located in the Eastern time zone") before the LLM review. Both rules are off while the lists are empty.
+- `foreign_places` (countries, regions, provinces) rules out a feed location or title that names one and not your country, JD residency wording ("remote within Canada", "anywhere in Australia") and a JD `Location:` line. `foreign_cities` only rules out a JD `Location:` line, since a city name alone can be a town in your country (Dublin, OH). Entries are lower-case regex fragments matched as whole words.
+- `local_metro_exclude_patterns` drops a city in your metro's name that is in another state.
+- If you're searching from outside the US: both foreign lists default to a US-based search (shown in the template). Set `allowed_country_pattern` and `country_token_pattern` to your own country and replace both lists.
 
-**How the config is loaded:**
+#### Where the config is read from
+
 - The pipeline reads `config.json` from the repository directory. It is your own copy of the tracked template `config.example.json` and is ignored by git. Set `JOB_PIPELINE_CONFIG=/path/to/other.json` to use a different file (e.g. one per career).
 - If `config.json` does not exist yet, the template `config.example.json` is read instead and a reminder is printed to stderr. The template itself is never written to.
 - If a file named by `JOB_PIPELINE_CONFIG` is missing, every setting falls back to its built-in default. If a config file is not valid JSON, the run stops with the file, line and column of the error. `python3 -m job_search_pipeline --check` also catches unknown keys, such as typos, which would otherwise be ignored.
 - The Notion logger only writes `summary_block_id` back when `config.json` parsed cleanly, so a typo in the file is never overwritten. If `config.json` does not exist yet, it is created as a copy of the template with the block id added.
 
-### Choose an LLM Provider
+### AI reviewer
 
-The default is `agy`, preserving the existing CLI workflow. Edit the existing `llm_review` object in `config.json`; keep its other rubric settings:
+The default is `agy`. To switch, edit the `llm_review` object in `config.json`; keep its other rubric settings:
 
 | Provider | Settings to change | Setup |
 | :--- | :--- | :--- |
@@ -341,15 +342,15 @@ CLI reviews send the candidate profile and selected job details to the provider 
 
 Claude runs with built-in tools disabled, MCP auto-configuration and slash commands disabled, and session persistence off. Codex runs in a read-only sandbox with ephemeral sessions. Both run from an empty temporary directory, but CLI configuration and managed policies can still affect behavior; review them before running on sensitive data. Codex may still use tools permitted by its sandbox and configuration.
 
-If a review times out, fails, or returns an invalid/incomplete reply, the pipeline reports the problem and keeps the job's keyword score, but **holds the job back**: it is listed in the summary as `[AI review failed, held for retry]`, is not synced or exported, and is reviewed again on the next run. If the CLI is not installed at all (or `candidate_profile.md` has not been created from its template), the stage is skipped and matches are output on their keyword scores, as with `--no-llm-review`. An unknown provider is a configuration error.
+If a review times out, fails, or returns an invalid/incomplete reply, the pipeline reports the problem and keeps the job's keyword score, but holds the job back: it is listed in the summary as `[AI review failed, held for retry]`, is not synced or exported, and is reviewed again on the next run. If the CLI is not installed at all (or `candidate_profile.md` has not been created from its template), the stage is skipped and matches are output on their keyword scores, as with `--no-llm-review`. An unknown provider is a configuration error.
 
-**Third-party posters.** The review also flags postings that come from a staffing agency, recruiter, consultancy or aggregator rather than the employer. The flag never changes the score: flagged roles sync as usual, with `[Third-party poster]` at the start of the "Why It Matches" text in Notion, the Markdown summary and the `.txt` export, and a count in the push notification.
+The review also flags postings that come from a staffing agency, recruiter, consultancy or aggregator rather than the employer. The flag never changes the score: flagged roles sync as usual, with `[Third-party poster]` at the start of the "Why It Matches" text in Notion, the Markdown summary and the `.txt` export, and a count in the push notification.
 
-**Cache upkeep.** Cached reviews made under an older profile, prompt, model or provider can never be read again and are pruned on the next run. The Match % and verdict of a cached review are recomputed from its stored grades on every run, so changes to `min_sync_score`, `apply_min_score` or the pay rules apply without paying for new reviews. Editing the profile, rubric or calibration examples still re-reviews every open match once.
+Cached reviews made under an older profile, prompt, model or provider can never be read again and are pruned on the next run. The Match % and verdict of a cached review are recomputed from its stored grades on every run, so changes to `min_sync_score`, `apply_min_score` or the pay rules apply without paying for new reviews. Editing the profile, rubric or calibration examples still re-reviews every open match once.
 
-**Reposts reuse reviews.** A posting with a new URL is not reviewed again when it is a repost of one already reviewed: either the JD text is identical, or the company and title match and the JD text is at least `repost_similarity` alike (0–1, default `0.8`, estimated from a small fingerprint stored with each review). This covers the same role on LinkedIn and on the company's ATS, and reposts under a new ID with small edits. Reviews cached before this feature have no fingerprint, so only reviews made since then can be matched this way.
+A posting with a new URL is not reviewed again when it is a repost of one already reviewed: either the JD text is identical, or the company and title match and the JD text is at least `repost_similarity` alike (0–1, default `0.8`, estimated from a small fingerprint stored with each review). This covers the same role on LinkedIn and on the company's ATS, and reposts under a new ID with small edits. Reviews cached before this feature have no fingerprint, so only reviews made since then can be matched this way.
 
-### AI Review Spend and Caps
+### AI review spend and caps
 
 Every run records what the review used, in `paths.llm_spend` (`data/llm_spend.json`, kept for 90 days): calls made, reviews reused from the cache or from reposts, input/cached/output tokens, and cost. The figures appear in the console log, the push notification, the Markdown summary and the HTML digest (this run and today).
 
@@ -385,9 +386,9 @@ Reviews run highest keyword score first. Each one reserves its estimated cost (p
 
 ---
 
-## 4. Usage, CLI Flags & Cron Automation
+## Running it
 
-### Run the Full Pipeline
+### Running a search
 
 ```bash
 ./run_job_search.sh
@@ -406,11 +407,11 @@ python3 -m job_search_pipeline --skip-fetch --skip-scrape --no-notion --no-notif
 python3 -m job_search_pipeline --no-llm-review --min-score 75
 ```
 
-### All CLI Flags
+### Flags
 
 | Flag | Description |
 | :--- | :--- |
-| `--check` | Check the setup and exit without running (same as `python3 -m job_search_pipeline.check`); see [Check Your Setup](#check-your-setup). |
+| `--check` | Check the setup and exit without running (same as `python3 -m job_search_pipeline.check`); see [Checking the setup](#checking-the-setup). |
 | `--skip-fetch` | Skip Stage 1 (`sources/filter.py`) and reuse `data/filtered_jobs.json`. |
 | `--skip-scrape` | Skip Stage 2 (`scrape.py`) and reuse `data/enriched_jobs.json`. |
 | `--no-llm-review` | Skip Stage 4 (`review.py`) and keep Stage 3 keyword scores. |
@@ -428,11 +429,11 @@ python3 -m job_search_pipeline --no-llm-review --min-score 75
 | `--html-output PATH` | Write the HTML digest to `PATH` (overrides `html_digest` in `config.json`). |
 | `--no-html` | Skip the HTML digest even when enabled in `config.json`. Cannot be combined with `--html-output`. |
 
-### Write Matches to an Obsidian Vault
+### Obsidian
 
 Instead of (or as well as) Notion, the pipeline can write each new match as a note in an Obsidian vault. The vault is just a folder, so Obsidian doesn't need to be running, and the notes sync like any others (Obsidian Sync, iCloud, Syncthing, git).
 
-Enable it in `config.json` (ideal for cron), or set `OBSIDIAN_VAULT` in `.env` in place of `vault_path`:
+Turn it on in `config.json`, or set `OBSIDIAN_VAULT` in `.env` in place of `vault_path`:
 
 ```json
 "obsidian": {
@@ -471,24 +472,18 @@ Change `status` or add your own notes freely: an existing note is never overwrit
 
 Written roles go into the same blocklists as Notion and the `.txt` export. When Notion is also on, Notion does the blocklisting, so a role that fails to reach Notion is retried next run (its Obsidian note is left as it is). `--check` reports whether the vault folder exists and is writable.
 
-### Using Your Own Documentation Platform (Disable Notion / Export to .txt)
+### Without Notion
 
-Notion is optional. If you use Obsidian, see [above](#write-matches-to-an-obsidian-vault). If you track applications somewhere else (Confluence, a wiki, a spreadsheet, a plain notes folder), turn off Notion writes and have the pipeline write matches to a text file instead.
+Notion is optional. If you use Obsidian, see [above](#obsidian). If you track applications somewhere else (Confluence, a wiki, a spreadsheet, a plain notes folder), turn off Notion writes and have the pipeline write matches to a text file instead.
 
-**1. Disable Notion writes**
+To turn off Notion:
 
 | Scope | How |
 | :--- | :--- |
 | One run | Pass `--no-notion` (skips both the database sync and the run-summary Callout). Pass `--no-notion-log` to keep the sync but skip only the Callout. |
 | Permanently | Leave `notion.database_id` empty in `config.json` and don't set `NOTION_DATABASE_ID` / `NOTION_TOKEN`. Both Notion steps then skip themselves with a notice, and no token is needed. |
 
-**2. View matches in your browser**
-
-Nothing to set up: every run writes a web page of matches to `data/digest.html`. See [View Matches in Your Browser](#view-matches-in-your-browser-html-digest).
-
-**3. Export matches to a `.txt` file**
-
-Enable it permanently in `config.json` (ideal for cron):
+Matches still reach the [HTML digest](#html-digest) with no setup. To also write them to a `.txt` file, turn it on in `config.json`:
 
 ```json
 "paths": { "text_export": "data/job_matches.txt" },
@@ -523,13 +518,13 @@ Each run appends a timestamped block containing only matches at or above `--min-
     Link: https://jobs.example.org/456
 ```
 
-**How deduplication works:** roles are matched by `company|title`, and also by JD text plus title, so the same posting under another company name (a brand and its parent, a reposter) is one role. Exported roles are added to the same URL and role blocklists (`data/blocklist.json`, `data/blocklist_roles.json`) that Notion sync uses, so a role is written once and reposts on other boards are skipped. If Notion or Obsidian is also active, that output handles the blocklisting instead, so a role that fails to reach it is retried on the next run (and may appear in the `.txt` again). To re-export everything from scratch, delete those two blocklist files.
+Roles are matched by `company|title`, and also by JD text plus title, so the same posting under another company name (a brand and its parent, a reposter) is one role. Exported roles are added to the same URL and role blocklists (`data/blocklist.json`, `data/blocklist_roles.json`) that Notion sync uses, so a role is written once and reposts on other boards are skipped. If Notion or Obsidian is also active, that output handles the blocklisting instead, so a role that fails to reach it is retried on the next run (and may appear in the `.txt` again). To re-export everything from scratch, delete those two blocklist files.
 
-**Other formats:** `--md-output PATH` writes the full Markdown table (matches, manual reviews, AI skips, location drops), overwritten each run. `data/evaluated_jobs.json` holds the raw Stage 3 results as JSON for custom integrations.
+For other formats, `--md-output PATH` writes the full Markdown table (matches, manual reviews, AI skips, location drops), overwritten each run. `data/evaluated_jobs.json` holds the raw Stage 3 results as JSON for custom integrations.
 
-### View Matches in Your Browser (HTML Digest)
+### HTML digest
 
-Without any setup, every run writes `data/digest.html`: a single self-contained page (no server, no external scripts, works offline) that you open in any browser (see the [screenshot](#automated-end-to-end-job-search-pipeline) at the top):
+Every run writes `data/digest.html`, a single page with no external scripts that works offline. The [screenshot](#job-search-pipeline) at the top shows one. Open it with:
 
 ```bash
 xdg-open data/digest.html   # macOS: open data/digest.html
@@ -541,9 +536,9 @@ It lists matches in three groups: **New this run**, **Still open** (seen before 
 
 To open the page from your phone, serve the folder (for example `python3 -m http.server -d data 8080` on your home network, or any static host) and set `html_digest.url` to its address. The push notification then opens the digest when tapped; without a `url`, the notification shows the file path.
 
-### Automate with Cron
+### Cron
 
-Run 3 times daily (e.g., 7:10 AM, 12:10 PM, 7:10 PM):
+To run at 7:10, 12:10 and 19:10:
 
 ```cron
 10 7,12,19 * * * /path/to/job-search-pipeline/run_job_search.sh
@@ -553,7 +548,7 @@ The wrapper appends every run to `cron_job_search.log` next to the scripts. When
 
 The ATS feed is refreshed once a day, usually between about 15:00 and 19:00 UTC; runs before that see the previous day's snapshot, and the pipeline warns when the feed is more than `sources.feed_stale_hours` (36) old.
 
-### Run the Tests
+### Tests
 
 ```bash
 pip install -r requirements-dev.txt   # ruff, pinned to the version CI uses
@@ -567,16 +562,16 @@ The tests load `tests/fixtures/search_config.json` (a made-up search) through `t
 
 ---
 
-## 5. Troubleshooting & FAQ
+## Troubleshooting
 
 **My `.env` values aren't used when I run `python3 -m job_search_pipeline`.**
-Only `run_job_search.sh` and `--check` load `.env` and `~/.config/notion/job-search.env`. Run through the wrapper (it passes any flags on), or export the variables in your shell first. See [Environment Variables](#environment-variables).
+Only `run_job_search.sh` and `--check` load `.env` and `~/.config/notion/job-search.env`. Run through the wrapper (it passes any flags on), or export the variables in your shell first. See [Environment variables](#environment-variables).
 
 **Notion returns 404 / "database not found".**
-The database isn't shared with your integration: open it, choose **••• → Connections**, and add the integration. Then run `--check`, which also reports missing or mistyped properties. See [Setting Up Notion](#setting-up-notion).
+The database isn't shared with your integration: open it, choose **••• → Connections**, and add the integration. Then run `--check`, which also reports missing or mistyped properties. See [Notion](#notion).
 
 **A match shows `[AI review failed, held for retry]` or `[AI review deferred]`.**
-Failed means the reviewer timed out, crashed or returned an unusable reply; deferred means a `budget` cap was reached. Either way the job is held back from Notion, Obsidian and the `.txt` export and reviewed first on the next run. See [Choose an LLM Provider](#choose-an-llm-provider) and [AI Review Spend and Caps](#ai-review-spend-and-caps).
+Failed means the reviewer timed out, crashed or returned an unusable reply; deferred means a `budget` cap was reached. Either way the job is held back from Notion, Obsidian and the `.txt` export and reviewed first on the next run. See [AI reviewer](#ai-reviewer) and [AI review spend and caps](#ai-review-spend-and-caps).
 
 **How do I re-sync or re-export everything from scratch?**
 Delete `data/blocklist.json` and `data/blocklist_roles.json`. Every open match is then treated as new on the next run. Existing Obsidian notes are kept, not duplicated.
@@ -595,33 +590,33 @@ No: `--skip-fetch --skip-scrape` re-evaluates the jobs already in `data/enriched
 
 ---
 
-## 6. Data Sources, Links & `curl` Commands
+## Data sources
 
-Below are the exact upstream endpoints queried by the pipeline. Expand a source for `curl` commands you can run to inspect its live responses.
+The endpoints each source uses, with `curl` commands for looking at their live responses.
 
-### 6.1 GitHub ATS Job-Board Feed (job-board-aggregator)
+### job-board-aggregator
 
-- **Project:** [Riley-Dorrington/job-board-aggregator](https://github.com/Riley-Dorrington/job-board-aggregator) (MIT): the multithreaded ETL that scrapes the ATS boards daily. Its output is published to [Riley-Dorrington/job-board-data](https://github.com/Riley-Dorrington/job-board-data), which this pipeline reads.
-- **Manifest URL:** `https://riley-dorrington.github.io/job-board-data/data/chunks/jobs_manifest.json`
-- **Chunk Base URL:** `https://riley-dorrington.github.io/job-board-data/data/chunks/`
-- **What it provides:** Daily-updated gzipped JSON chunks (`jobs_0.json.gz`, `jobs_1.json.gz`, ...) containing ~1.4M+ job postings scraped directly from company ATS boards (Greenhouse, Lever, Ashby, Workday, BambooHR, iCIMS, SmartRecruiters, etc.). Rows carry title, company, location and link but no description; Stage 2 fetches that.
+- Project: [Riley-Dorrington/job-board-aggregator](https://github.com/Riley-Dorrington/job-board-aggregator) (MIT): the multithreaded ETL that scrapes the ATS boards daily. Its output is published to [Riley-Dorrington/job-board-data](https://github.com/Riley-Dorrington/job-board-data), which this pipeline reads.
+- Manifest URL: `https://riley-dorrington.github.io/job-board-data/data/chunks/jobs_manifest.json`
+- Chunk base URL: `https://riley-dorrington.github.io/job-board-data/data/chunks/`
+- Contents: gzipped JSON chunks, updated daily (`jobs_0.json.gz`, `jobs_1.json.gz`, ...) holding about 1.4 million postings scraped directly from company ATS boards (Greenhouse, Lever, Ashby, Workday, BambooHR, iCIMS, SmartRecruiters, etc.). Rows carry title, company, location and link but no description; Stage 2 fetches that.
 
 <details>
 <summary><code>curl</code> commands</summary>
 
-**Inspect the manifest (chunk list & `last_updated` timestamp):**
+Inspect the manifest (chunk list & `last_updated` timestamp):
 ```bash
 curl -sL "https://riley-dorrington.github.io/job-board-data/data/chunks/jobs_manifest.json" | jq .
 ```
 
-**Download and inspect the first 3 job records from chunk 0:**
+Download and inspect the first 3 job records from chunk 0:
 ```bash
 curl -sL "https://riley-dorrington.github.io/job-board-data/data/chunks/jobs_0.json.gz" \
   | gunzip \
   | jq '.[0:3]'
 ```
 
-**Count how many jobs are in a single chunk:**
+Count how many jobs are in a single chunk:
 ```bash
 curl -sL "https://riley-dorrington.github.io/job-board-data/data/chunks/jobs_0.json.gz" \
   | gunzip \
@@ -630,32 +625,32 @@ curl -sL "https://riley-dorrington.github.io/job-board-data/data/chunks/jobs_0.j
 
 </details>
 
-### 6.2 Remote OK API
+### Remote OK
 
-- **Endpoint:** `https://remoteok.com/api`
-- **Used in:** [`sources/job_boards.py`](job_search_pipeline/sources/job_boards.py) (`fetch_remoteok()`)
-- **Note:** Element `[0]` of the array is Remote OK's legal notice; job objects start at index `[1]`. The free API lags the site by a few days, so with a short `lookback_days` it can return no recent postings; `sources.remoteok_enabled: false` turns it off.
+- Endpoint: `https://remoteok.com/api`
+- Used in: [`sources/job_boards.py`](job_search_pipeline/sources/job_boards.py) (`fetch_remoteok()`)
+- Note: element `[0]` of the array is Remote OK's legal notice; job objects start at index `[1]`. The free API lags the site by a few days, so with a short `lookback_days` it can return no recent postings; `sources.remoteok_enabled: false` turns it off.
 
 <details>
 <summary><code>curl</code> commands</summary>
 
-**Fetch and inspect the newest 2 listings on Remote OK:**
+Fetch and inspect the newest 2 listings on Remote OK:
 ```bash
 curl -sL -A "Mozilla/5.0" "https://remoteok.com/api" | jq '.[1:3]'
 ```
 
 </details>
 
-### 6.3 Jobicy Remote Jobs API
+### Jobicy
 
-- **Endpoint:** `https://jobicy.com/api/v2/remote-jobs?count=100&geo=usa&industry=engineering`
-- **Used in:** [`sources/job_boards.py`](job_search_pipeline/sources/job_boards.py) (`fetch_jobicy()`)
-- **Adapting for other careers:** Change `industry=` in `config.json` (`sources.jobicy_url`) to match your field (e.g., `marketing`, `design-multimedia`, `data-science`, `business`, `hr`, `Customer-Support`, `finance-legal`, `management`, `copywriting`).
+- Endpoint: `https://jobicy.com/api/v2/remote-jobs?count=100&geo=usa&industry=engineering`
+- Used in: [`sources/job_boards.py`](job_search_pipeline/sources/job_boards.py) (`fetch_jobicy()`)
+- Other careers: change `industry=` in `config.json` (`sources.jobicy_url`) to match your field (e.g., `marketing`, `design-multimedia`, `data-science`, `business`, `hr`, `Customer-Support`, `finance-legal`, `management`, `copywriting`).
 
 <details>
 <summary><code>curl</code> commands</summary>
 
-**Fetch and inspect the latest Jobicy remote listings:**
+Fetch and inspect the latest Jobicy remote listings:
 ```bash
 curl -sL -A "Mozilla/5.0" \
   "https://jobicy.com/api/v2/remote-jobs?count=5&geo=usa&industry=engineering" \
@@ -664,22 +659,22 @@ curl -sL -A "Mozilla/5.0" \
 
 </details>
 
-### 6.4 Hacker News "Who Is Hiring?" (Algolia API)
+### Hacker News "Who is hiring?"
 
-- **Search Endpoint:** `https://hn.algolia.com/api/v1/search_by_date?tags=story,author_whoishiring&query=who%20is%20hiring&hitsPerPage=5`
-- **Thread Item Endpoint:** `https://hn.algolia.com/api/v1/items/{objectID}`
-- **Used in:** [`sources/job_boards.py`](job_search_pipeline/sources/job_boards.py) (`fetch_hn_whos_hiring()`)
+- Search endpoint: `https://hn.algolia.com/api/v1/search_by_date?tags=story,author_whoishiring&query=who%20is%20hiring&hitsPerPage=5`
+- Thread item endpoint: `https://hn.algolia.com/api/v1/items/{objectID}`
+- Used in: [`sources/job_boards.py`](job_search_pipeline/sources/job_boards.py) (`fetch_hn_whos_hiring()`)
 
 <details>
 <summary><code>curl</code> commands</summary>
 
-**Step 1 — Find the latest monthly "Ask HN: Who is hiring?" thread `objectID`:**
+Step 1: find the latest monthly "Ask HN: Who is hiring?" thread `objectID`:
 ```bash
 curl -sL "https://hn.algolia.com/api/v1/search_by_date?tags=story,author_whoishiring&query=who%20is%20hiring&hitsPerPage=5" \
   | jq '.hits[] | select(.title | test("^Ask HN: Who is hiring"; "i")) | {objectID, title, created_at}'
 ```
 
-**Step 2 — Fetch the thread comments (replace `<OBJECT_ID>` with the ID from Step 1):**
+Step 2: fetch the thread comments (replace `<OBJECT_ID>` with the ID from Step 1):
 ```bash
 curl -sL "https://hn.algolia.com/api/v1/items/<OBJECT_ID>" \
   | jq '.children[0:3] | map({id, created_at, text})'
@@ -687,15 +682,15 @@ curl -sL "https://hn.algolia.com/api/v1/items/<OBJECT_ID>" \
 
 </details>
 
-### 6.5 LinkedIn & Indeed (`python-jobspy`)
+### LinkedIn and Indeed
 
-- **Used in:** [`sources/linkedin_indeed.py`](job_search_pipeline/sources/linkedin_indeed.py)
+- Used in: [`sources/linkedin_indeed.py`](job_search_pipeline/sources/linkedin_indeed.py)
 - Queries LinkedIn and Indeed in parallel threads via [`python-jobspy`](https://github.com/Bunsly/JobSpy) using the `sources.search_terms` and `sources.searches` arrays in `config.json`.
-- Automatically caches LinkedIn job detail pages in `data/linkedin_details_cache.json` across runs to avoid `HTTP 429` rate limits and extracts `job_url_direct` when an offsite company ATS link is available.
+- Caches LinkedIn job detail pages in `data/linkedin_details_cache.json` across runs to avoid `HTTP 429` rate limits and extracts `job_url_direct` when an offsite company ATS link is available.
 
-### 6.6 Direct ATS JSON Endpoints (`scrape.py`)
+### Job descriptions from ATS APIs
 
-Instead of fragile HTML scraping, [`scrape.py`](job_search_pipeline/scrape.py) queries each ATS's public JSON API first and falls back to `BeautifulSoup` HTML extraction only for custom career sites: Ashby, Lever, Greenhouse, BambooHR and Workday CXS.
+[`scrape.py`](job_search_pipeline/scrape.py) gets descriptions from the public JSON APIs of Ashby, Lever, Greenhouse, BambooHR and Workday, and parses the page's HTML for other career sites.
 
 <details>
 <summary><code>curl</code> commands for each ATS</summary>
@@ -739,12 +734,12 @@ Instead of fragile HTML scraping, [`scrape.py`](job_search_pipeline/scrape.py) q
 
 </details>
 
-### 6.7 Notion API & `ntfy` Push Notifications
+### Notion and ntfy
 
 <details>
 <summary><code>curl</code> commands</summary>
 
-**Test creating a page in your Notion Job Prospects database:**
+Test creating a page in your Notion Job Prospects database:
 ```bash
 curl -X POST "https://api.notion.com/v1/pages" \
   -H "Authorization: Bearer ${NOTION_TOKEN}" \
@@ -764,7 +759,7 @@ curl -X POST "https://api.notion.com/v1/pages" \
   }'
 ```
 
-**Test sending a push notification via `ntfy`:**
+Test sending a push notification via `ntfy`:
 ```bash
 curl -X POST "${NOTIFY_URL}" \
   -H "Title: Job Search: 3 Qualified Matches" \
@@ -776,13 +771,13 @@ curl -X POST "${NOTIFY_URL}" \
 
 ---
 
-## 7. Repository File Reference
+## Files
 
 ```
 job-search-pipeline/
 ├── job_search_pipeline/      the code (run with `python3 -m job_search_pipeline`)
-│   ├── sources/              Stage 1: where postings come from
-│   └── outputs/              Stage 5: where matches go
+│   ├── sources/              Stage 1: where postings come from              │
+│   └── outputs/              Stage 5: where matches go                      │
 ├── tests/
 ├── docs/                     README images
 ├── run_job_search.sh         cron wrapper
