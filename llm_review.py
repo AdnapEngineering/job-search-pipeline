@@ -63,6 +63,8 @@ LEVEL_MISMATCH_CAP = int(_LLM_CFG.get("level_mismatch_cap", 100))
 # "apply" means "will be synced": unless set explicitly, the verdict line follows the sync threshold
 APPLY_MIN = int(_LLM_CFG.get("apply_min_score") or (CFG.get("skills_and_scoring") or {}).get("min_sync_score") or 80)
 STRETCH_MIN = int(_LLM_CFG.get("stretch_min_score", 50))
+# With hide_third_party, postings the reviewer flags as agency/recruiter/aggregator are dropped like a skip verdict
+HIDE_THIRD_PARTY = bool(_LLM_CFG.get("hide_third_party", False))
 
 MIN_SALARY = float(_COMP_CFG.get("min_salary", 0))
 PAY_MIDPOINT_MAX_CAP = float(_COMP_CFG.get("pay_midpoint_max_cap", 0))
@@ -716,7 +718,7 @@ def review_matches(matches, enriched_path, min_score=55, stats=None):
         if stale:
             print(f"[AI review] pruned {len(stale)} cached review(s) from an older profile or prompt.")
 
-    kept, skipped, failed = [], [], 0
+    kept, skipped, failed, hidden = [], [], 0, 0
     for job in matches:
         key = normalize_url(job.get("url", ""))
         out = results.get(key)
@@ -730,7 +732,9 @@ def review_matches(matches, enriched_path, min_score=55, stats=None):
         elif job.get("score", 0) >= min_score:
             job = dict(job, review_failed=True)
             failed += 1
-        (skipped if out and out["verdict"] == "skip" else kept).append(job)
+        hide = bool(out) and HIDE_THIRD_PARTY and job["third_party"] and out["verdict"] != "skip"
+        hidden += hide
+        (skipped if out and (out["verdict"] == "skip" or hide) else kept).append(job)
     kept.sort(key=lambda j: j.get("score", 0), reverse=True)
 
     reviewed = sum(1 for j in todo if normalize_url(j.get("url", "")) in results)
@@ -748,6 +752,7 @@ def review_matches(matches, enriched_path, min_score=55, stats=None):
     if stats is not None:
         stats.update(summary)
     print(f"[AI review] kept {len(kept)}, skipped {len(skipped)}"
+          + (f" ({hidden} hidden as third-party posters)" if hidden else "")
           + (f", {failed} not reviewed (held back until a review succeeds)" if failed else "")
           + (f", {len(deferred)} deferred by the {budget.stopped_by} cap" if deferred else "") + ".")
     print(f"[AI review] {spend_line(summary)}")

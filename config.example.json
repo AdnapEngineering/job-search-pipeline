@@ -454,6 +454,7 @@
     "level_mismatch_cap": 65,
     "apply_min_score": null,
     "stretch_min_score": 50,
+    "hide_third_party": false,
     "quote_match_ratio": 0.85,
     "rubric_descriptions": {
       "hard_reqs": "4 = every hard requirement met; 3 = met, with only soft gaps; 2 = one bounded hard gap (one named tool/skill or years 1 over); 1 = several hard gaps; 0 = a clear blocker (years far over, a required specialty/credential the candidate lacks).",
