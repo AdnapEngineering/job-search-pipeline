@@ -134,7 +134,7 @@ def check_config(report):
     cfg = pipeline_config.CFG
     if source != path:
         report.add(WARN, "Config", f"no {os.path.basename(path)} yet, so the template's placeholder search is used; "
-                                   "run `cp config.example.json config.json` and edit it")
+                                   "run `cp config.starter.json config.json` and edit it")
         return pipeline_config, cfg
     if not os.path.exists(path):
         report.add(WARN, "Config", f"{path} (JOB_PIPELINE_CONFIG) does not exist; every setting uses its default")
