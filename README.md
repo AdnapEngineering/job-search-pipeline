@@ -326,15 +326,15 @@ Configs written before some lists were merged keep working; these keys are read 
 
 ### AI reviewer
 
-The default is `agy`. To switch, edit the `llm_review` object in `config.json`; keep its other rubric settings:
+By default (`"provider": "auto"`, or no `provider` at all) the pipeline uses the first of these CLIs it finds installed, in the order listed, and reports which one in `--check`. agy comes first so existing agy setups and their review caches carry on unchanged; on a machine without it, Claude Code is used. To pin one, edit the `llm_review` object in `config.json`; keep its other rubric settings:
 
 | Provider | Settings to change | Setup |
 | :--- | :--- | :--- |
-| agy (default) | `"provider": "agy", "model": "gemini-4-hydrogen-medium"` | Install and configure `agy`; set `agy_path` if needed. |
-| Claude Code | `"provider": "anthropic", "model": "YOUR_CLAUDE_MODEL"` | Install [Claude Code](https://code.claude.com/docs/en/quickstart) and sign in; optionally set `claude_path`. |
-| OpenAI Codex | `"provider": "openai", "model": "YOUR_CODEX_MODEL"` | Install [Codex CLI](https://developers.openai.com/codex/cli/) and run `codex login`; optionally set `codex_path`. |
+| agy | `"provider": "agy"` (default model `gemini-4-hydrogen-medium`) | Install and configure `agy`; set `agy_path` if needed. |
+| Claude Code | `"provider": "anthropic"` (default model `sonnet`) | Install [Claude Code](https://code.claude.com/docs/en/quickstart) and sign in; optionally set `claude_path`. |
+| OpenAI Codex | `"provider": "openai"` (default: the model in Codex's own config) | Install [Codex CLI](https://developers.openai.com/codex/cli/) and run `codex login`; optionally set `codex_path`. |
 
-Replace the placeholder with a model or alias supported by the selected CLI and available to your account. Switching `provider` alone does not change `model`. `claude_path` and `codex_path` can specify an executable path; otherwise they are found on `PATH`. `timeout_seconds` and `workers` apply to all CLIs.
+Leave `model` empty to use the provider's default above, or set a model or alias supported by the selected CLI and available to your account. A `model` you set is kept when `provider` changes, so clear it when switching. `claude_path` and `codex_path` can specify an executable path; otherwise they are found on `PATH`. `timeout_seconds` and `workers` apply to all CLIs.
 
 The pipeline uses CLI authentication; it does not call Anthropic or OpenAI APIs directly or require pipeline-specific API keys. Sign in under the same OS user that runs the pipeline, and check that your plan permits CLI usage. For cron, ensure that user's home directory, authentication, and `PATH` are available; the wrapper supplies a standard PATH including `~/.local/bin`, or configure an explicit CLI path.
 
@@ -342,7 +342,7 @@ CLI reviews send the candidate profile and selected job details to the provider 
 
 Claude runs with built-in tools disabled, MCP auto-configuration and slash commands disabled, and session persistence off. Codex runs in a read-only sandbox with ephemeral sessions. Both run from an empty temporary directory, but CLI configuration and managed policies can still affect behavior; review them before running on sensitive data. Codex may still use tools permitted by its sandbox and configuration.
 
-If a review times out, fails, or returns an invalid/incomplete reply, the pipeline reports the problem and keeps the job's keyword score, but holds the job back: it is listed in the summary as `[AI review failed, held for retry]`, is not synced or exported, and is reviewed again on the next run. If the CLI is not installed at all (or `candidate_profile.md` has not been created from its template), the stage is skipped and matches are output on their keyword scores, as with `--no-llm-review`. An unknown provider is a configuration error.
+If a review times out, fails, or returns an invalid/incomplete reply, the pipeline reports the problem and keeps the job's keyword score, but holds the job back: it is listed in the summary as `[AI review failed, held for retry]`, is not synced or exported, and is reviewed again on the next run. If the CLI is not installed at all (or `candidate_profile.md` has not been created from its template), the stage is skipped and matches are output on their keyword scores, as with `--no-llm-review`, but unlike that flag the skip is flagged: the push notification is sent at high priority with "(AI review skipped)" in its title and the reason as a ⚠️ line, and the HTML digest shows the same warning at the top. An unknown provider is a configuration error.
 
 The review also flags postings that come from a staffing agency, recruiter, consultancy or aggregator rather than the employer. The flag never changes the score: flagged roles sync as usual, with `[Third-party poster]` at the start of the "Why It Matches" text in Notion, the Markdown summary and the `.txt` export, and a count in the push notification.
 

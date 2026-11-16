@@ -42,9 +42,13 @@ SHINGLE_WORDS = 5
 EST_OUTPUT_TOKENS = 600
 CHARS_PER_TOKEN = 4
 
-DEFAULT_MODEL = _LLM_CFG.get("model", "gemini-4-hydrogen-medium")
-PROVIDER = _LLM_CFG.get("provider", "agy")
 DEFAULT_AGY = "~/.local/bin/agy"
+# Tried in this order when llm_review.provider is unset or "auto": agy first so existing review caches stay
+# valid, then Claude Code, the most widely installed of the supported CLIs.
+PROVIDERS = ("agy", "anthropic", "openai")
+CLI_NAMES = {"agy": "agy", "anthropic": "claude", "openai": "codex"}
+# Model used when llm_review.model is unset; "" lets Codex use the model from its own config
+PROVIDER_MODELS = {"agy": "gemini-4-hydrogen-medium", "anthropic": "sonnet", "openai": ""}
 TIMEOUT_SECONDS = int(_LLM_CFG.get("timeout_seconds", 180))
 WORKERS = int(_LLM_CFG.get("workers", 3))
 JD_CHARS = int(_LLM_CFG.get("jd_chars", 9000))
@@ -150,10 +154,36 @@ def _profile_hash(profile, model, provider="agy"):
     return hashlib.sha256(cache_input.encode()).hexdigest()[:16]
 
 
+def _cli_path(provider):
+    """The provider's CLI executable, or None if absent. Raises ValueError for an unknown provider."""
+    if provider == "agy":
+        return _find_agy()
+    if provider in ("anthropic", "openai"):
+        name = CLI_NAMES[provider]
+        return shutil.which(os.path.expanduser(_LLM_CFG.get(f"{name}_path") or name))
+    raise ValueError(f"Unknown llm_review.provider {provider!r}; choose auto, agy, anthropic, or openai.")
+
+
+def resolve_provider(llm_cfg):
+    """The configured provider, or for an unset/"auto" one the first installed CLI (Claude Code when none is)."""
+    provider = (llm_cfg.get("provider") or "auto").strip().lower()
+    if provider != "auto":
+        return provider
+    return next((p for p in PROVIDERS if _cli_path(p)), "anthropic")
+
+
+def resolve_model(llm_cfg, provider):
+    return llm_cfg.get("model") or PROVIDER_MODELS.get(provider, "")
+
+
 def _find_agy():
     """Path to the agy CLI (config, then PATH, then the default install location), or None if absent."""
     path = os.path.expanduser(_LLM_CFG.get("agy_path") or shutil.which("agy") or DEFAULT_AGY)
     return path if os.path.exists(path) else None
+
+
+PROVIDER = resolve_provider(_LLM_CFG)
+DEFAULT_MODEL = resolve_model(_LLM_CFG, PROVIDER)
 
 
 def _norm_quote(text):
@@ -300,19 +330,23 @@ def _salary_text(salary):
 
 
 def _provider_config(provider):
-    """Resolve the configured provider's CLI executable."""
-    if provider == "agy":
-        executable = _find_agy()
-        name = "agy"
-    elif provider in ("anthropic", "openai"):
-        name = "claude" if provider == "anthropic" else "codex"
-        configured_path = _LLM_CFG.get(f"{name}_path")
-        executable = shutil.which(os.path.expanduser(configured_path or name))
-    else:
-        raise ValueError(f"Unknown llm_review.provider {provider!r}; choose agy, anthropic, or openai.")
+    """Resolve the configured provider's CLI executable, printing a warning when it is missing."""
+    executable = _cli_path(provider)
     if not executable:
-        print(f"[AI review] {name} CLI not found; skipping AI review.", file=sys.stderr)
+        print(f"[AI review] {CLI_NAMES[provider]} CLI not found; skipping AI review.", file=sys.stderr)
     return executable
+
+
+def skip_message(provider):
+    """Why the AI review did not run, for the notification and digest, or None when it can run."""
+    if not _cli_path(provider):
+        return (f"AI review skipped: the {CLI_NAMES[provider]} CLI for provider {provider!r} was not found, so "
+                "matches are ranked on keyword scores only. Install it, set its *_path in llm_review, or change "
+                "llm_review.provider; `python3 -m job_search_pipeline --check` shows what is missing.")
+    if not os.path.exists(PROFILE_PATH):
+        return (f"AI review skipped: {os.path.basename(PROFILE_PATH)} not found, so matches are ranked on keyword "
+                "scores only. Copy candidate_profile.example.md to that path and fill it in.")
+    return None
 
 
 def _int(v):
@@ -373,7 +407,7 @@ def _cli_response(executable, provider, model, prompt):
                    "--no-session-persistence", "--settings", '{"disableAllHooks":true}']
         stdin = prompt
     elif provider == "openai":
-        command = [executable, "exec", "--model", model, "--json", "--ephemeral",
+        command = [executable, "exec", *(["--model", model] if model else []), "--json", "--ephemeral",
                    "--sandbox", "read-only", "--skip-git-repo-check", "-"]
         stdin = prompt
     else:
@@ -635,11 +669,12 @@ def review_matches(matches, enriched_path, min_score=55, stats=None):
     short, or a budget cap reached) is kept with review_failed=True: it is shown but not synced or
     exported, and is retried next run. Pass a dict as `stats` to receive this pass's usage and spend."""
     executable = _provider_config(PROVIDER)
-    if not executable:
-        return matches, []
-    if not os.path.exists(PROFILE_PATH):
-        print(f"[AI review] {PROFILE_PATH} not found; skipping AI review. Copy candidate_profile.example.md "
-              "to that path and fill it in to enable it.", file=sys.stderr)
+    if not executable or not os.path.exists(PROFILE_PATH):
+        if executable:
+            print(f"[AI review] {PROFILE_PATH} not found; skipping AI review. Copy candidate_profile.example.md "
+                  "to that path and fill it in to enable it.", file=sys.stderr)
+        if stats is not None:
+            stats["skipped"] = skip_message(PROVIDER)
         return matches, []
 
     model = DEFAULT_MODEL

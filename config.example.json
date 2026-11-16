@@ -428,8 +428,8 @@
     "extra_tracking_params": []
   },
   "llm_review": {
-    "provider": "agy",
-    "model": "gemini-4-hydrogen-medium",
+    "provider": "auto",
+    "model": "",
     "agy_path": "",
     "claude_path": "",
     "codex_path": "",

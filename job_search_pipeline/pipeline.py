@@ -216,7 +216,9 @@ def ai_review(eval_results, min_score):
     spend = {}
     top_matches, ai_skipped = review_matches(eval_results["top_matches"], ENRICHED_JOBS, min_score=min_score,
                                              stats=spend)
-    if spend:
+    if spend.get("skipped"):
+        eval_results["ai_review_skipped"] = spend.pop("skipped")
+    elif spend:
         eval_results["ai_spend"] = spend
     print(f"--> [Step: AI Review] took {time.monotonic() - started:.0f}s")
     for job in top_matches:
@@ -242,6 +244,7 @@ def notify_results(eval_results, synced_urls, exported_urls, health, notion_enab
     ai_skipped = eval_results.get("ai_skipped", [])
     location_filtered = eval_results.get("location_filtered", [])
     warnings = health["warnings"] if health else []
+    review_skipped = eval_results.get("ai_review_skipped")
 
     lines = [f"{len(top_matches)} open match(es), {tally['at_threshold']} at {min_score}%+"
              + (f" ({len(synced_urls)} synced to Notion)." if notion_enabled else ".")]
@@ -266,9 +269,9 @@ def notify_results(eval_results, synced_urls, exported_urls, health, notion_enab
         lines.append(spend_line(eval_results["ai_spend"]))
     if digest_path and not HTML_DIGEST_URL:
         lines.append(f"Digest: {digest_path}")
-    if warnings:
+    if warnings or review_skipped:
         lines.append("")
-        lines.extend(f"⚠️ {w}" for w in warnings)
+        lines.extend(f"⚠️ {w}" for w in [*([review_skipped] if review_skipped else []), *warnings])
     if top_matches:
         lines.extend(["", "Top Matches:"])
         for job in top_matches[:NOTIFY_TOP_MATCHES]:
@@ -282,9 +285,11 @@ def notify_results(eval_results, synced_urls, exported_urls, health, notion_enab
         title = f"Job Search: {tally['at_threshold']} Match(es) at {min_score}%+"
     else:
         title = f"Job Search: No New Matches at {min_score}%+ ({len(top_matches)} below)"
+    if review_skipped:
+        title += " (AI review skipped)"
     if warnings:
         title += " (source warning)"
-    send_notification(title, "\n".join(lines), priority=PRIORITY_HIGH if warnings else PRIORITY_DEFAULT,
+    send_notification(title, "\n".join(lines), priority=PRIORITY_HIGH if warnings or review_skipped else PRIORITY_DEFAULT,
                       click=HTML_DIGEST_URL if digest_path else "")
 
 

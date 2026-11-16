@@ -127,6 +127,20 @@ class SummaryLabelTests(_Base):
         self.assertEqual(title, "Job Search: No New Matches at 80%+ (2 below)")
         title.encode("latin-1")  # HTTP header values must encode
 
+    def test_skipped_ai_review_is_flagged_in_the_notification(self):
+        results = {"top_matches": [match(1, 85)]}
+        with patch.object(run_pipeline, "review_matches",
+                          side_effect=lambda m, *a, stats, **k: (stats.update(skipped="AI review skipped: no CLI"), (m, []))[1]):
+            run_pipeline.ai_review(results, 55)
+        self.assertEqual(results["ai_review_skipped"], "AI review skipped: no CLI")
+        self.assertNotIn("ai_spend", results)
+        with patch.object(run_pipeline, "send_notification") as send:
+            run_pipeline.notify_results(results, [], [], None, True, min_score=80)
+        title, body = send.call_args.args[:2]
+        self.assertTrue(title.endswith("(AI review skipped)"))
+        self.assertIn("⚠️ AI review skipped: no CLI", body)
+        self.assertEqual(send.call_args.kwargs["priority"], run_pipeline.PRIORITY_HIGH)
+
     def test_failed_review_gets_a_visible_reason(self):
         results = {"top_matches": [match(1, 80)]}
         failed = dict(match(1, 80), review_failed=True, reason="Frontend, React")

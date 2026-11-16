@@ -41,8 +41,7 @@
     "max_min_yoe": 7
   },
   "llm_review": {
-    "provider": "agy",
-    "model": "gemini-4-hydrogen-medium"
+    "provider": "auto"
   },
   "html_digest": {
     "enabled": true

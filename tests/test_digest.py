@@ -43,6 +43,11 @@ class DigestTests(unittest.TestCase):
                                                           review_deferred=True)]}, now="2026-11-01T10:00:00+00:00")
         self.assertEqual(store[MATCH["url"]]["reason"], "AI review deferred by a budget cap; keyword match only. kw")
 
+    def test_skipped_ai_review_is_a_digest_warning(self):
+        data = digest.page_data({"ai_review_skipped": "AI review skipped: no CLI",
+                                 "source_health": {"warnings": ["feed down"]}}, {}, "now", 80)
+        self.assertEqual(data["warnings"], ["AI review skipped: no CLI", "feed down"])
+
     def test_page_embeds_data_safely_and_round_trips(self):
         hostile = dict(MATCH, title="</script><script>alert(1)</script>", ai_reason="a & b <!-- c")
         out = Path(self.tmp.name) / "digest.html"
