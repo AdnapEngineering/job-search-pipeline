@@ -7,9 +7,9 @@ from datetime import datetime, timezone
 
 import requests
 
-from blocklist import record_exported, select_new_matches
-from evaluate_jobs import skip_reason
-from pipeline_config import CFG, CONFIG_PATH, atomic_write_json, config_source, get_path, load_json
+from job_search_pipeline.blocklist import record_exported, select_new_matches
+from job_search_pipeline.evaluate import skip_reason
+from job_search_pipeline.config import CFG, CONFIG_PATH, atomic_write_json, config_source, get_path, load_json
 
 _NOTION_CFG = CFG.get("notion") or {}
 
@@ -369,7 +369,7 @@ def log_run_summary_to_notion(eval_results, synced_urls, min_score=65, database_
 
 if __name__ == "__main__":
     if len(sys.argv) < 2:
-        print("Usage: python3 sync_notion_db.py <evaluated_jobs.json> [min_score]")
+        print("Usage: python3 -m job_search_pipeline.outputs.notion <evaluated_jobs.json> [min_score]")
         sys.exit(1)
 
     with open(sys.argv[1], encoding="utf-8") as f:

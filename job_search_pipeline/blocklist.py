@@ -6,8 +6,8 @@
 """
 import re
 
-from pipeline_config import CFG, atomic_write_json, get_path, load_json
-from url_normalizer import normalize_url, normalize_url_list
+from job_search_pipeline.config import CFG, atomic_write_json, get_path, load_json
+from job_search_pipeline.urls import normalize_url, normalize_url_list
 
 BLOCKLIST_PATH = get_path("blocklist", "data/blocklist.json")
 ROLE_BLOCKLIST_PATH = get_path("role_blocklist", "data/blocklist_roles.json")

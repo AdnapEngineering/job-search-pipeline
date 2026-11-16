@@ -10,8 +10,8 @@ import json
 import os
 from datetime import datetime, timedelta, timezone
 
-from pipeline_config import CFG, atomic_write_json, get_path, load_json
-from url_normalizer import normalize_url
+from job_search_pipeline.config import CFG, atomic_write_json, get_path, load_json
+from job_search_pipeline.urls import normalize_url
 
 _DIGEST_CFG = CFG.get("html_digest") or {}
 HTML_DIGEST_ENABLED = bool(_DIGEST_CFG.get("enabled", True))

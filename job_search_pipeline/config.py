@@ -16,9 +16,10 @@ import sys
 import tempfile
 from typing import Any
 
-SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
-DEFAULT_CONFIG_PATH = os.path.join(SCRIPT_DIR, "config.json")
-EXAMPLE_CONFIG_PATH = os.path.join(SCRIPT_DIR, "config.example.json")
+# The repository root, one level above this package: config.json, candidate_profile.md, .env and data/ live there
+ROOT_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+DEFAULT_CONFIG_PATH = os.path.join(ROOT_DIR, "config.json")
+EXAMPLE_CONFIG_PATH = os.path.join(ROOT_DIR, "config.example.json")
 CONFIG_PATH = os.environ.get("JOB_PIPELINE_CONFIG") or DEFAULT_CONFIG_PATH
 
 
@@ -87,7 +88,7 @@ CFG = load_config()
 def get_path(key: str, default_rel: str) -> str:
     """Absolute path for `paths.<key>` in config.json (or `default_rel`); relative paths resolve from the script directory."""
     val = (CFG.get("paths") or {}).get(key) or default_rel
-    return os.path.join(SCRIPT_DIR, os.path.expanduser(val))
+    return os.path.join(ROOT_DIR, os.path.expanduser(val))
 
 
 def term_regex(term: str, allow_suffix: bool = False) -> re.Pattern:

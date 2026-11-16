@@ -1,0 +1,26 @@
+[build-system]
+requires = ["setuptools>=64"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "job-search-pipeline"
+version = "0.1.0"
+description = "Fetch, filter, score and AI-review job postings against your profile, then send matches to Notion, a web page or a text file."
+readme = "README.md"
+license = { file = "LICENSE" }
+requires-python = ">=3.10"
+dynamic = ["dependencies", "optional-dependencies"]
+
+[project.scripts]
+# Optional: `pip install -e .` adds this command; `python3 -m job_search_pipeline` works without installing
+job-search = "job_search_pipeline.pipeline:main"
+
+[tool.setuptools.dynamic]
+dependencies = { file = ["requirements.txt"] }
+optional-dependencies = { dev = { file = ["requirements-dev.txt"] } }
+
+[tool.setuptools.packages.find]
+include = ["job_search_pipeline*"]
+
+[tool.ruff]
+target-version = "py310"

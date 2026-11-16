@@ -9,8 +9,8 @@ import tempfile
 import unittest
 from unittest.mock import patch
 
-import pipeline_config
-import sync_notion_db as sync
+import job_search_pipeline.config as pipeline_config
+import job_search_pipeline.outputs.notion as sync
 
 
 class ConfigTemplateTest(unittest.TestCase):
@@ -79,14 +79,14 @@ class ConfigTemplateTest(unittest.TestCase):
 
 class ShippedTemplateTest(unittest.TestCase):
     def test_shipped_template_is_valid_json(self):
-        path = os.path.join(pipeline_config.SCRIPT_DIR, "config.example.json")
+        path = os.path.join(pipeline_config.ROOT_DIR, "config.example.json")
         with open(path, encoding="utf-8") as f:
             self.assertIsInstance(json.load(f), dict)
 
     def test_starter_config_only_uses_template_keys_and_placeholders(self):
-        with open(os.path.join(pipeline_config.SCRIPT_DIR, "config.example.json"), encoding="utf-8") as f:
+        with open(os.path.join(pipeline_config.ROOT_DIR, "config.example.json"), encoding="utf-8") as f:
             template = json.load(f)
-        with open(os.path.join(pipeline_config.SCRIPT_DIR, "config.starter.json"), encoding="utf-8") as f:
+        with open(os.path.join(pipeline_config.ROOT_DIR, "config.starter.json"), encoding="utf-8") as f:
             starter = json.load(f)
         for section, values in starter.items():
             for key, value in values.items():

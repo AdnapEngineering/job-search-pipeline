@@ -10,9 +10,9 @@ from unittest.mock import patch
 
 import aiohttp
 
-import fetch_and_filter as ff
-import fetch_indeed as fi
-import run_pipeline
+import job_search_pipeline.sources.filter as ff
+import job_search_pipeline.sources.linkedin_indeed as fi
+import job_search_pipeline.pipeline as run_pipeline
 
 
 class RemoteEvidenceTests(unittest.TestCase):

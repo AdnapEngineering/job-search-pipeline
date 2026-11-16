@@ -6,8 +6,8 @@ a wiki, a spreadsheet import, ...) without a Notion account.
 import os
 from datetime import datetime
 
-from blocklist import record_exported, select_new_matches
-from pipeline_config import CFG, get_path
+from job_search_pipeline.blocklist import record_exported, select_new_matches
+from job_search_pipeline.config import CFG, get_path
 
 TEXT_EXPORT_ENABLED = bool((CFG.get("text_export") or {}).get("enabled", False))
 TEXT_EXPORT_PATH = get_path("text_export", "data/job_matches.txt")

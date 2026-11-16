@@ -11,7 +11,7 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-import llm_review as review
+import job_search_pipeline.review as review
 
 
 JOB = {"url": "https://example.com/jobs/123", "company": "Example", "title": "Engineer", "score": 80}
@@ -49,7 +49,7 @@ class ProviderTests(unittest.TestCase):
         return review._review_one("test-cli", "test-model", "test profile", JOB,
                                   self.jd_by_url, provider=provider)
 
-    @patch("llm_review.subprocess.run")
+    @patch("job_search_pipeline.review.subprocess.run")
     def test_claude_cli_and_shared_scoring(self, run):
         run.return_value = completed(CLAUDE_OUTPUT)
         result = self.review_one("anthropic")
@@ -64,7 +64,7 @@ class ProviderTests(unittest.TestCase):
         self.assertIn("test profile", run.call_args.kwargs["input"])
         self.assertEqual(run.call_args.kwargs["timeout"], review.TIMEOUT_SECONDS)
 
-    @patch("llm_review.subprocess.run")
+    @patch("job_search_pipeline.review.subprocess.run")
     def test_codex_cli_and_shared_scoring(self, run):
         run.return_value = completed(CODEX_OUTPUT)
         result = self.review_one("openai")
@@ -78,7 +78,7 @@ class ProviderTests(unittest.TestCase):
         self.assertEqual(command[-1], "-")
         self.assertIn(JD, run.call_args.kwargs["input"])
 
-    @patch("llm_review.subprocess.run")
+    @patch("job_search_pipeline.review.subprocess.run")
     def test_agy_uses_existing_envelope_and_arguments(self, run):
         run.return_value = completed(AGY_OUTPUT)
         result = self.review_one("agy")
@@ -89,7 +89,7 @@ class ProviderTests(unittest.TestCase):
         self.assertEqual(command[-4:], ["--model", "test-model", "--output-format", "json"])
         self.assertIsNone(run.call_args.kwargs["input"])
 
-    @patch("llm_review.subprocess.run")
+    @patch("job_search_pipeline.review.subprocess.run")
     def test_cli_errors_and_malformed_results_fail_open(self, run):
         cases = [
             ("agy", completed('{"status":"ERROR"}')),
@@ -119,10 +119,10 @@ class ProviderTests(unittest.TestCase):
 
     def test_cli_resolution_and_invalid_provider(self):
         with patch.object(review, "_LLM_CFG", {"claude_path": "~/bin/custom-claude"}), \
-                patch("llm_review.shutil.which", return_value="/home/example/claude") as which:
+                patch("job_search_pipeline.review.shutil.which", return_value="/home/example/claude") as which:
             self.assertEqual(review._provider_config("anthropic"), "/home/example/claude")
             self.assertTrue(which.call_args.args[0].endswith("/bin/custom-claude"))
-        with patch.object(review, "_LLM_CFG", {}), patch("llm_review.shutil.which", return_value=None) as which, \
+        with patch.object(review, "_LLM_CFG", {}), patch("job_search_pipeline.review.shutil.which", return_value=None) as which, \
                 contextlib.redirect_stderr(io.StringIO()) as stderr:
             self.assertIsNone(review._provider_config("openai"))
             which.assert_called_once_with("codex")
@@ -172,7 +172,7 @@ class ProviderTests(unittest.TestCase):
                                                 self.jd_by_url, provider=provider)
                     self.assertEqual((result["score"], result["verdict"]), (100, "apply"))
 
-    @patch("llm_review.subprocess.run")
+    @patch("job_search_pipeline.review.subprocess.run")
     def test_review_matches_caches_success_and_holds_failed_reviews(self, run):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -201,7 +201,7 @@ class ProviderTests(unittest.TestCase):
 
 
 class HideThirdPartyTests(unittest.TestCase):
-    @patch("llm_review.subprocess.run")
+    @patch("job_search_pipeline.review.subprocess.run")
     def test_hide_third_party_moves_flagged_postings_to_skipped(self, run):
         flagged = json.dumps(dict(json.loads(VERDICT), third_party=True))
         run.return_value = completed(CODEX_OUTPUT.replace(json.dumps(VERDICT)[1:-1], json.dumps(flagged)[1:-1]))
@@ -306,7 +306,7 @@ class CacheAndHoldTests(unittest.TestCase):
                 kept, skipped = review.review_matches(jobs, str(root / "jobs.json"))
                 return kept, skipped, json.loads(cache.read_text(encoding="utf-8"))
 
-    @patch("llm_review.subprocess.run")
+    @patch("job_search_pipeline.review.subprocess.run")
     def test_old_profile_entries_are_pruned_and_current_ones_kept(self, run):
         run.return_value = completed(AGY_OUTPUT)
         current = {"verdict": "skip", "score": 25, "reason": "r", "blockers": [],
@@ -321,7 +321,7 @@ class CacheAndHoldTests(unittest.TestCase):
         self.assertEqual(set(cache), {"https://example.com/jobs/current", "https://example.com/jobs/123"})
         self.assertIn("pruned 2 cached review(s)", out.getvalue())
 
-    @patch("llm_review.subprocess.run")
+    @patch("job_search_pipeline.review.subprocess.run")
     def test_failed_review_is_held_and_low_scores_are_not(self, run):
         run.return_value = completed("", 1)
         below_review_floor = dict(JOB, url="https://example.com/jobs/low", score=40)
@@ -386,7 +386,7 @@ class SpendAndRepostTests(unittest.TestCase):
             self.assertEqual(review.priced_usd(usage, "agy"), 0)
             self.assertIsNone(review.priced_usd(usage, "anthropic"))  # Claude reports its own cost
 
-    @patch("llm_review.subprocess.run")
+    @patch("job_search_pipeline.review.subprocess.run")
     def test_spend_is_recorded_per_run_and_reported_cost_wins(self, run):
         envelope = {"type": "result", "is_error": False, "result": VERDICT, "total_cost_usd": 0.02,
                     "usage": {"input_tokens": 3000, "output_tokens": 200}}
@@ -401,7 +401,7 @@ class SpendAndRepostTests(unittest.TestCase):
         self.assertEqual(ledger[0]["usd"], 0.04)
         self.assertIn("$0.04", review.spend_line(stats))
 
-    @patch("llm_review.subprocess.run")
+    @patch("job_search_pipeline.review.subprocess.run")
     def test_review_cap_defers_lowest_scores_and_holds_them(self, run):
         run.return_value = completed(AGY_OUTPUT)
         jobs = [dict(JOB, url=f"https://example.com/jobs/{i}", title=f"Engineer {i}", score=s)
@@ -416,7 +416,7 @@ class SpendAndRepostTests(unittest.TestCase):
         self.assertEqual((stats["deferred"], stats["stopped_by"]), (1, "reviews/run"))
         self.assertIn("deferred by the reviews/run cap", review.spend_line(stats))
 
-    @patch("llm_review.subprocess.run")
+    @patch("job_search_pipeline.review.subprocess.run")
     def test_daily_token_cap_counts_earlier_runs(self, run):
         run.return_value = completed(AGY_OUTPUT)
         today = review.datetime.now().strftime("%Y-%m-%d")
@@ -427,7 +427,7 @@ class SpendAndRepostTests(unittest.TestCase):
         self.assertTrue(kept[0]["review_deferred"])
         self.assertEqual(stats["stopped_by"], "tokens/day")
 
-    @patch("llm_review.subprocess.run")
+    @patch("job_search_pipeline.review.subprocess.run")
     def test_reposts_reuse_cached_reviews(self, run):
         run.return_value = completed(AGY_OUTPUT)
         phash = review._profile_hash("test profile", review.DEFAULT_MODEL, review.PROVIDER)

@@ -1,7 +1,7 @@
 """Stage 1: fetch postings from every source, apply cheap pre-filters, and merge them into filtered_jobs.json.
 
 The GitHub ATS feed (~1.4M rows) is streamed chunk by chunk; LinkedIn/Indeed and the
-public job boards are fetched by fetch_indeed.py and fetch_job_boards.py. Aggregator
+public job boards are fetched by linkedin_indeed.py and job_boards.py. Aggregator
 reposts are re-pointed at the company's own ATS posting when the feed has it.
 """
 import asyncio
@@ -13,9 +13,9 @@ from datetime import datetime, timedelta, timezone
 
 import aiohttp
 
-from blocklist import load_blocklist, role_key
-from pipeline_config import CFG, atomic_write_json, compile_alternation, compile_regex_list, get_path, load_json
-from url_normalizer import is_aggregator_url, normalize_url
+from job_search_pipeline.blocklist import load_blocklist, role_key
+from job_search_pipeline.config import CFG, atomic_write_json, compile_alternation, compile_regex_list, get_path, load_json
+from job_search_pipeline.urls import is_aggregator_url, normalize_url
 
 _SOURCES_CFG = CFG.get("sources") or {}
 _LOC_CFG = CFG.get("location") or {}
@@ -339,8 +339,8 @@ async def fetch_github_feed(stats):
 def fetch_jobspy(stats):
     """LinkedIn/Indeed rows; a failure is recorded in stats instead of aborting the other sources."""
     try:
-        # Imported lazily: fetch_indeed imports this module, and jobspy is slow to import
-        from fetch_indeed import fetch_indeed_jobs
+        # Imported lazily: linkedin_indeed imports this module, and jobspy is slow to import
+        from job_search_pipeline.sources.linkedin_indeed import fetch_indeed_jobs
         print("Fetching Indeed/LinkedIn postings...")
         return fetch_indeed_jobs(stats=stats)
     except Exception as e:
@@ -352,7 +352,7 @@ def fetch_jobspy(stats):
 def fetch_boards(stats):
     """Remote OK / Jobicy / HN rows; fetch_board_jobs records per-board errors in stats itself."""
     try:
-        from fetch_job_boards import fetch_board_jobs
+        from job_search_pipeline.sources.job_boards import fetch_board_jobs
         print("Fetching public job boards (Remote OK, Jobicy, HN Who's Hiring)...")
         return fetch_board_jobs(stats=stats)
     except Exception as e:

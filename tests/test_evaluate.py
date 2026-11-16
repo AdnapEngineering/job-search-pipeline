@@ -4,8 +4,8 @@ import _fixture_config  # noqa: F401  (must come before any pipeline import)
 import unittest
 import unittest.mock
 
-import evaluate_jobs as ev
-from blocklist import is_blocked, job_keys, load_role_blocklist, record_exported, select_new_matches
+import job_search_pipeline.evaluate as ev
+from job_search_pipeline.blocklist import is_blocked, job_keys, load_role_blocklist, record_exported, select_new_matches
 
 FILLER = " We build accessible SaaS products with React and TypeScript for thousands of customers." * 12
 

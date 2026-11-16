@@ -8,7 +8,7 @@ import unittest
 
 import aiohttp
 
-import batch_scraper as bs
+import job_search_pipeline.scrape as bs
 
 
 class RedirectTests(unittest.TestCase):

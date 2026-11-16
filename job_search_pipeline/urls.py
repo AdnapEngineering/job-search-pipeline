@@ -2,7 +2,7 @@
 import re
 from urllib.parse import parse_qsl, urlencode, urlparse, urlunparse
 
-from pipeline_config import CFG
+from job_search_pipeline.config import CFG
 
 _URL_CFG = CFG.get("url_normalization") or {}
 
