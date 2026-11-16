@@ -549,7 +549,7 @@ The tests load `tests/fixtures/search_config.json` (a made-up search) through `t
 
 | File | Purpose |
 | :--- | :--- |
-| [`run_job_search.sh`](run_job_search.sh) | Shell wrapper with `flock` concurrency lock and `.env` loading; appends each run to `cron_job_search.log` (not rotated). |
+| [`run_job_search.sh`](run_job_search.sh) | Shell wrapper that runs `.venv`'s Python when present, with a concurrency lock (`flock`, or a `mkdir` lock on macOS) and `.env` loading; appends each run to `cron_job_search.log` (not rotated). |
 | [`run_pipeline.py`](run_pipeline.py) | End-to-end orchestrator, source-health monitor, pre-LLM blocklist filter, and notifier. |
 | [`pipeline_config.py`](pipeline_config.py) | Central loader for `config.json`, path resolution (relative `paths` entries resolve from the repo directory), shared JSON read/atomic-write helpers, and regex compilation helpers. |
 | [`blocklist.py`](blocklist.py) | Shared dedup state: `company\|title` role keys plus the URL and role blocklists used by every stage. |
