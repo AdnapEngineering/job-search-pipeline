@@ -473,7 +473,7 @@ CORE_STRENGTH_POINTS = int(_SKILLS_CFG.get("core_strength_points", 5))
 # Per-skill overrides of core_strength_points, so the primary stack outweighs peripheral skills
 CORE_STRENGTH_WEIGHTS = {k.lower(): int(v) for k, v in (_SKILLS_CFG.get("core_strength_weights") or {}).items()}
 CORE_STRENGTHS_CAP = int(_SKILLS_CFG.get("core_strengths_cap", 40))
-DOMAIN_SCORE_CAP = int(_SKILLS_CFG.get("domain_score_cap", 20))
+DOMAIN_SCORE_CAP = int(_SKILLS_CFG.get("domain_score_cap", 30))
 STRONG_FLOOR = int(_SKILLS_CFG.get("strong_floor", 75))
 SECONDARY_FLOOR = int(_SKILLS_CFG.get("secondary_floor", 55))
 
