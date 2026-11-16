@@ -58,12 +58,27 @@ def config_source(path: str = CONFIG_PATH) -> str:
 
 
 def load_config(path: str = CONFIG_PATH) -> dict:
-    """The pipeline config; an empty dict (all defaults) when missing or malformed."""
+    """The pipeline config; an empty dict (all defaults) when the file is missing.
+
+    A file that exists but cannot be read or parsed stops the run (SystemExit) instead of silently
+    running the built-in defaults in place of the user's search."""
     source = config_source(path)
     if source != path:
         print(f"No {os.path.basename(path)} found; using the template {os.path.basename(source)}. "
               f"Run `cp {os.path.basename(source)} {os.path.basename(path)}` and edit the copy.", file=sys.stderr)
-    return load_json(source, default={}) or {}
+    try:
+        with open(source, encoding="utf-8") as f:
+            cfg = json.load(f)
+    except FileNotFoundError:
+        return {}
+    except json.JSONDecodeError as e:
+        sys.exit(f"Invalid JSON in {source} at line {e.lineno}, column {e.colno}: {e.msg}. "
+                 f"Fix the file and run again.")
+    except (OSError, UnicodeDecodeError) as e:
+        sys.exit(f"Could not read {source}: {e}")
+    if not isinstance(cfg, dict):
+        sys.exit(f"{source} must contain a JSON object ({{...}}), not {type(cfg).__name__}.")
+    return cfg
 
 
 CFG = load_config()
