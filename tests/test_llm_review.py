@@ -200,6 +200,28 @@ class ProviderTests(unittest.TestCase):
                     self.assertEqual(run.call_count, 2)
 
 
+class HideThirdPartyTests(unittest.TestCase):
+    @patch("llm_review.subprocess.run")
+    def test_hide_third_party_moves_flagged_postings_to_skipped(self, run):
+        flagged = json.dumps(dict(json.loads(VERDICT), third_party=True))
+        run.return_value = completed(CODEX_OUTPUT.replace(json.dumps(VERDICT)[1:-1], json.dumps(flagged)[1:-1]))
+        for hide in (False, True):
+            with self.subTest(hide=hide), tempfile.TemporaryDirectory() as tmp:
+                root = Path(tmp)
+                profile = root / "profile.md"
+                profile.write_text("test profile", encoding="utf-8")
+                enriched = root / "jobs.json"
+                enriched.write_text(json.dumps([dict(JOB, description_full=JD)]), encoding="utf-8")
+                with (patch.object(review, "PROVIDER", "openai"), patch.object(review, "PROFILE_PATH", str(profile)),
+                      patch.object(review, "CACHE_PATH", str(root / "cache.json")),
+                      patch.object(review, "HIDE_THIRD_PARTY", hide),
+                      patch.object(review, "_provider_config", return_value="/test/cli"),
+                      contextlib.redirect_stdout(io.StringIO())):
+                    kept, skipped = review.review_matches([JOB], str(enriched))
+                self.assertEqual((len(kept), len(skipped)), (0, 1) if hide else (1, 0))
+                self.assertTrue((skipped or kept)[0]["third_party"])
+
+
 class ScoringAndFlagTests(unittest.TestCase):
     PARTS = {"hard_reqs": 4, "core_work": 3, "evidence": 2, "level": 2}  # 92%
 
