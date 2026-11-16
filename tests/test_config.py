@@ -83,6 +83,16 @@ class ShippedTemplateTest(unittest.TestCase):
         with open(path, encoding="utf-8") as f:
             self.assertIsInstance(json.load(f), dict)
 
+    def test_starter_config_only_uses_template_keys_and_placeholders(self):
+        with open(os.path.join(pipeline_config.SCRIPT_DIR, "config.example.json"), encoding="utf-8") as f:
+            template = json.load(f)
+        with open(os.path.join(pipeline_config.SCRIPT_DIR, "config.starter.json"), encoding="utf-8") as f:
+            starter = json.load(f)
+        for section, values in starter.items():
+            for key, value in values.items():
+                # same value as the template, so check_setup flags whatever the user leaves unedited
+                self.assertEqual(value, template[section][key], f"{section}.{key}")
+
 
 if __name__ == "__main__":
     unittest.main()

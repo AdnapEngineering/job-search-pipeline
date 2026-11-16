@@ -6,6 +6,34 @@ All career-specific rules—target titles, skills, scoring weights, experience c
 
 ---
 
+## Quickstart (5 Minutes)
+
+Get a first list of matches in your browser, with no Notion, AI reviewer or push notifications. Each can be added later.
+
+```bash
+git clone https://github.com/AdnapEngineering/job-search-pipeline.git
+cd job-search-pipeline
+python3 -m venv .venv && source .venv/bin/activate
+pip install -r requirements.txt
+
+cp config.starter.json config.json   # then edit it (see below)
+python3 check_setup.py               # flags typos and settings still at their placeholders
+python3 run_pipeline.py --no-notion --no-llm-review --no-notify
+xdg-open data/digest.html            # macOS: open data/digest.html
+```
+
+[`config.starter.json`](config.starter.json) holds only the settings you have to change. Replace its placeholders with:
+
+- **`sources.search_terms` / `searches`:** the job titles to search LinkedIn and Indeed for, and where (your city, or `Remote`).
+- **`location`:** your metro area's name and cities, and `home_states` / `home_timezones` if remote roles must match them.
+- **`titles`:** regexes for titles to keep (`target_patterns`), titles that score highest (`strong_target_patterns`, `primary_role_groups`) and levels to skip.
+- **`skills_and_scoring`:** your skills (`core_strengths`), weighted domain terms (`focus_keywords`) and skills that rule a job out (`hard_exclude_skills`).
+- **`compensation.min_salary` / `experience.max_min_yoe`:** the pay floor and the most years of experience a posting may ask for.
+
+Every other setting keeps its built-in default; [`config.example.json`](config.example.json) lists them all with what they do (see [Configuring for Another Career](#4-configuring-for-another-career-configjson--candidate_profilemd)). Next steps: write [`candidate_profile.md`](#step-1-edit-candidate_profilemd) and [choose an LLM provider](#choose-an-llm-provider) for the AI review, add [Notion and ntfy](#set-up-environment-variables), and [schedule it with cron](#automate-with-cron).
+
+---
+
 ## Table of Contents
 
 1. [What It Does & Pipeline Architecture](#1-what-it-does--pipeline-architecture)
@@ -126,7 +154,7 @@ pip install -r requirements.txt
 ### Create Your Config and Profile
 
 ```bash
-cp config.example.json config.json
+cp config.starter.json config.json         # just the settings you must change; or copy config.example.json for all of them
 cp candidate_profile.example.md candidate_profile.md
 ```
 
@@ -337,7 +365,7 @@ Create it from the template first if you have not already (`cp candidate_profile
 - Target seniority levels and hard blockers.
 
 ### Step 2: Edit `config.json`
-Create it from the template first if you have not already (`cp config.example.json config.json`). The template [`config.example.json`](config.example.json) lists every setting: built-in defaults for the general ones, placeholders for the career-specific ones. In your copy, delete any setting you leave at its default; a missing key uses the built-in default, so only what you change needs to be there, and later default improvements reach you.
+Create it first if you have not already: `cp config.starter.json config.json` gives you only the career-specific settings, while `cp config.example.json config.json` copies every setting. The template [`config.example.json`](config.example.json) lists every setting: built-in defaults for the general ones, placeholders for the career-specific ones. In your copy, delete any setting you leave at its default; a missing key uses the built-in default, so only what you change needs to be there, and later default improvements reach you.
 
 | Section | What to Customize |
 | :--- | :--- |
@@ -358,7 +386,7 @@ Create it from the template first if you have not already (`cp config.example.js
 **How the config is loaded:**
 - The pipeline reads `config.json` from the repository directory. It is your own copy of the tracked template `config.example.json` and is ignored by git. Set `JOB_PIPELINE_CONFIG=/path/to/other.json` to use a different file (e.g. one per career).
 - If `config.json` does not exist yet, the template `config.example.json` is read instead and a reminder is printed to stderr. The template itself is never written to.
-- If a file named by `JOB_PIPELINE_CONFIG` is missing, every setting falls back to its built-in default. If it is not valid JSON, a `Could not read ...` warning is printed to stderr and defaults are used, so check the logs after editing.
+- If a file named by `JOB_PIPELINE_CONFIG` is missing, every setting falls back to its built-in default. If a config file is not valid JSON, the run stops with the file, line and column of the error. `python3 check_setup.py` also catches unknown keys, such as typos, which would otherwise be ignored.
 - The Notion logger only writes `summary_block_id` back when `config.json` parsed cleanly, so a typo in the file is never overwritten. If `config.json` does not exist yet, it is created as a copy of the template with the block id added.
 
 ### Choose an LLM Provider
@@ -566,6 +594,7 @@ The tests load `tests/fixtures/search_config.json` (a made-up search) through `t
 | [`run_pipeline.py`](run_pipeline.py) | End-to-end orchestrator, source-health monitor, pre-LLM blocklist filter, and notifier. |
 | [`pipeline_config.py`](pipeline_config.py) | Central loader for `config.json`, path resolution (relative `paths` entries resolve from the repo directory), shared JSON read/atomic-write helpers, and regex compilation helpers. |
 | [`blocklist.py`](blocklist.py) | Shared dedup state: `company\|title` role keys plus the URL and role blocklists used by every stage. |
+| [`config.starter.json`](config.starter.json) | Minimal starting config: only the career-specific settings, as placeholders (`cp config.starter.json config.json`). |
 | [`config.example.json`](config.example.json) | Tracked template for the career-agnostic configuration (sources, locations, pay, titles, skills, LLM rubric). |
 | `config.json` | Your own copy of the template, ignored by git; this is the file the pipeline reads and the one you edit. |
 | [`candidate_profile.example.md`](candidate_profile.example.md) | Tracked template for the candidate profile. |
