@@ -49,6 +49,21 @@ class ConfigTemplateTest(unittest.TestCase):
         self.assertEqual(cfg, {})
         self.assertEqual(notice, "")
 
+    def test_malformed_config_stops_the_run_with_the_location(self):
+        with open(self.own, "w", encoding="utf-8") as f:
+            f.write('{\n  "compensation": {"min_salary": 150000,}\n}\n')
+        with self.assertRaises(SystemExit) as ctx:
+            self._load(self.own)
+        self.assertIn(self.own, str(ctx.exception.code))
+        self.assertIn("line 2", str(ctx.exception.code))
+
+    def test_non_object_config_stops_the_run(self):
+        with open(self.own, "w", encoding="utf-8") as f:
+            json.dump(["not", "an", "object"], f)
+        with self.assertRaises(SystemExit) as ctx:
+            self._load(self.own)
+        self.assertIn("JSON object", str(ctx.exception.code))
+
     def test_saving_the_summary_block_copies_the_template_and_leaves_it_untouched(self):
         with open(self.template, encoding="utf-8") as f:
             before = f.read()
