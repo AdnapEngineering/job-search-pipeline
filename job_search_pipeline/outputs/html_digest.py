@@ -90,6 +90,8 @@ def page_data(eval_results, store, now, min_score, spend=None):
         "location_filtered": _rows(eval_results.get("location_filtered", []),
                                    ("company", "title", "score", "phrase", "url")),
         "manual_reviews": _rows(eval_results.get("manual_reviews", []), ("company", "title", "reason", "url")),
+        "drops": _rows([*eval_results.get("prefilter_drops", []), *eval_results.get("dropped_by_rule", [])],
+                       ("stage", "label", "count", "examples")),
         "sources": health.get("line", ""),
         "warnings": ([eval_results["ai_review_skipped"]] if eval_results.get("ai_review_skipped") else [])
                     + list(health.get("warnings", [])),
@@ -329,11 +331,11 @@ summary { cursor: pointer; font-weight: 600; }
     section(host, "Earlier", "not in this run: closed, reposted, or already sent on; kept " + D.keep_days + " days", earlier);
   }
 
-  function table(label, rows, cols) {
+  function table(label, rows, cols, total) {
     if (!rows.length) return;
     var head = el("tr", null, cols.map(function (c) { return el("th", {cls: c.cls || "", text: c.label}); }));
     var body = rows.map(function (r) { return el("tr", null, cols.map(function (c) { return el("td", {cls: c.cls || ""}, [c.cell(r)]); })); });
-    document.getElementById("extra").appendChild(el("details", null, [el("summary", {text: label + " (" + rows.length + ")"}),
+    document.getElementById("extra").appendChild(el("details", null, [el("summary", {text: label + " (" + (total != null ? total : rows.length) + ")"}),
       el("table", {cls: "tbl"}, [el("thead", null, [head]), el("tbody", null, body)])]));
   }
   var role = {label: "Role", cell: function (r) { return link(r.url, title(r.company) + " · " + (r.title || "")); }};
@@ -344,6 +346,15 @@ summary { cursor: pointer; font-weight: 600; }
     {label: "Phrase", cls: "hide-sm", cell: function (r) { return document.createTextNode(r.phrase || ""); }}]);
   table("Manual review needed (description could not be fetched)", D.manual_reviews, [role,
     {label: "Reason", cls: "hide-sm", cell: function (r) { return document.createTextNode(r.reason || ""); }}]);
+  function txt(key) { return function (r) { return document.createTextNode(r[key] != null ? String(r[key]) : ""); }; }
+  table("Dropped by deterministic rules", D.drops || [], [
+    {label: "Stage", cls: "hide-sm", cell: txt("stage")}, {label: "Rule", cell: txt("label")},
+    {label: "Count", cls: "num", cell: txt("count")},
+    {label: "Example", cls: "hide-sm", cell: function (r) {
+      var ex = (r.examples || [])[0];
+      return ex ? el("span", null, [link(ex.url, title(ex.company) + " · " + (ex.title || "")), ": " + (ex.detail || "")])
+        : document.createTextNode("");
+    }}], (D.drops || []).reduce(function (n, r) { return n + (r.count || 0); }, 0));
 
   var foot = [];
   if (D.sources) foot.push(D.sources);

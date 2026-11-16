@@ -12,3 +12,4 @@ cron_job_search.log.tmp
 latest_job_summary.md
 data/
 job_search_pipeline.egg-info/
+config.draft.json
