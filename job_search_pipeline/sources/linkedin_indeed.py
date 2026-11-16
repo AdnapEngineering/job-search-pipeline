@@ -14,7 +14,9 @@ from datetime import datetime, timezone
 import pandas as pd
 from jobspy import scrape_jobs
 
-from job_search_pipeline.evaluate import JD_HYBRID_ONSITE_RE, JD_US_REMOTE_RE, hard_onsite_passage
+from job_search_pipeline.evaluate import (
+    JD_HYBRID_ONSITE_RE, JD_US_REMOTE_RE, _excluded_skill_mentions, distinct_skills, hard_onsite_passage,
+)
 from job_search_pipeline.sources.filter import (
     FILTERED_JOBS_PATH, LOOKBACK_DAYS, MIN_SALARY, is_local_metro, is_valid_company, names_foreign_place,
 )
@@ -46,7 +48,6 @@ _JD_OFFICE_RE = re.compile(
     r'|\b(?:\d+|three|four|five) days? (?:a|per) week\b', re.I
 )
 
-_HEAVY_EXCLUSIONS = [term_regex(t.lower()) for t in (_SKILLS_CFG.get("hard_exclude_skills") or [])]
 
 _CORE_STRENGTHS = [s.lower() for s in (_SKILLS_CFG.get("core_strengths") or [])]
 _FOCUS_AREAS = [k.lower() for k in (_SKILLS_CFG.get("focus_keywords") or {})]
@@ -112,8 +113,10 @@ def score_job(title, desc):
     desc_lower = (desc or "").lower()
     t_lower = (title or "").lower()
 
-    heavy_count = sum(1 for p in _HEAVY_EXCLUSIONS if p.search(desc_lower))
-    if heavy_count >= 2:
+    # Required (not "a plus" or "X or React") excluded skills, aliases counted once: "Ruby on Rails is a plus"
+    # alone must not drop a posting as two excluded skills
+    heavy = distinct_skills(skill for skill, optional in _excluded_skill_mentions(desc_lower) if not optional)
+    if len(heavy) >= 2:
         return 0, []
 
     # The score is only a loose keep/drop gate, so it counts substrings ("reactjs" is a signal for "react").

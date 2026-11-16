@@ -44,16 +44,28 @@ _MIN_API_DESC_LEN = 50
 _NO_DESCRIPTION = "No description extracted"
 
 _MULTI_NEWLINE_RE = re.compile(r'\n\s*\n+')
+_APOS = r'[\x27\u2019]'  # career pages often use a curly apostrophe ("What you’ll bring")
 _REQUIREMENTS_RE = re.compile(
-    r'(?i)(?:requirements|qualifications|what you(?:\x27ll|\x27re| will| need to)? bring'
-    r'|what we(?:\x27re| are)? looking for|who you are|basic qualifications'
+    r'(?i)(?:requirements|qualifications|what you(?:' + _APOS + r'll|' + _APOS + r're| will| need to)? bring'
+    r'|what we(?:' + _APOS + r're| are)? looking for|who you are|basic qualifications'
     r'|minimum qualifications)[\s\S]{100,2500}'
 )
+# LinkedIn/Indeed descriptions are markdown, so a heading is often bold ("**Required Qualifications**")
 _REQUIREMENTS_HEADING_RE = re.compile(
-    r'(?im)^[ \t]*(?:#+\s*)?(?:requirements|qualifications|basic qualifications|minimum qualifications'
-    r'|required (?:skills|qualifications)|what you(?:\x27ll|\x27re| will| need to)? bring|what we(?:\x27re| are)? looking for'
-    r'|who you are|about you|you (?:have|bring)|you might be a fit|this role requires|must[- ]haves?'
-    r'|what you(?:\x27ll| will| should)? (?:need|have))\b[^\n]{0,40}$'
+    r'(?im)^[ \t]*(?:#+\s*)?(?:\*\*|__)?[ \t]*(?:job |minimum |basic |key |all )?'
+    r'(?:requirements|qualifications|required (?:skills|qualifications)'
+    r'|what you(?:' + _APOS + r'll|' + _APOS + r're| will| need to)? bring'
+    r'|wh(?:at|o) we(?:' + _APOS + r're| are)? looking for|who you are|about you|you (?:have|bring)|what you have'
+    r'|you might be a fit|(?:this role|you) (?:could|would|might) be a (?:great |good )?fit if you have'
+    r'|this role requires|must\\?[- ]haves?(?: skills)?'
+    r'|what you(?:' + _APOS + r'll| will| should)? (?:need|have))\b[^\n]{0,40}$'
+)
+# Headings that follow the requirements: the window stops there, so perks ("grow into distributed systems")
+# are not read as asks
+_AFTER_REQUIREMENTS_HEADING_RE = re.compile(
+    r'(?im)^[ \t]*(?:#+\s*)?(?:\*\*|__)?[ \t]*(?:why (?:join|work)|(?:our |the )?(?:benefits|perks)|what we offer'
+    r'|compensation|salary|pay (?:range|transparency)|base pay|about us|equal (?:employment )?opportunity'
+    r'|how to apply|life at)\b[^\n]{0,60}$'
 )
 _EEO_BOILERPLATE_RE = re.compile(
     r'(?i)without regard to|race, color|equal (?:employment )?opportunity|reasonable accommodation'
@@ -92,7 +104,9 @@ def extract_requirements(full_text):
         return full_text
     m = _REQUIREMENTS_HEADING_RE.search(full_text)
     if m:
-        return full_text[m.start():m.start() + 2500].strip()
+        window = full_text[m.start():m.start() + 2500]
+        end = _AFTER_REQUIREMENTS_HEADING_RE.search(window, 200)
+        return (window[:end.start()] if end else window).strip()
     for m in _REQUIREMENTS_RE.finditer(full_text):
         if not _EEO_BOILERPLATE_RE.search(m.group(0)[:300]):
             return m.group(0).strip()

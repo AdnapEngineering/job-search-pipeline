@@ -11,6 +11,28 @@ import aiohttp
 import job_search_pipeline.scrape as bs
 
 
+class RequirementsWindowTests(unittest.TestCase):
+    INTRO = "About the company. " * 200
+
+    def window(self, heading, after=""):
+        body = "\n* 4+ years of React and TypeScript.\n" + "* Ship product features.\n" * 20
+        return bs.extract_requirements(self.INTRO + "\n" + heading + body + after)
+
+    def test_bold_and_curly_apostrophe_headings_start_the_window(self):
+        for heading in ("**Required Qualifications**", "What you\u2019ll bring", "**What We\u2019re Looking For**",
+                        "This role could be a fit if you have:", "**Must\\-Have Skills**"):
+            with self.subTest(heading=heading):
+                self.assertTrue(self.window(heading).startswith(heading.strip()))
+
+    def test_a_preferred_heading_does_not_start_the_window(self):
+        self.assertFalse(self.window("**Preferred Qualifications**").startswith("**Preferred"))
+
+    def test_the_window_stops_at_the_perks(self):
+        text = self.window("**Requirements**", "\n**Why Join Us**\nGrow into distributed systems.\n")
+        self.assertIn("React and TypeScript", text)
+        self.assertNotIn("distributed systems", text)
+
+
 class RedirectTests(unittest.TestCase):
     def test_redirect_to_a_reissued_posting_is_not_expired(self):
         # Some boards re-issue a live posting under a new id and forward the old link to it

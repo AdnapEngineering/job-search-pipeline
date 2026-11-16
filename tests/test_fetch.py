@@ -74,6 +74,16 @@ class StackDetectionTests(unittest.TestCase):
         self.assertLessEqual({"Java", "Sql", "Aws", "React", "Node"}, set(matched))
 
 
+class ExclusionGateTests(unittest.TestCase):
+    def test_aliases_and_optional_mentions_do_not_drop_a_posting(self):
+        desc = "We build with React and TypeScript. Ruby on Rails or similar (Express) is a plus." * 3
+        self.assertGreater(fi.score_job("Frontend Engineer", desc)[0], 0)
+
+    def test_two_required_excluded_skills_still_drop_it(self):
+        desc = "Requirements: production experience with Rust and with Golang services. React."
+        self.assertEqual(fi.score_job("Frontend Engineer", desc), (0, []))
+
+
 class FeedOutageTests(unittest.TestCase):
     def run_main(self, feed_error):
         linkedin_job = {"title": "Frontend Engineer", "company": "Acme", "location": "Remote", "remote": True,
