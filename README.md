@@ -568,3 +568,9 @@ The tests load `tests/fixtures/search_config.json` (a made-up search) through `t
 | [`text_export.py`](text_export.py) | Stage 5 plain-text alternative to Notion: appends new qualified matches to a `.txt` log and records them in the blocklists. |
 | [`url_normalizer.py`](url_normalizer.py) | Canonical URL normalizer (strips tracking parameters, redundant `gh_jid`, and fragments). |
 | [`tests/`](tests) | Unit and regression tests, run against the generic `tests/fixtures/search_config.json`. |
+
+---
+
+## License
+
+[MIT](LICENSE)
