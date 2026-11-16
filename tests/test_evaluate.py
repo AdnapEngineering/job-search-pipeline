@@ -130,6 +130,37 @@ class StackCreditTests(unittest.TestCase):
         self.assertEqual(inflated["score"], honest["score"])
 
 
+class KeywordWeightTests(unittest.TestCase):
+    def score(self, desc, optional=()):
+        return ev._keyword_score("software engineer", desc, desc, [], False, list(optional))[0]
+
+    def test_core_strength_weights_override_the_flat_points(self):
+        desc = "we use react and java."
+        with unittest.mock.patch.object(ev, "CORE_STRENGTH_WEIGHTS", {}):
+            flat = self.score(desc)
+        with unittest.mock.patch.object(ev, "CORE_STRENGTH_WEIGHTS", {"react": 8, "java": 3}):
+            self.assertEqual(self.score(desc), flat + (8 - 5) + (3 - 5))
+
+    def test_grouped_synonyms_count_once_at_their_best_weight(self):
+        desc = "we care about accessibility (wcag 2.2)."
+        keywords = {"accessibility": 10, "wcag": 15}
+        with unittest.mock.patch.object(ev, "FOCUS_KEYWORDS", keywords), \
+                unittest.mock.patch.object(ev, "DOMAIN_SCORE_CAP", 100):
+            with unittest.mock.patch.object(ev, "_FOCUS_GROUP_OF", {}):
+                ungrouped = self.score(desc)
+            with unittest.mock.patch.object(ev, "_FOCUS_GROUP_OF", {"accessibility": 0, "wcag": 0}):
+                self.assertEqual(self.score(desc), ungrouped - 10)
+                reasons = ev._keyword_score("software engineer", desc, desc, [], False, [])[1]
+                self.assertEqual([r for r in reasons if r in ("Accessibility", "Wcag")], ["Accessibility"])
+
+    def test_optional_excluded_skills_are_penalized_per_skill_up_to_the_cap(self):
+        desc = "we use react."
+        base = self.score(desc)
+        self.assertEqual(self.score(desc, ["rust"]), base - 5)
+        self.assertEqual(self.score(desc, ["rust", "rust", "golang"]), base - 10)
+        self.assertEqual(self.score(desc, ["rust", "golang", "c++", "ruby"]), base - ev.SOFT_SKILL_PENALTY_CAP)
+
+
 class DedupTests(unittest.TestCase):
     JD = "Build and maintain claims software with Java, React and TypeScript for EMS agencies." + FILLER
 

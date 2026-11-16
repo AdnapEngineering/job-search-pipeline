@@ -30,6 +30,12 @@ HARD_EXCLUDE_SKILLS = [s.lower() for s in (_SKILLS_CFG.get("hard_exclude_skills"
 AVOID_TECH = [s.lower() for s in (_SKILLS_CFG.get("avoid_keywords") or [])]
 PENALIZED_KEYWORDS = {k.lower(): int(v) for k, v in (_SKILLS_CFG.get("penalized_keywords") or {}).items()}
 FOCUS_KEYWORDS = {k.lower(): int(v) for k, v in (_SKILLS_CFG.get("focus_keywords") or {}).items()}
+# Synonyms that name one concept ("accessibility" / "wcag"): a group earns its best member's weight once
+_FOCUS_GROUP_OF = {
+    kw.lower(): i
+    for i, group in enumerate(_SKILLS_CFG.get("focus_keyword_groups") or [])
+    for kw in group
+}
 CONDITIONAL_REQUIRE = _SKILLS_CFG.get("conditional_require_any") or {}
 _CONDITIONAL_IF_PRESENT = [s.lower() for s in (CONDITIONAL_REQUIRE.get("if_present") or [])]
 _CONDITIONAL_REQUIRE_ANY = [s.lower() for s in (CONDITIONAL_REQUIRE.get("require_any_of") or [])]
@@ -409,6 +415,7 @@ _REQ_SECTION_RE = re.compile(
     r'(?:required|must[- ]have|minimum|basic qualifications|what you(?:\x27ll|\u2019ll| will) need)[^\n]{0,40}\n'
 )
 SOFT_SKILL_PENALTY = int(_SKILLS_CFG.get("soft_skill_penalty", 5))
+SOFT_SKILL_PENALTY_CAP = int(_SKILLS_CFG.get("soft_skill_penalty_cap", 15))
 
 
 def _in_soft_section(desc, pos):
@@ -457,6 +464,8 @@ TOP_YOE_PENALTY = int(_EXP_CFG.get("top_yoe_penalty", 10))
 
 BASE_SCORE = int(_SKILLS_CFG.get("base_score", 20))
 CORE_STRENGTH_POINTS = int(_SKILLS_CFG.get("core_strength_points", 5))
+# Per-skill overrides of core_strength_points, so the primary stack outweighs peripheral skills
+CORE_STRENGTH_WEIGHTS = {k.lower(): int(v) for k, v in (_SKILLS_CFG.get("core_strength_weights") or {}).items()}
 CORE_STRENGTHS_CAP = int(_SKILLS_CFG.get("core_strengths_cap", 40))
 DOMAIN_SCORE_CAP = int(_SKILLS_CFG.get("domain_score_cap", 20))
 STRONG_FLOOR = int(_SKILLS_CFG.get("strong_floor", 75))
@@ -675,19 +684,22 @@ def _keyword_score(title, desc, full_desc, stack, strong_title, optional_skills)
     reasons = [credit.reason] if credit.reason else []
 
     matched_strengths = [s for s in CORE_STRENGTHS if _mentions(s, stack, full_desc)]
-    score += min(CORE_STRENGTHS_CAP, len(matched_strengths) * CORE_STRENGTH_POINTS)
+    score += min(CORE_STRENGTHS_CAP, sum(CORE_STRENGTH_WEIGHTS.get(s, CORE_STRENGTH_POINTS) for s in matched_strengths))
 
-    domain_score = 0
+    group_points = {}
     for kw, pts in FOCUS_KEYWORDS.items():
         in_title = _has(kw, title) and not (credit.term and kw in credit.term)
         if _has(kw, full_desc) or in_title:
-            domain_score += pts
-            reasons.append(kw.title())
-    score += min(DOMAIN_SCORE_CAP, domain_score)
+            group = _FOCUS_GROUP_OF.get(kw, kw)
+            if group not in group_points:
+                reasons.append(kw.title())
+            group_points[group] = max(pts, group_points.get(group, 0))
+    score += min(DOMAIN_SCORE_CAP, sum(group_points.values()))
 
+    optional_skills = list(dict.fromkeys(optional_skills))
     if optional_skills:
-        score -= SOFT_SKILL_PENALTY
-        reasons.append(f"{optional_skills[0].upper()} optional")
+        score -= min(SOFT_SKILL_PENALTY_CAP, SOFT_SKILL_PENALTY * len(optional_skills))
+        reasons.append(f"{', '.join(s.upper() for s in optional_skills)} optional")
 
     for kw, pen in PENALIZED_KEYWORDS.items():
         if _mentions(kw, stack, full_desc):

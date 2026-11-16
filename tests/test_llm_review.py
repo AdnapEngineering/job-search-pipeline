@@ -253,6 +253,18 @@ class ScoringAndFlagTests(unittest.TestCase):
                       "components": dict(under_leveled, logistics_ok=True)}
             self.assertEqual(review._rescored(cached)["score"], 65)  # applies to reviews already paid for
 
+    def test_core_work_caps_keep_off_center_work_out_of_apply(self):
+        backend = {"hard_reqs": 4, "core_work": 1, "evidence": 3, "level": 2}  # 83% uncapped
+        self.assertEqual(review.score_components(backend), (83, "apply"))
+        with patch.object(review, "CORE_WORK_CAPS", {0: 30, 1: 65}):
+            self.assertEqual(review.score_components(backend), (65, "stretch"))
+            self.assertEqual(review.score_components(dict(backend, core_work=0)), (30, "skip"))
+            self.assertEqual(review.score_components(dict(backend, core_work=2))[0], 92)
+
+    def test_pay_is_kept_out_of_the_level_grade(self):
+        self.assertIn("Do not count pay in hard_reqs or level", review.PROMPT)
+        self.assertNotIn("pay band", review._LEVEL_DESC)
+
     def test_pay_floor_is_a_cliff_by_default(self):
         self.assertEqual(review.score_components(self.PARTS, pay=(128500.0, 128500.0)), (30, "skip"))
         self.assertEqual(review.score_components(self.PARTS, pay=(130000.0, 130000.0)), (92, "apply"))
