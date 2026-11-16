@@ -1,6 +1,8 @@
 # Automated End-to-End Job Search Pipeline
 
-An automated, idempotent, two-stage job search and screening pipeline that aggregates postings from **~1.4M+ direct ATS listings**, **LinkedIn**, **Indeed**, **Remote OK**, **Jobicy**, and **Hacker News ("Who is hiring?")**, enriches them with full job descriptions via direct ATS JSON APIs, scores them deterministically, performs a calibrated LLM rubric review against a candidate profile, and syncs top matches to **Notion** with push notifications via **ntfy**.
+An automated, idempotent, two-stage job search and screening pipeline that aggregates postings from **~1.4M+ direct ATS listings** (via [job-board-aggregator](https://github.com/Riley-Dorrington/job-board-aggregator)), **LinkedIn**, **Indeed**, **Remote OK**, **Jobicy**, and **Hacker News ("Who is hiring?")**, enriches them with full job descriptions via direct ATS JSON APIs, scores them deterministically, performs a calibrated LLM rubric review against a candidate profile, and syncs top matches to **Notion** or **Obsidian** with push notifications via **ntfy**.
+
+> **Credit:** the ATS listings, the largest source by far, come from Riley Dorrington's [job-board-aggregator](https://github.com/Riley-Dorrington/job-board-aggregator) (MIT). It indexes 1M+ active postings from 20,000+ companies' Greenhouse, Lever, Ashby, Workday and other boards, refreshed daily by GitHub Actions and published to [job-board-data](https://github.com/Riley-Dorrington/job-board-data). If this pipeline helps you, give that project a star.
 
 All career-specific rules—target titles, skills, scoring weights, experience ceilings, compensation floors, location rules, company/recruiter blocklists, and LLM rubric calibration—are externalized into `config.json` and `candidate_profile.md`, your own copies of the tracked templates [`config.example.json`](config.example.json) and [`candidate_profile.example.md`](candidate_profile.example.md). You can adapt the entire pipeline to **any career or industry** without editing Python code.
 
@@ -39,7 +41,7 @@ Every other setting keeps its built-in default; [`config.example.json`](config.e
 1. [What It Does & Pipeline Architecture](#1-what-it-does--pipeline-architecture)
 2. [Pulling the GitHub Repository & Installation](#2-pulling-the-github-repository--installation)
 3. [Data Sources, Links & `curl` Commands](#3-data-sources-links--curl-commands)
-   - [GitHub ATS Job-Board Feed (`riley-dorrington/job-board-data`)](#31-github-ats-job-board-feed-riley-dorringtonjob-board-data)
+   - [GitHub ATS Job-Board Feed (job-board-aggregator)](#31-github-ats-job-board-feed-job-board-aggregator)
    - [Remote OK API](#32-remote-ok-api)
    - [Jobicy Remote Jobs API](#33-jobicy-remote-jobs-api)
    - [Hacker News "Who Is Hiring?" (Algolia API)](#34-hacker-news-who-is-hiring-algolia-api)
@@ -197,8 +199,9 @@ The check fetches no jobs, spends no AI quota and writes nothing. It reports, on
 
 Below are the exact upstream endpoints queried by the pipeline and `curl` commands you can run to inspect their live responses.
 
-### 3.1 GitHub ATS Job-Board Feed (`riley-dorrington/job-board-data`)
+### 3.1 GitHub ATS Job-Board Feed (job-board-aggregator)
 
+- **Project:** [Riley-Dorrington/job-board-aggregator](https://github.com/Riley-Dorrington/job-board-aggregator) (MIT): the multithreaded ETL that scrapes the ATS boards daily. Its output is published to [Riley-Dorrington/job-board-data](https://github.com/Riley-Dorrington/job-board-data), which this pipeline reads.
 - **Manifest URL:** `https://riley-dorrington.github.io/job-board-data/data/chunks/jobs_manifest.json`
 - **Chunk Base URL:** `https://riley-dorrington.github.io/job-board-data/data/chunks/`
 - **What it provides:** Daily-updated gzipped JSON chunks (`jobs_0.json.gz`, `jobs_1.json.gz`, ...) containing ~1.4M+ job postings scraped directly from company ATS boards (Greenhouse, Lever, Ashby, Workday, BambooHR, iCIMS, SmartRecruiters, etc.).
