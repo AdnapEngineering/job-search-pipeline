@@ -60,6 +60,9 @@ MAX_TOTAL = sum(COMPONENTS.values())
 BLOCKER_CAP = int(_LLM_CFG.get("blocker_cap", 30))
 # Highest Match % for a role graded level 0 (under- or over-leveled for the candidate); 100 = no cap
 LEVEL_MISMATCH_CAP = int(_LLM_CFG.get("level_mismatch_cap", 100))
+# Highest Match % per core_work grade ({"0": 30, "1": 65}), so off-center work cannot reach APPLY on
+# requirement and domain overlap alone; grades not listed are uncapped
+CORE_WORK_CAPS = {int(k): int(v) for k, v in (_LLM_CFG.get("core_work_caps") or {}).items()}
 # "apply" means "will be synced": unless set explicitly, the verdict line follows the sync threshold
 APPLY_MIN = int(_LLM_CFG.get("apply_min_score") or (CFG.get("skills_and_scoring") or {}).get("min_sync_score") or 80)
 STRETCH_MIN = int(_LLM_CFG.get("stretch_min_score", 50))
@@ -93,7 +96,7 @@ _EVIDENCE_DESC = _RUBRIC.get(
 )
 _LEVEL_DESC = _RUBRIC.get(
     "level",
-    "2 = matches the candidate's target seniority/level range; 1 = slight stretch in seniority or pay band mismatch; "
+    "2 = matches the candidate's target seniority/level range; 1 = slight stretch in seniority; "
     "0 = under-leveled (entry/junior when not targeted) or over-leveled (executive/principal/director when not targeted)."
 )
 _CALIBRATION_LIST = _LLM_CFG.get("calibration_examples") or []
@@ -121,7 +124,8 @@ PROMPT = (
     "An evidence 3 without a verbatim quote is graded 2.\n"
     f"level (0-2): {_LEVEL_DESC}\n"
     "pay_min, pay_max: the lowest and highest annual base salary figures in the posting, in dollars "
-    "(null when the posting gives none; hourly rates times 2080). Do not count pay in hard_reqs.\n"
+    "(null when the posting gives none; hourly rates times 2080). Do not count pay in hard_reqs or level: "
+    "pay is scored separately.\n"
     "logistics_ok: false if the location, hybrid/onsite requirement, or work authorization rules the candidate out.\n"
     "third_party: true if the posting comes from a staffing agency, recruiter, consultancy placing people with "
     "its clients, or a job aggregator rather than from the employer itself. This does not change any grade.\n"
@@ -261,6 +265,8 @@ def score_components(parts, logistics_ok=True, pay=None):
         score = min(score, BLOCKER_CAP)
     if parts.get("level") == 0:
         score = min(score, LEVEL_MISMATCH_CAP)
+    if parts.get("core_work") in CORE_WORK_CAPS:
+        score = min(score, CORE_WORK_CAPS[parts["core_work"]])
     score = min(score, pay_floor_cap(pay))
     verdict = "apply" if score >= APPLY_MIN else "stretch" if score >= STRETCH_MIN else "skip"
     return score, verdict
@@ -735,7 +741,8 @@ def review_matches(matches, enriched_path, min_score=55, stats=None):
         hide = bool(out) and HIDE_THIRD_PARTY and job["third_party"] and out["verdict"] != "skip"
         hidden += hide
         (skipped if out and (out["verdict"] == "skip" or hide) else kept).append(job)
-    kept.sort(key=lambda j: j.get("score", 0), reverse=True)
+    # Match % moves in 8-point steps, so the keyword score orders the many ties within a step
+    kept.sort(key=lambda j: (j.get("score", 0), j.get("keyword_score", 0)), reverse=True)
 
     reviewed = sum(1 for j in todo if normalize_url(j.get("url", "")) in results)
     summary = {
