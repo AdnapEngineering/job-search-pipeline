@@ -130,6 +130,8 @@ cp config.example.json config.json
 cp candidate_profile.example.md candidate_profile.md
 ```
 
+Run the pipeline (and cron) straight from your clone: `config.json`, `candidate_profile.md`, `.env`, `data/`, the log and the summary are all ignored by git, so `git pull` updates the code and leaves them alone. To keep extra personal files in the clone (your own scripts or notes), list them in `.git/info/exclude`, which works like `.gitignore` but is never committed.
+
 Edit the copies, not the templates: see [Configuring for Another Career](#4-configuring-for-another-career-configjson--candidate_profilemd). Until `config.json` exists the pipeline runs on the template's placeholder values and prints a reminder. Until `candidate_profile.md` exists the AI review is skipped (the placeholder profile is never sent to the LLM) and matches are output on their keyword scores.
 
 ### Set Up Environment Variables
@@ -149,7 +151,7 @@ NOTIFY_URL="https://ntfy.sh/your-topic"
 
 All three are optional. Without a Notion token and database ID the pipeline still runs end to end; see [Using Your Own Documentation Platform](#using-your-own-documentation-platform-disable-notion--export-to-txt) to send matches to a `.txt` file instead.
 
-The shell wrapper loads `.env` (or `~/.config/notion/job-search.env` if `.env` is absent). Direct `python3` invocations do **not** load either file: export the variables in your shell first.
+The shell wrapper loads `~/.config/notion/job-search.env` and then `.env`, so a value in `.env` wins when both set it. Direct `python3` invocations do **not** load either file: export the variables in your shell first.
 
 ---
 
