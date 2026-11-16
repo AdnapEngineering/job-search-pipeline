@@ -161,6 +161,24 @@ class KeywordWeightTests(unittest.TestCase):
         self.assertEqual(self.score(desc, ["rust", "golang", "c++", "ruby"]), base - ev.SOFT_SKILL_PENALTY_CAP)
 
 
+class AlternativeMentionTests(unittest.TestCase):
+    def test_aliases_fold_into_the_longer_name(self):
+        self.assertEqual(ev.distinct_skills(["ruby", "ruby on rails", "c#", ".net", "asp.net", "ruby"]),
+                         ["ruby on rails", "c#", "asp.net"])
+
+    def test_a_framework_listed_beside_react_is_not_penalized(self):
+        with unittest.mock.patch.object(ev, "PENALIZED_KEYWORDS", {"vue": 5}):
+            for text in ("proficient with react, vue, angular or similar.",
+                         "at least one modern framework (react, vue, angular, etc)"):
+                with self.subTest(text=text):
+                    self.assertFalse(ev._penalized_mention("vue", [], text))
+            self.assertTrue(ev._penalized_mention("vue", [], "our app is built in vue 3 with pinia."))
+
+    def test_desire_to_learn_is_a_soft_ask(self):
+        self.assertEqual(list(ev._excluded_skill_mentions("* experience in or desire to learn rust\n")),
+                         [("rust", True)])
+
+
 class DedupTests(unittest.TestCase):
     JD = "Build and maintain claims software with Java, React and TypeScript for EMS agencies." + FILLER
 

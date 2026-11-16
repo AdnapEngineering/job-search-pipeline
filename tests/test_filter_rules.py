@@ -221,6 +221,11 @@ class ClearanceTests(unittest.TestCase):
             with self.subTest(text=text):
                 self.assertEqual(ev._requires_clearance(text), want)
 
+    def test_a_clearance_in_a_stand_out_section_is_not_required(self):
+        self.assertFalse(ev._requires_clearance(
+            "**ways to stand out from the crowd**\n\n* ml experience.\n* an active security clearance.\n"))
+        self.assertTrue(ev._requires_clearance("**requirements**\n\n* an active security clearance.\n"))
+
     def test_ignored_terms_are_let_through_but_real_clearances_still_reject(self):
         with unittest.mock.patch.object(ev, "_CLEARANCE_IGNORE_TERMS", {"public trust"}):
             self.assertFalse(ev._requires_clearance("must be able to obtain a public trust"))

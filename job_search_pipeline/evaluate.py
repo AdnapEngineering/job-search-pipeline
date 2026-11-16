@@ -65,12 +65,15 @@ _TERM_RES = {t: _term_re(t) for t in _ALL_TERMS}
 _TERM_RES.update({kw: _term_re(kw, allow_suffix=True) for kw in FOCUS_KEYWORDS})
 
 
-def _has(term, text):
+def _term(term):
     pat = _TERM_RES.get(term)
     if pat is None:
-        pat = _term_re(term)
-        _TERM_RES[term] = pat
-    return bool(pat.search(text))
+        pat = _TERM_RES[term] = _term_re(term)
+    return pat
+
+
+def _has(term, text):
+    return bool(_term(term).search(text))
 
 
 def _mentions(term, stack, text):
@@ -380,6 +383,7 @@ def _requires_clearance(text):
         return False
     return any(m.group(0) not in _CLEARANCE_IGNORE_TERMS
                and not _CLEARANCE_NEGATION_RE.search(text[max(0, m.start() - 40):m.start()])
+               and not _in_soft_section(text, m.start())  # "Ways to stand out: active clearance"
                for m in _AVOID_KEYWORDS_PATTERN.finditer(text))
 
 
@@ -406,10 +410,12 @@ _ALT_LANG_RE = re.compile(r'\b(or|and/or)\b|/')
 _ACCEPTED_ALT_SKILLS = _SKILLS_CFG.get("accepted_alternative_skills") or CORE_STRENGTHS
 _ACCEPTED_LANG_RE = compile_alternation([re.escape(s) for s in _ACCEPTED_ALT_SKILLS], word_bounded=True)
 _SOFT_ASK_RE = re.compile(
-    r'\b(familiarity|exposure|nice to have|nice-to-have|bonus|a plus|preferred|is a plus|desirable|desired|ideally|even better|good to have|optional)\b'
+    r'\b(familiarity|exposure|nice to have|nice-to-have|bonus|a plus|preferred|is a plus|desirable|desired|ideally|even better|good to have|optional'
+    r'|(?:desire|willingness|willing|eager|interest|open) (?:to learn|in learning))\b'
 )
 _SOFT_SECTION_RE = re.compile(
-    r'(?:nice[- ]to[- ]have|preferred|bonus|even better|desirable|desired|good to have|optional|additional qualifications|what will set you apart)[^\n]{0,40}\n'
+    r'(?:nice[- ]to[- ]have|preferred|bonus|even better|desirable|desired|good to have|optional|additional qualifications'
+    r'|what will set you apart|stand out)[^\n]{0,40}\n'
 )
 _REQ_SECTION_RE = re.compile(
     r'(?:required|must[- ]have|minimum|basic qualifications|what you(?:\x27ll|\u2019ll| will) need)[^\n]{0,40}\n'
@@ -596,14 +602,34 @@ def _location_rejected(job, title, loc):
     return loc.strip() not in UNSPECIFIED_LOCATIONS and not remote_or_local
 
 
+def _offered_as_alternative(window, alt_re=_ALT_LANG_RE):
+    return bool(alt_re.search(window) and _ACCEPTED_LANG_RE and _ACCEPTED_LANG_RE.search(window))
+
+
 def _excluded_skill_mentions(desc):
     """Yield (skill, optional) for each hard-exclude skill mention. A mention is optional when it is a
     soft ask or offered as an alternative to an accepted skill ("Skill A or Skill B")."""
     for skill in HARD_EXCLUDE_SKILLS:
         for m in _TERM_RES[skill].finditer(desc):
-            window = _match_window(desc, m)
-            alternative = bool(_ALT_LANG_RE.search(window) and _ACCEPTED_LANG_RE and _ACCEPTED_LANG_RE.search(window))
-            yield skill, alternative or _is_soft_ask(desc, m)
+            yield skill, _offered_as_alternative(_match_window(desc, m)) or _is_soft_ask(desc, m)
+
+
+def distinct_skills(skills):
+    """Skills with aliases folded: "ruby" is dropped when "ruby on rails" is listed, ".net" for "asp.net"."""
+    skills = list(dict.fromkeys(skills))
+    return [s for s in skills if not any(s != other and s in other for other in skills)]
+
+
+# A framework list ("React, Vue, Angular, etc.") names alternatives even without an "or"
+_LIST_ALT_RE = re.compile(r'\b(or|and/or|etc|such as|similar)\b|/')
+
+
+def _penalized_mention(kw, stack, text):
+    """True when kw is asked for itself, not only offered beside an accepted skill or as a soft ask."""
+    if kw in stack:
+        return True
+    return any(not (_offered_as_alternative(_match_window(text, m), _LIST_ALT_RE) or _is_soft_ask(text, m))
+               for m in _term(kw).finditer(text))
 
 
 def _requires_avoided_tech(desc):
@@ -696,13 +722,13 @@ def _keyword_score(title, desc, full_desc, stack, strong_title, optional_skills)
             group_points[group] = max(pts, group_points.get(group, 0))
     score += min(DOMAIN_SCORE_CAP, sum(group_points.values()))
 
-    optional_skills = list(dict.fromkeys(optional_skills))
+    optional_skills = distinct_skills(optional_skills)
     if optional_skills:
         score -= min(SOFT_SKILL_PENALTY_CAP, SOFT_SKILL_PENALTY * len(optional_skills))
         reasons.append(f"{', '.join(s.upper() for s in optional_skills)} optional")
 
     for kw, pen in PENALIZED_KEYWORDS.items():
-        if _mentions(kw, stack, full_desc):
+        if _penalized_mention(kw, stack, full_desc):
             score -= pen
             reasons.append(f"{kw.title()} mentioned")
 
