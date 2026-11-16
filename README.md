@@ -537,9 +537,12 @@ The wrapper appends every run to `cron_job_search.log` next to the scripts. When
 ### Run the Tests
 
 ```bash
+pip install -r requirements-dev.txt   # ruff, pinned to the version CI uses
 ruff check .
 python3 -m unittest discover -s tests
 ```
+
+GitHub Actions runs the same lint and tests on Python 3.10 and 3.13 for every pull request and push to `main` ([`.github/workflows/ci.yml`](.github/workflows/ci.yml)).
 
 The tests load `tests/fixtures/search_config.json` (a made-up search) through `tests/_fixture_config.py` and write only to a temporary directory, so they pass whatever your own `config.json` says and never touch `data/`.
 
