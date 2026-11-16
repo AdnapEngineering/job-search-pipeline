@@ -5,19 +5,22 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 LOG_FILE="${SCRIPT_DIR}/cron_job_search.log"
 SUMMARY_FILE="${SCRIPT_DIR}/latest_job_summary.md"
 
+# cron can start with a minimal environment
+export HOME="${HOME:-$(getent passwd "$(id -u)" | cut -d: -f6)}"
 export PATH="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:${HOME}/.local/bin"
 export PYTHONUNBUFFERED=1
 
-# Load environment variables from local .env or ~/.config/notion/job-search.env if present
+# Load ~/.config/notion/job-search.env, then a local .env (whose values win) when present
+if [ -f "${HOME}/.config/notion/job-search.env" ]; then
+  set -a
+  # shellcheck disable=SC1091
+  source "${HOME}/.config/notion/job-search.env"
+  set +a
+fi
 if [ -f "${SCRIPT_DIR}/.env" ]; then
   set -a
   # shellcheck disable=SC1091
   source "${SCRIPT_DIR}/.env"
-  set +a
-elif [ -f "${HOME}/.config/notion/job-search.env" ]; then
-  set -a
-  # shellcheck disable=SC1091
-  source "${HOME}/.config/notion/job-search.env"
   set +a
 fi
 
