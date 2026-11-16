@@ -17,6 +17,17 @@ NOTION_API = "https://api.notion.com/v1"
 NOTION_VERSION = _NOTION_CFG.get("notion_version", "2022-06-28")
 DEFAULT_DB_ID = os.environ.get("NOTION_DATABASE_ID") or _NOTION_CFG.get("database_id") or ""
 RUN_HISTORY_PATH = get_path("run_history", "data/run_history.json")
+# Properties the Job Prospects database must have (name -> Notion type); "Originally Posted" is optional
+NOTION_PROPERTIES = {
+    "Company & Stage": "title",
+    "Role Title & Compensation": "rich_text",
+    "Location": "rich_text",
+    "Why It Matches": "rich_text",
+    "Match %": "rich_text",
+    "Link": "url",
+    "Date Posted": "date",
+}
+OPTIONAL_NOTION_PROPERTIES = {"Originally Posted": "date"}
 REQUEST_TIMEOUT = 15
 SYNC_DELAY_SECONDS = 0.35  # stays under Notion's ~3 requests/second rate limit
 RUN_HISTORY_KEEP = 10

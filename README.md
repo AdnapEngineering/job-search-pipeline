@@ -153,6 +153,14 @@ All three are optional. Without a Notion token and database ID the pipeline stil
 
 The shell wrapper loads `~/.config/notion/job-search.env` and then `.env`, so a value in `.env` wins when both set it. Direct `python3` invocations do **not** load either file: export the variables in your shell first.
 
+### Check Your Setup
+
+```bash
+python3 check_setup.py          # or: python3 run_pipeline.py --check
+```
+
+The check fetches no jobs, spends no AI quota and writes nothing. It reports, one line each: Python version and installed dependencies; which config file is read, unknown keys (with a "did you mean" for typos) and career settings still at the template's placeholder values; whether `candidate_profile.md` exists; whether the AI reviewer's CLI is found; and, when Notion is configured, whether the token works and the database has every property the sync writes (its only network call). It reads `.env` and `~/.config/notion/job-search.env` the way the cron wrapper does. It exits 1 when something would make a run fail (✗), and 0 when there are only warnings (!).
+
 ---
 
 ## 3. Data Sources, Links & `curl` Commands
@@ -440,6 +448,7 @@ python3 run_pipeline.py --no-llm-review --min-score 75
 
 | Flag | Description |
 | :--- | :--- |
+| `--check` | Check the setup and exit without running (same as `python3 check_setup.py`); see [Check Your Setup](#check-your-setup). |
 | `--skip-fetch` | Skip Stage 1 (`fetch_and_filter.py`) and reuse `data/filtered_jobs.json`. |
 | `--skip-scrape` | Skip Stage 2 (`batch_scraper.py`) and reuse `data/enriched_jobs.json`. |
 | `--no-llm-review` | Skip Stage 4 (`llm_review.py`) and keep Stage 3 keyword scores. |
@@ -553,6 +562,7 @@ The tests load `tests/fixtures/search_config.json` (a made-up search) through `t
 | File | Purpose |
 | :--- | :--- |
 | [`run_job_search.sh`](run_job_search.sh) | Shell wrapper that runs `.venv`'s Python when present, with a concurrency lock (`flock`, or a `mkdir` lock on macOS) and `.env` loading; appends each run to `cron_job_search.log`, trimmed to its newest half past 5 MB. |
+| [`check_setup.py`](check_setup.py) | Setup check (`--check`): dependencies, config typos and placeholders, profile, AI reviewer CLI, Notion database properties, outputs. |
 | [`run_pipeline.py`](run_pipeline.py) | End-to-end orchestrator, source-health monitor, pre-LLM blocklist filter, and notifier. |
 | [`pipeline_config.py`](pipeline_config.py) | Central loader for `config.json`, path resolution (relative `paths` entries resolve from the repo directory), shared JSON read/atomic-write helpers, and regex compilation helpers. |
 | [`blocklist.py`](blocklist.py) | Shared dedup state: `company\|title` role keys plus the URL and role blocklists used by every stage. |

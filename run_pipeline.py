@@ -135,6 +135,8 @@ def parse_args(argv=None):
     default_review_score = int(_SKILLS_CFG.get("min_review_score", 55))
 
     parser = argparse.ArgumentParser(description="End-to-End Automated Job Search Pipeline")
+    parser.add_argument("--check", action="store_true",
+                        help="Check the setup (config, profile, AI reviewer, Notion, outputs) and exit without running")
     parser.add_argument("--skip-fetch", action="store_true", help="Skip fetching and filtering step")
     parser.add_argument("--skip-scrape", action="store_true", help="Skip batch scraping JD step")
     parser.add_argument("--no-notion", action="store_true", help="Skip syncing to Notion")
@@ -351,6 +353,9 @@ def run(args):
 
 def main():
     args = parse_args()
+    if args.check:
+        from check_setup import run_checks
+        sys.exit(run_checks())
     try:
         run(args)
     except Exception as e:
