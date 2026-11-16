@@ -16,7 +16,7 @@ from jobspy import scrape_jobs
 
 from evaluate_jobs import JD_HYBRID_ONSITE_RE, JD_US_REMOTE_RE, hard_onsite_passage
 from fetch_and_filter import (
-    FILTERED_JOBS_PATH, FOREIGN_PATTERNS, LOOKBACK_DAYS, MIN_SALARY, US_PATTERN, is_local_metro, is_valid_company,
+    FILTERED_JOBS_PATH, LOOKBACK_DAYS, MIN_SALARY, is_local_metro, is_valid_company, names_foreign_place,
 )
 from pipeline_config import (
     CFG, atomic_write_json, compile_alternation, compile_regex_list, get_path, load_json, term_regex,
@@ -99,7 +99,7 @@ def is_valid_jobspy_location(loc, desc="", remote_flag=False):
     """Local metro, or a non-foreign location whose JD shows (or at least hints at) remote work."""
     loc_lower = (loc or "").lower()
 
-    if any(p.search(loc_lower) for p in FOREIGN_PATTERNS) and not US_PATTERN.search(loc_lower):
+    if names_foreign_place(loc_lower):
         return False
 
     if is_local_metro(loc_lower):

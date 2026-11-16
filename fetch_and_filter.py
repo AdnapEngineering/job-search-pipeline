@@ -35,12 +35,55 @@ CHUNK_CONCURRENCY = int(_SOURCES_CFG.get("chunk_concurrency", 20))
 LOOKBACK_DAYS = int(_SOURCES_CFG.get("lookback_days", 3))
 MIN_SALARY = float(_COMP_CFG.get("min_salary", 0))
 
-# Pre-compile regex lists from config.json
-FOREIGN_PATTERNS = compile_regex_list(_LOC_CFG.get("foreign_exclude_patterns", []))
+# Places outside the candidate's own country: lower-case regex fragments, matched as whole words. The defaults
+# assume a US-based candidate; set location.foreign_places / foreign_cities in config.json for another country.
+# foreign_places (countries, regions, provinces) rule out a feed location or title, JD residency wording
+# ("remote within Canada") and a JD "Location:" line. foreign_cities only rule out a JD "Location:" line, since a
+# city name alone can be a home-country town (Dublin, OH; Paris, TX).
+DEFAULT_FOREIGN_PLACES = [
+    'canada', 'poland', 'brazil', 'costa rica', 'france', 'italy', 'netherlands', 'spain', 'lithuania', 'uk',
+    'emea', 'latam', 'apac', 'india', 'germany', 'ireland', 'mexico', 'australia', 'montréal', 'montreal', 'europe',
+    'latin america', 'el salvador', 'colombia', 'argentina', 'nz', 'new zealand', 'singapore', 'united kingdom',
+    'romania', 'portugal', 'ontario', 'krakow', 'british columbia', 'bc', 'london', 'gbr', 'scotland', 'england',
+    'türkiye', 'burnaby', 'quebec', 'alberta', 'eu', 'philippines', 'manitoba', 'saskatchewan', 'nova scotia',
+    'newfoundland', 'prince edward island', 'sweden', 'norway', 'denmark', 'finland', 'switzerland', 'austria',
+    'belgium', 'czechia', 'czech republic', 'estonia', 'latvia', 'hungary', 'slovakia', 'slovenia', 'iceland',
+    'luxembourg', 'bulgaria', 'ukraine', 'serbia', 'croatia', 'greece', 'vietnam', 'nigeria', 'israel', 'japan',
+    'south korea', 'egypt', 'pakistan', 'south africa', 'chile', 'peru', 'uruguay', 'guatemala', 'china', 'korea',
+    'turkey',
+]
+DEFAULT_FOREIGN_CITIES = [
+    'bucharest', 'hanoi', 'sofia', 'kyiv', 'manila', 'tel aviv', 'noida', 'bangalore', 'bengaluru', 'hyderabad',
+    'pune', 'chennai', 'warsaw', 'berlin', 'paris', 'amsterdam', 'dublin', 'toronto', 'vancouver,? bc', 'stockholm',
+    'oslo', 'copenhagen', 'helsinki', 'zurich', 'brussels', 'prague', 'budapest', 'winnipeg',
+]
+
+
+def _legacy_terms(*keys):
+    """Entries of pre-merge location keys, with the \\b anchors the old regex lists used stripped."""
+    out = []
+    for key in keys:
+        out.extend(re.sub(r'\\b', '', t) for t in (_LOC_CFG.get(key) or []))
+    return out
+
+
+def _unique(items):
+    return list(dict.fromkeys(i for i in items if i))
+
+
+FOREIGN_PLACES = _unique((_LOC_CFG.get("foreign_places") or DEFAULT_FOREIGN_PLACES) + _legacy_terms(
+    "foreign_exclude_patterns", "jd_non_allowed_locations", "jd_foreign_places", "foreign_countries"))
+FOREIGN_CITIES = _unique((_LOC_CFG.get("foreign_cities") or DEFAULT_FOREIGN_CITIES) + _legacy_terms("jd_foreign_terms"))
+FOREIGN_RE = compile_alternation(FOREIGN_PLACES, word_bounded=True) or re.compile(r'(?!x)x')
+FOREIGN_CITY_RE = compile_alternation(FOREIGN_CITIES, word_bounded=True) or re.compile(r'(?!x)x')
 US_PATTERN = re.compile(_LOC_CFG.get("allowed_country_pattern", r"\b(us|united states|usa)\b"))
 
+
+def names_foreign_place(text):
+    """True when lower-case `text` names a foreign place and not the home country."""
+    return bool(FOREIGN_RE.search(text)) and not US_PATTERN.search(text)
+
 _EXCLUDE_TECH_PATTERNS = compile_regex_list(_TITLES_CFG.get("exclude_tech_patterns", []))
-_EXCLUDE_ROLE_PATTERNS = compile_regex_list(_TITLES_CFG.get("exclude_role_patterns", []))
 
 _STRONG_TARGET_LIST = _TITLES_CFG.get("strong_target_patterns", [])
 STRONG_TARGET_RE = (
@@ -48,7 +91,14 @@ STRONG_TARGET_RE = (
     if _STRONG_TARGET_LIST
     else re.compile(r"(?!x)x")
 )
-_SOFT_ROLE_EXCLUDES = set(_TITLES_CFG.get("soft_exclude_role_patterns", []))
+# Title words that reject a role. soft_exclude_role_patterns reject it too, unless the title is a strong target;
+# they need not also be listed in exclude_role_patterns. The bad_role / soft_bad_role word lists are their
+# pre-merge names and are still read.
+_SOFT_ROLE_EXCLUDES = set(_unique((_TITLES_CFG.get("soft_exclude_role_patterns") or [])
+                                  + [rf'\b{w}\b' for w in (_TITLES_CFG.get("soft_bad_role_patterns") or [])]))
+_EXCLUDE_ROLE_PATTERNS = compile_regex_list(_unique(
+    (_TITLES_CFG.get("exclude_role_patterns") or [])
+    + [rf'\b{w}\b' for w in (_TITLES_CFG.get("bad_role_patterns") or [])] + sorted(_SOFT_ROLE_EXCLUDES)))
 
 _TARGET_PATTERNS = compile_regex_list(_TITLES_CFG.get("target_patterns", [r"\bengineer\b", r"\bdeveloper\b"]))
 # One combined pass to cheaply skip non-target titles before the full title rules run
@@ -113,7 +163,7 @@ def is_valid_location(loc, remote_flag=False):
     if loc_lower in UNSPECIFIED_LOCATIONS:
         return True
 
-    if any(p.search(loc_lower) for p in FOREIGN_PATTERNS) and not US_PATTERN.search(loc_lower):
+    if names_foreign_place(loc_lower):
         return False
 
     if ALLOW_REMOTE and (remote_flag or is_remote(loc_lower)):

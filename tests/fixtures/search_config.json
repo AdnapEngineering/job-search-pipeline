@@ -12,12 +12,7 @@
     "jd_local_metro_pattern": "\\b(denver,? (?:co|colorado)\\b|aurora,? (?:co|colorado)\\b|lakewood|boulder)",
     "home_states": ["CO"],
     "home_timezones": ["mountain"],
-    "allowed_country_pattern": "\\b(us|united states|usa)\\b",
-    "foreign_exclude_patterns": [
-      "\\bcanada\\b", "\\buk\\b", "\\bunited kingdom\\b", "\\bgbr\\b", "\\bindia\\b", "\\bgermany\\b",
-      "\\beurope\\b", "\\bromania\\b", "\\bbc\\b", "\\bbritish columbia\\b"
-    ],
-    "jd_non_allowed_locations": ["uk", "india", "europe", "canada"]
+    "allowed_country_pattern": "\\b(us|united states|usa)\\b"
   },
   "compensation": {"min_salary": 130000, "pay_midpoint_max_cap": 145000, "pay_midpoint_penalty": 10},
   "experience": {
@@ -51,13 +46,14 @@
     ],
     "exclude_tech_patterns": ["\\bc#(?!\\w)", "\\bruby\\b", "\\bgolang\\b", "\\brust\\b", "\\bc\\+\\+(?!\\w)", "\\bphp\\b"],
     "exclude_role_patterns": [
-      "\\.net\\b", "\\bjunior\\b", "\\bstaff\\b", "\\bprincipal\\b", "\\bmanager\\b", "\\blead\\b", "\\bintern\\b",
-      "\\bcontract\\b", "\\bdata\\b", "\\bsystems?\\b", "\\bidentity\\b", "\\bbackend\\b", "\\bback-end\\b",
-      "\\bsalesforce\\b", "\\bnetsuite\\b", "\\btableau\\b", "\\bgraduates?\\b", "\\bc2c\\b"
+      "\\.net\\b", "\\bjunior\\b", "\\bstaff\\b", "\\bprincipal\\b", "\\bmanager\\b", "\\bintern\\b",
+      "\\bcontract\\b", "\\bbackend\\b", "\\bback-end\\b",
+      "\\bsalesforce\\b", "\\bnetsuite\\b", "\\btableau\\b", "\\bgraduates?\\b", "\\bc2c\\b",
+      "\\bsolutions engineer\\b", "\\bdata engineer\\b", "\\bdevops\\b", "\\bsales engineer\\b"
     ],
-    "soft_exclude_role_patterns": ["\\bsystems?\\b", "\\bidentity\\b", "\\bdata\\b", "\\blead\\b"],
-    "bad_role_patterns": ["solutions engineer", "data engineer", "devops", "sales engineer"],
-    "soft_bad_role_patterns": ["platform engineer", "security engineer"]
+    "soft_exclude_role_patterns": [
+      "\\bsystems?\\b", "\\bidentity\\b", "\\bdata\\b", "\\blead\\b", "\\bplatform engineer\\b", "\\bsecurity engineer\\b"
+    ]
   },
   "companies": {
     "exclude_companies": ["megacorp"],

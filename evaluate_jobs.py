@@ -8,12 +8,14 @@ import hashlib
 import json
 import os
 import re
+from urllib.parse import urlparse
 import sys
 from typing import NamedTuple
 
 from blocklist import role_key
 from fetch_and_filter import (
-    FOREIGN_PATTERNS, STRONG_TARGET_RE, UNSPECIFIED_LOCATIONS, US_PATTERN, is_local_metro, is_recent, is_valid_title,
+    FOREIGN_CITY_RE, FOREIGN_PLACES, FOREIGN_RE, STRONG_TARGET_RE, UNSPECIFIED_LOCATIONS, US_PATTERN, is_local_metro,
+    is_recent, is_valid_title, names_foreign_place,
 )
 from pipeline_config import CFG, atomic_write_json, compile_alternation, get_path, term_regex
 from url_normalizer import is_aggregator_url
@@ -76,13 +78,6 @@ _SENIOR_PATTERN = compile_alternation(
     ]),
     word_bounded=True
 )
-_BAD_ROLE_PATTERN = compile_alternation(_TITLES_CFG.get("bad_role_patterns", []), word_bounded=True)
-_SOFT_BAD_ROLE_PATTERN = compile_alternation(_TITLES_CFG.get("soft_bad_role_patterns", []), word_bounded=True)
-
-_NON_US_LOCATIONS = compile_alternation(
-    _LOC_CFG.get("jd_non_allowed_locations", ["türkiye", "australia", "new zealand", "burnaby", "uk", "india", "europe", "latam", "canada"]),
-    word_bounded=True
-)
 
 _JD_LOCAL_METRO_PATTERN = _LOC_CFG.get("jd_local_metro_pattern", "")
 _JD_LOCAL_METRO_RE = re.compile(_JD_LOCAL_METRO_PATTERN, re.I) if _JD_LOCAL_METRO_PATTERN else None
@@ -96,11 +91,8 @@ JD_US_REMOTE_RE = re.compile(
 _JD_GENERIC_REMOTE_RE = re.compile(
     r'\b(?:fully|100%|completely|entirely) remote\b|\bremote[- ]first\b|\bremote(?:ly)?\b', re.I
 )
-# Places outside the candidate's own country, as named in JD residency/remote wording ("remote within Canada",
-# "based in Australia", "anywhere in LATAM"). The defaults assume a US-based candidate: set
-# location.jd_foreign_places in config.json to search from another country.
-_DEFAULT_FOREIGN_PLACES = ['canada', 'british columbia', 'ontario', 'quebec', 'alberta', 'uk', 'united kingdom', 'england', 'europe', 'eu', 'emea', 'india', 'mexico', 'latam', 'latin america', 'brazil', 'poland', 'germany', 'ireland', 'australia', 'philippines', 'manitoba', 'saskatchewan', 'nova scotia', 'newfoundland', 'prince edward island', 'sweden', 'norway', 'denmark', 'finland', 'netherlands', 'spain', 'portugal', 'france', 'italy', 'switzerland', 'austria', 'belgium', 'argentina', 'colombia', 'costa rica', 'new zealand', 'singapore']
-_FOREIGN_PLACES = '|'.join(_LOC_CFG.get("jd_foreign_places") or _DEFAULT_FOREIGN_PLACES)
+# Foreign residency wording ("remote within Canada", "based in Australia"): places from location.foreign_places
+_FOREIGN_PLACES = '|'.join(FOREIGN_PLACES)
 _JD_FOREIGN_REMOTE_RE = re.compile(
     r'\b(?:remote(?:ly)?|based)\s+(?:(?:with)?in|from)\s+(?:the\s+)?(?:' + _FOREIGN_PLACES + r')\b'
     r'|\banywhere (?:with)?in\s+(?:the\s+)?(?:' + _FOREIGN_PLACES + r')\b'
@@ -171,19 +163,6 @@ _INDEED_WORK_LOCATION_RE = re.compile(r'\bwork location:\s*((?:in person|hybrid 
 _JD_LOCATION_LINE_RE = re.compile(r'\blocations?\s*:\s*([^\n|]{2,60})', re.I)
 _OFFICE_LOCATIONS_RE = re.compile(r'\b(?:office|offices|other|our|hub|headquarters)\s*$', re.I)
 _LOCATION_LINE_END_RE = re.compile(r'\s{2,}|\s+(?:type|job type|department|team|employment|salary|compensation|about|reports)\b', re.I)
-# Foreign countries and cities that rule out a JD "Location:" line (lower-case; US-candidate defaults,
-# override with location.jd_foreign_terms)
-_DEFAULT_FOREIGN_TERMS = ['romania', 'bucharest', 'vietnam', 'hanoi', 'bulgaria', 'sofia', 'ukraine', 'kyiv', 'nigeria', 'philippines', 'manila', 'israel', 'tel aviv', 'japan', 'china', 'korea', 'egypt', 'pakistan', 'serbia', 'croatia', 'greece', 'turkey', 'türkiye', 'south africa', 'chile', 'peru', 'uruguay', 'guatemala', 'noida', 'bangalore', 'bengaluru', 'hyderabad', 'pune', 'chennai', 'warsaw', 'berlin', 'paris', 'amsterdam', 'dublin', 'toronto', 'vancouver,? bc', 'sweden', 'stockholm', 'norway', 'oslo', 'denmark', 'copenhagen', 'finland', 'helsinki', 'switzerland', 'zurich', 'austria', 'belgium', 'brussels', 'czechia', 'czech republic', 'prague', 'estonia', 'latvia', 'hungary', 'budapest', 'slovakia', 'slovenia', 'iceland', 'luxembourg', 'manitoba', 'winnipeg', 'saskatchewan', 'nova scotia', 'newfoundland']
-_EXTRA_FOREIGN_RE = re.compile(
-    r'\b(' + '|'.join(_LOC_CFG.get("jd_foreign_terms") or _DEFAULT_FOREIGN_TERMS) + r')\b'
-)
-# Countries and provinces only (no city names shared with home-country towns, like Dublin or Paris): safe to
-# reject a feed location or title on when no home-country token is present. US-candidate defaults; override
-# with location.foreign_countries
-_DEFAULT_FOREIGN_COUNTRIES = ['sweden', 'norway', 'denmark', 'finland', 'switzerland', 'austria', 'belgium', 'czechia', 'czech republic', 'estonia', 'latvia', 'hungary', 'slovakia', 'slovenia', 'iceland', 'luxembourg', 'romania', 'bulgaria', 'ukraine', 'serbia', 'croatia', 'greece', 'vietnam', 'philippines', 'nigeria', 'israel', 'japan', 'south korea', 'egypt', 'pakistan', 'south africa', 'chile', 'peru', 'uruguay', 'guatemala', 'manitoba', 'saskatchewan', 'nova scotia', 'newfoundland', 'prince edward island']
-_FOREIGN_COUNTRY_RE = re.compile(
-    r'\b(' + '|'.join(_LOC_CFG.get("foreign_countries") or _DEFAULT_FOREIGN_COUNTRIES) + r')\b'
-)
 # A location line naming hybrid/onsite work ("Location: Durham, NC (Hybrid - 2 weeks onsite)"), unless remote is
 # offered first or as an alternative ("Remote (US) or hybrid in NYC")
 _LOCATION_ARRANGEMENT_RE = re.compile(r'\b(?:hybrid|on[- ]?site|in[- ]office|in[- ]person)\b')
@@ -293,7 +272,7 @@ def jd_logistics_block(job):
         if us_remote_stated or _OFFICE_LOCATIONS_RE.search(text[max(0, m.start() - 12):m.start()]):
             continue
         value = _LOCATION_LINE_END_RE.split(m.group(1))[0].lower()
-        foreign = any(p.search(value) for p in FOREIGN_PATTERNS) or _EXTRA_FOREIGN_RE.search(value)
+        foreign = FOREIGN_RE.search(value) or FOREIGN_CITY_RE.search(value)
         if foreign and not (US_PATTERN.search(value) or 'anywhere' in value or is_local_metro(value)):
             return m.group(0).strip()[:120]
         arrangement = _LOCATION_ARRANGEMENT_RE.search(value)
@@ -553,18 +532,15 @@ class _TitleCredit(NamedTuple):
 
 
 def _title_rejected(title, strong_title):
-    if (_SENIOR_PATTERN and _SENIOR_PATTERN.search(title)) or (_BAD_ROLE_PATTERN and _BAD_ROLE_PATTERN.search(title)):
-        return True
-    if _SOFT_BAD_ROLE_PATTERN and _SOFT_BAD_ROLE_PATTERN.search(title) and not strong_title:
+    # Excluded title words (soft ones only on a non-strong title) are applied by is_valid_title
+    if _SENIOR_PATTERN and _SENIOR_PATTERN.search(title):
         return True
     return not is_valid_title(title)
 
 
 def _location_rejected(job, title, loc):
     """Non-allowed country in location/title, or a named location that is neither remote nor local metro."""
-    if _NON_US_LOCATIONS and (_NON_US_LOCATIONS.search(loc) or _NON_US_LOCATIONS.search(title)):
-        return True
-    if (_FOREIGN_COUNTRY_RE.search(loc) or _FOREIGN_COUNTRY_RE.search(title)) and not US_PATTERN.search(loc):
+    if (FOREIGN_RE.search(loc) or FOREIGN_RE.search(title)) and not US_PATTERN.search(loc):
         return True
     remote_or_local = (job.get('remote') is True or 'remote' in loc or 'anywhere' in loc or is_local_metro(loc))
     return loc.strip() not in UNSPECIFIED_LOCATIONS and not remote_or_local
@@ -716,7 +692,8 @@ def evaluate_single_job(job):
         return None
 
     if not desc or len(desc) < 100 or _FAILED_SCRAPE_PATTERN.search(desc):
-        if _NON_US_LOCATIONS and _NON_US_LOCATIONS.search((job.get('url') or '').lower()):
+        # The URL path only: hosts such as job-boards.eu.greenhouse.io also list US roles
+        if names_foreign_place(re.sub(r'[-_/.]+', ' ', urlparse(job.get('url') or '').path.lower())):
             return None
         return {"category": "Manual Review", "score": 0, "reason": "Failed scrape / missing description"}
 

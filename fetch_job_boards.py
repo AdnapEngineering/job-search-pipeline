@@ -14,7 +14,7 @@ from datetime import datetime, timedelta, timezone
 
 from batch_scraper import HEADERS, clean_html
 from fetch_and_filter import (
-    FOREIGN_PATTERNS, LOOKBACK_DAYS, US_PATTERN, is_local_metro, is_valid_company, is_valid_salary, is_valid_title,
+    FOREIGN_RE, LOOKBACK_DAYS, US_PATTERN, is_local_metro, is_valid_company, is_valid_salary, is_valid_title,
 )
 from pipeline_config import CFG
 
@@ -112,7 +112,7 @@ def parse_usd_salary(text):
 
 def _is_us_eligible(loc_lower):
     """For remote-only boards: reject locations that name only non-allowed regions."""
-    if any(p.search(loc_lower) for p in FOREIGN_PATTERNS):
+    if FOREIGN_RE.search(loc_lower):
         return bool(US_PATTERN.search(loc_lower) or _US_ELIGIBLE_RE.search(loc_lower))
     return True
 
@@ -212,8 +212,7 @@ def _hn_location(header, segments):
     if is_local_metro(header_lower):
         return next((s for s in segments if is_local_metro(s.lower())), _LOCAL_DISPLAY_NAME)
     if 'remote' in header_lower and not _HN_NO_REMOTE_RE.search(header_lower):
-        names_foreign = (any(p.search(header_lower) for p in FOREIGN_PATTERNS)
-                         or _HN_EXTRA_FOREIGN_RE.search(header_lower))
+        names_foreign = FOREIGN_RE.search(header_lower) or _HN_EXTRA_FOREIGN_RE.search(header_lower)
         if not names_foreign or _HN_US_RE.search(header) or _US_ELIGIBLE_RE.search(header_lower):
             return next((s for s in segments if 'remote' in s.lower()), "Remote")[:_HN_MAX_TITLE_LEN]
     return None

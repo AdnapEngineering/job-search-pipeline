@@ -16,8 +16,12 @@ from blocklist import canon_company, role_key
 
 def logistics(desc, loc="Remote? (unverified)", ats="Linkedin", remote=False, title="Software Engineer"):
     """True when the job is dropped before the AI review for its work-arrangement wording."""
+    return logistics_with(ev, desc, loc, ats, remote, title)
+
+
+def logistics_with(module, desc, loc="Remote? (unverified)", ats="Linkedin", remote=False, title="Software Engineer"):
     job = {"title": title, "location": loc, "ats": ats, "remote": remote, "description_full": desc}
-    return bool(ev.jd_logistics_block(job))
+    return bool(module.jd_logistics_block(job))
 
 
 class LocationTests(unittest.TestCase):
@@ -58,6 +62,24 @@ class TitleTests(unittest.TestCase):
         for title, want in cases.items():
             with self.subTest(title=title):
                 self.assertEqual(ff.is_valid_title(title), want)
+
+    def test_soft_exclusions_need_not_be_listed_twice(self):
+        # \\blead\\b is only in soft_exclude_role_patterns in the fixture
+        self.assertFalse(ff.is_valid_title("Lead Software Engineer"))
+        self.assertTrue(ff.is_valid_title("Lead Frontend Engineer"))  # strong title
+        self.assertFalse(ff.is_valid_title("Security Engineer"))
+        self.assertTrue(ff.is_valid_title("Frontend Security Engineer"))
+        self.assertFalse(ff.is_valid_title("Senior Frontend DevOps Engineer"))  # a hard exclusion ignores strong titles
+
+    def test_pre_merge_title_keys_are_still_read(self):
+        import importlib
+        legacy = {"bad_role_patterns": ["wizard"], "soft_bad_role_patterns": ["sorcerer"]}
+        self.addCleanup(importlib.reload, ff)
+        with unittest.mock.patch.dict(ff._TITLES_CFG, legacy):
+            importlib.reload(ff)
+        self.assertFalse(ff.is_valid_title("Frontend Wizard Engineer"))
+        self.assertFalse(ff.is_valid_title("Sorcerer Engineer"))
+        self.assertTrue(ff.is_valid_title("Frontend Sorcerer Engineer"))
 
 
 class LogisticsTests(unittest.TestCase):
@@ -103,20 +125,37 @@ class LogisticsTests(unittest.TestCase):
             with self.subTest(desc=desc[:60]):
                 self.assertEqual(logistics(desc), want)
 
+    def reload_with_location(self, location):
+        """evaluate_jobs and fetch_and_filter rebuilt from `location` (restored afterwards by addCleanup)."""
+        import importlib
+
+        def restore():
+            importlib.reload(ff)
+            importlib.reload(ev)
+        self.addCleanup(restore)
+        with unittest.mock.patch.dict(ff._LOC_CFG, location, clear=True):
+            importlib.reload(ff)
+            return importlib.reload(ev)
+
     def test_foreign_lists_follow_the_config(self):
         """A candidate outside the US replaces the US-default foreign lists in config.json."""
-        import importlib
-        canada = {"jd_foreign_places": ["united states", "usa"], "foreign_countries": ["united states"],
-                  "jd_foreign_terms": ["seattle"]}
-        try:
-            with unittest.mock.patch.dict(ev._LOC_CFG, canada):
-                reloaded = importlib.reload(ev)
-            self.assertTrue(reloaded._FOREIGN_COUNTRY_RE.search("united states (remote)"))
-            self.assertFalse(reloaded._FOREIGN_COUNTRY_RE.search("manitoba (remote)"))
-            self.assertIsNotNone(reloaded.foreign_remote_match("This role is remote within the United States."))
-            self.assertIsNone(reloaded.foreign_remote_match("Open to candidates based in Manitoba."))
-        finally:
-            importlib.reload(ev)
+        canada = {"allowed_country_pattern": r"\b(canada)\b", "foreign_places": ["united states", "usa"],
+                  "foreign_cities": ["seattle"]}
+        reloaded = self.reload_with_location(canada)
+        self.assertTrue(reloaded._location_rejected({"remote": True}, "developer", "united states (remote)"))
+        self.assertFalse(reloaded._location_rejected({"remote": True}, "developer", "manitoba (remote)"))
+        self.assertIsNotNone(reloaded.foreign_remote_match("This role is remote within the United States."))
+        self.assertIsNone(reloaded.foreign_remote_match("Open to candidates based in Manitoba."))
+        self.assertTrue(logistics_with(reloaded, "Location: Seattle, WA"))
+
+    def test_pre_merge_location_keys_are_still_read(self):
+        legacy = {"foreign_exclude_patterns": [r"\bnarnia\b"], "jd_non_allowed_locations": ["gondor"],
+                  "jd_foreign_places": ["mordor"], "foreign_countries": ["oz"], "jd_foreign_terms": ["emerald city"]}
+        reloaded = self.reload_with_location(legacy)
+        for place in ("narnia", "gondor", "mordor", "oz", "canada"):  # merged with the defaults
+            with self.subTest(place=place):
+                self.assertTrue(reloaded._location_rejected({"remote": True}, "developer", f"remote ({place})"))
+        self.assertIn("emerald city", ff.FOREIGN_CITIES)
 
     def test_foreign_country_in_feed_location_or_title(self):
         def rejected(loc, title="senior full stack engineer"):
