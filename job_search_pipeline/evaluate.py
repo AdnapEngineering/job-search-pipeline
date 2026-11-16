@@ -15,7 +15,7 @@ from typing import NamedTuple
 from job_search_pipeline.blocklist import role_key
 from job_search_pipeline.sources.filter import (
     FOREIGN_CITY_RE, FOREIGN_PLACES, FOREIGN_RE, STRONG_TARGET_RE, UNSPECIFIED_LOCATIONS, US_PATTERN, is_local_metro,
-    is_recent, is_valid_title, names_foreign_place,
+    is_recent, names_foreign_place, title_reject_reason,
 )
 from job_search_pipeline.config import CFG, atomic_write_json, compile_alternation, get_path, term_regex
 from job_search_pipeline.urls import is_aggregator_url
@@ -378,13 +378,20 @@ _CLEARANCE_NEGATION_RE = re.compile(r"\b(?:no|not|without|doesn't|does not)\b[^.
 _CLEARANCE_IGNORE_TERMS = {t.lower() for t in (_EXP_CFG.get("clearance_ignore_terms") or [])}
 
 
-def _requires_clearance(text):
+def _clearance_hit(text):
+    """The clearance wording that rules the job out, or ''."""
     if not _REJECT_CLEARANCE:
-        return False
-    return any(m.group(0) not in _CLEARANCE_IGNORE_TERMS
-               and not _CLEARANCE_NEGATION_RE.search(text[max(0, m.start() - 40):m.start()])
-               and not _in_soft_section(text, m.start())  # "Ways to stand out: active clearance"
-               for m in _AVOID_KEYWORDS_PATTERN.finditer(text))
+        return ''
+    for m in _AVOID_KEYWORDS_PATTERN.finditer(text):
+        if (m.group(0) not in _CLEARANCE_IGNORE_TERMS
+                and not _CLEARANCE_NEGATION_RE.search(text[max(0, m.start() - 40):m.start()])
+                and not _in_soft_section(text, m.start())):  # "Ways to stand out: active clearance"
+            return m.group(0)
+    return ''
+
+
+def _requires_clearance(text):
+    return bool(_clearance_hit(text))
 
 
 _REJECT_FOREIGN_LANG = bool(_EXP_CFG.get("reject_foreign_language_req", True))
@@ -525,19 +532,27 @@ def _yoe_matches(text):
     return kept
 
 
-def _requires_high_yoe(text):
+def _high_yoe(text):
+    """('max_min_yoe' | 'max_min_secondary_yoe', detail) for the first years-of-experience ask over its limit,
+    or None."""
     text = strip_markdown(text)
     for m in _yoe_matches(text):
         years = _match_years(m, text)
+        phrase = m.group(0).strip()
         if years > MAX_MIN_YOE:
-            return True
+            return "max_min_yoe", f'"{phrase}": {years} years > max {MAX_MIN_YOE}'
         if _SECONDARY_YOE_CONTEXT_RE:
             context = re.split(r'[\n.;•]', text[m.end():m.end() + 100])[0]
             if (years > MAX_MIN_SECONDARY_YOE
                     and _SECONDARY_YOE_CONTEXT_RE.search(context)
                     and not (_PRIMARY_YOE_CONTEXT_RE and _PRIMARY_YOE_CONTEXT_RE.search(context))):
-                return True
-    return False
+                return ("max_min_secondary_yoe",
+                        f'"{phrase}{context[:60].rstrip()}": {years} years > max {MAX_MIN_SECONDARY_YOE}')
+    return None
+
+
+def _requires_high_yoe(text):
+    return _high_yoe(text) is not None
 
 
 _HARD_ASK_PENALTIES = [
@@ -587,19 +602,24 @@ class _TitleCredit(NamedTuple):
     term: str = ''
 
 
-def _title_rejected(title, strong_title):
-    # Excluded title words (soft ones only on a non-strong title) are applied by is_valid_title
-    if _SENIOR_PATTERN and _SENIOR_PATTERN.search(title):
-        return True
-    return not is_valid_title(title)
+def _seniority_hit(title):
+    m = _SENIOR_PATTERN.search(title) if _SENIOR_PATTERN else None
+    return f'title word "{m.group(0)}"' if m else ''
+
+
+def _location_reject_reason(job, title, loc):
+    """Non-allowed country in location/title, or a named location that is neither remote nor local metro."""
+    foreign = FOREIGN_RE.search(loc) or FOREIGN_RE.search(title)
+    if foreign and not US_PATTERN.search(loc):
+        return f'names "{foreign.group(0)}" (location.foreign_places) and not the home country'
+    remote_or_local = (job.get('remote') is True or 'remote' in loc or 'anywhere' in loc or is_local_metro(loc))
+    if loc.strip() not in UNSPECIFIED_LOCATIONS and not remote_or_local:
+        return f'"{loc}" is neither remote nor in location.local_metro_patterns'
+    return ''
 
 
 def _location_rejected(job, title, loc):
-    """Non-allowed country in location/title, or a named location that is neither remote nor local metro."""
-    if (FOREIGN_RE.search(loc) or FOREIGN_RE.search(title)) and not US_PATTERN.search(loc):
-        return True
-    remote_or_local = (job.get('remote') is True or 'remote' in loc or 'anywhere' in loc or is_local_metro(loc))
-    return loc.strip() not in UNSPECIFIED_LOCATIONS and not remote_or_local
+    return bool(_location_reject_reason(job, title, loc))
 
 
 def _offered_as_alternative(window, alt_re=_ALT_LANG_RE):
@@ -632,57 +652,81 @@ def _penalized_mention(kw, stack, text):
                for m in _term(kw).finditer(text))
 
 
-def _requires_avoided_tech(desc):
+def _avoided_tech_hit(desc):
+    """The first avoid_keywords term asked for outright (not a soft ask), or ''."""
     for term in AVOID_TECH:
         for m in _TERM_RES[term].finditer(desc):
             rest_offered = term in _REST_ALTERNATIVE_TERMS and _REST_RE.search(_match_window(desc, m))
             if not (_is_soft_ask(desc, m) or rest_offered):
-                return True
-    return False
+                return term
+    return ''
 
 
-def _fails_conditional_require(stack, full_desc):
-    """True when a trigger skill is present but none of the skills it must come with are."""
+def _conditional_require_miss(stack, full_desc):
+    """Detail when a trigger skill is present but none of the skills it must come with are, else ''."""
     if not (_CONDITIONAL_IF_PRESENT and _CONDITIONAL_REQUIRE_ANY):
-        return False
-    has_trigger = any(_mentions(s, stack, full_desc) for s in _CONDITIONAL_IF_PRESENT)
-    return has_trigger and not any(_mentions(s, stack, full_desc) for s in _CONDITIONAL_REQUIRE_ANY)
+        return ''
+    trigger = next((s for s in _CONDITIONAL_IF_PRESENT if _mentions(s, stack, full_desc)), None)
+    if trigger and not any(_mentions(s, stack, full_desc) for s in _CONDITIONAL_REQUIRE_ANY):
+        return f'mentions "{trigger}" but none of {", ".join(_CONDITIONAL_REQUIRE_ANY)}'
+    return ''
 
 
-def _matches_specialty_reject(title, desc, clean_desc):
-    for rule in _SPECIALTY_REJECT_RULES:
-        if rule["title_re"] and rule["title_re"].search(title):
-            return True
-        if rule["yoe_re"] and rule["yoe_re"].search(desc):
-            return True
-        if rule["term_re"] and len(rule["term_re"].findall(clean_desc)) >= rule["min_mentions"]:
-            return True
-    return False
+def _specialty_hit(title, desc, clean_desc):
+    """Which specialty_reject_rules entry matched, or ''."""
+    for i, rule in enumerate(_SPECIALTY_REJECT_RULES):
+        if rule["title_re"] and (m := rule["title_re"].search(title)):
+            return f'rule {i + 1} title_pattern matched "{m.group(0)}"'
+        if rule["yoe_re"] and (m := rule["yoe_re"].search(desc)):
+            return f'rule {i + 1} jd_yoe_pattern matched "{m.group(0)}"'
+        if rule["term_re"]:
+            n = len(rule["term_re"].findall(clean_desc))
+            if n >= rule["min_mentions"]:
+                return f'rule {i + 1} jd_term_pattern found {n} times (min_mentions {rule["min_mentions"]})'
+    return ''
 
 
-def _is_off_center(clean_desc):
-    """True when the JD describes an adjacent role (by statement or by word counts) rather than the target."""
-    if _OFF_CENTER_ROLE_RE and _OFF_CENTER_ROLE_RE.search(clean_desc):
-        return True
+def _off_center_hit(clean_desc):
+    """Detail when the JD describes an adjacent role (by statement or by word counts) rather than the target."""
+    if _OFF_CENTER_ROLE_RE and (m := _OFF_CENTER_ROLE_RE.search(clean_desc)):
+        return f'role statement "{m.group(0)}"'
     if _OFF_CENTER_WORD_RE and _TARGET_WORD_RE:
         n_off = len(_OFF_CENTER_WORD_RE.findall(clean_desc))
         n_target = len(_TARGET_WORD_RE.findall(clean_desc))
-        return n_off >= _OFF_CENTER_MIN_MENTIONS and n_off >= _OFF_CENTER_RATIO * n_target
-    return False
+        if n_off >= _OFF_CENTER_MIN_MENTIONS and n_off >= _OFF_CENTER_RATIO * n_target:
+            return f'{n_off} off-center words vs {n_target} target words (min {_OFF_CENTER_MIN_MENTIONS}, ratio {_OFF_CENTER_RATIO})'
+    return ''
 
 
-def _requirements_rejected(title, desc, full_desc, stack, strong_title):
-    """Hard rejects from the JD: avoided tech, clearance, language, specialty, experience, or off-center focus."""
+def _is_off_center(clean_desc):
+    return bool(_off_center_hit(clean_desc))
+
+
+def _senior_years_hit(full_desc):
+    m = next((m for m in _SENIOR_ROLE_YOE_RE.finditer(full_desc) if int(m.group(1)) > MAX_SENIOR_ROLE_YEARS), None)
+    return f'"{m.group(0)}" > max {MAX_SENIOR_ROLE_YEARS}' if m else ''
+
+
+def _language_hit(full_desc, title):
+    if not _REJECT_FOREIGN_LANG:
+        return ''
+    m = _LANGUAGE_REQ_RE.search(full_desc) or _LANGUAGE_REQ_RE.search(title)
+    return f'"{m.group(0)}"' if m else ''
+
+
+def _requirements_gates(title, desc, full_desc, stack, strong_title):
+    """(rule, detail thunk) for each hard reject read from the JD, in the order they are checked. A thunk
+    returns '' when the job passes, a detail string, or a (rule, detail) pair that names a narrower rule."""
     clean_desc = strip_markdown(full_desc)
-    return bool(
-        _requires_avoided_tech(desc)
-        or _fails_conditional_require(stack, full_desc)
-        or _requires_clearance(desc) or _requires_clearance(title)
-        or (_REJECT_FOREIGN_LANG and (_LANGUAGE_REQ_RE.search(full_desc) or _LANGUAGE_REQ_RE.search(title)))
-        or _matches_specialty_reject(title, desc, clean_desc)
-        or _requires_high_yoe(full_desc)
-        or (not strong_title and _is_off_center(clean_desc))
-        or any(int(m.group(1)) > MAX_SENIOR_ROLE_YEARS for m in _SENIOR_ROLE_YOE_RE.finditer(full_desc))
+    return (
+        ("avoid_keywords", lambda: (t := _avoided_tech_hit(desc)) and f'"{t}" asked as a requirement'),
+        ("conditional_require_any", lambda: _conditional_require_miss(stack, full_desc)),
+        ("clearance", lambda: (c := _clearance_hit(desc) or _clearance_hit(title)) and f'"{c}"'),
+        ("foreign_language", lambda: _language_hit(full_desc, title)),
+        ("specialty_reject_rules", lambda: _specialty_hit(title, desc, clean_desc)),
+        ("max_min_yoe", lambda: _high_yoe(full_desc) or ''),
+        ("off_center_role_check", lambda: '' if strong_title else _off_center_hit(clean_desc)),
+        ("max_senior_role_years", lambda: _senior_years_hit(full_desc)),
     )
 
 
@@ -703,34 +747,50 @@ def _title_credit(title, strong_title, stack, full_desc):
     return _TitleCredit()
 
 
-def _keyword_score(title, desc, full_desc, stack, strong_title, optional_skills):
-    """(score, reasons, matched core strengths) from title credit, skills, domain terms and penalties."""
+def _keyword_score(title, desc, full_desc, stack, strong_title, optional_skills, breakdown=None):
+    """(score, reasons, matched core strengths) from title credit, skills, domain terms and penalties.
+    With a `breakdown` list, each part of the score is appended to it as (label, points)."""
+    parts = breakdown if breakdown is not None else []
     credit = _title_credit(title, strong_title, stack, full_desc)
     score = BASE_SCORE + credit.points
     reasons = [credit.reason] if credit.reason else []
+    parts.append(("Base score (skills_and_scoring.base_score)", BASE_SCORE))
+    parts.append((f"Title credit: {credit.reason}" if credit.reason else "Title credit: none", credit.points))
 
     matched_strengths = [s for s in CORE_STRENGTHS if _mentions(s, stack, full_desc)]
-    score += min(CORE_STRENGTHS_CAP, sum(CORE_STRENGTH_WEIGHTS.get(s, CORE_STRENGTH_POINTS) for s in matched_strengths))
+    weights = {s: CORE_STRENGTH_WEIGHTS.get(s, CORE_STRENGTH_POINTS) for s in matched_strengths}
+    strength_points = min(CORE_STRENGTHS_CAP, sum(weights.values()))
+    score += strength_points
+    parts.append((f"Core strengths (cap {CORE_STRENGTHS_CAP}): "
+                  + (", ".join(f"{s} +{w}" for s, w in weights.items()) or "none"), strength_points))
 
-    group_points = {}
+    group_points, group_terms = {}, {}
     for kw, pts in FOCUS_KEYWORDS.items():
         in_title = _has(kw, title) and not (credit.term and kw in credit.term)
         if _has(kw, full_desc) or in_title:
             group = _FOCUS_GROUP_OF.get(kw, kw)
             if group not in group_points:
                 reasons.append(kw.title())
+            group_terms.setdefault(group, []).append(kw)
             group_points[group] = max(pts, group_points.get(group, 0))
-    score += min(DOMAIN_SCORE_CAP, sum(group_points.values()))
+    domain_points = min(DOMAIN_SCORE_CAP, sum(group_points.values()))
+    score += domain_points
+    parts.append((f"Domain terms (cap {DOMAIN_SCORE_CAP}): "
+                  + (", ".join(f"{'/'.join(group_terms[g])} +{p}" for g, p in group_points.items()) or "none"),
+                  domain_points))
 
     optional_skills = distinct_skills(optional_skills)
     if optional_skills:
-        score -= min(SOFT_SKILL_PENALTY_CAP, SOFT_SKILL_PENALTY * len(optional_skills))
+        penalty = min(SOFT_SKILL_PENALTY_CAP, SOFT_SKILL_PENALTY * len(optional_skills))
+        score -= penalty
         reasons.append(f"{', '.join(s.upper() for s in optional_skills)} optional")
+        parts.append((f"Excluded skills offered as optional: {', '.join(optional_skills)}", -penalty))
 
     for kw, pen in PENALIZED_KEYWORDS.items():
         if _penalized_mention(kw, stack, full_desc):
             score -= pen
             reasons.append(f"{kw.title()} mentioned")
+            parts.append((f"penalized_keywords: {kw}", -pen))
 
     clean_desc = strip_markdown(full_desc)
     clean_req_desc = strip_markdown(desc)
@@ -741,63 +801,130 @@ def _keyword_score(title, desc, full_desc, stack, strong_title, optional_skills)
             continue
         score -= item["penalty"]
         reasons.append(item["label"])
+        parts.append((f"hard_ask_penalties: {item['label']}", -item["penalty"]))
 
     if _max_min_yoe(clean_desc) >= MAX_MIN_YOE:
         score -= TOP_YOE_PENALTY
         reasons.append(f"{MAX_MIN_YOE}+ yrs asked")
+        parts.append((f"Asks {MAX_MIN_YOE}+ years (experience.top_yoe_penalty)", -TOP_YOE_PENALTY))
 
     return score, reasons, matched_strengths
 
 
+# Why evaluate_single_job drops a posting: rule key -> what it means and the config behind it
+DROP_RULES = {
+    "expired": "Posting expired",
+    "missing_company": "No company name (blind listing)",
+    "seniority": "Seniority word in title (titles.exclude_seniority_patterns)",
+    "title": "Title rules (titles.*)",
+    "location": "Feed location neither remote nor local metro (location.*)",
+    "foreign_url": "Description not fetched and the URL names a foreign place",
+    "jd_location": "No feed location and the JD names no eligible remote or local work",
+    "hard_exclude_skills": "Required skill in skills_and_scoring.hard_exclude_skills",
+    "avoid_keywords": "Required tech in skills_and_scoring.avoid_keywords",
+    "conditional_require_any": "skills_and_scoring.conditional_require_any",
+    "clearance": "Security clearance (experience.reject_clearance)",
+    "foreign_language": "Foreign language (experience.reject_foreign_language_req)",
+    "specialty_reject_rules": "skills_and_scoring.specialty_reject_rules",
+    "max_min_yoe": "Years asked over experience.max_min_yoe",
+    "max_min_secondary_yoe": "Secondary-skill years over experience.max_min_secondary_yoe",
+    "off_center_role_check": "Adjacent role (skills_and_scoring.off_center_role_check)",
+    "max_senior_role_years": "Senior-level years over experience.max_senior_role_years",
+    "secondary_floor": "Score under skills_and_scoring.secondary_floor",
+}
+
+
+class _Rejected(Exception):
+    def __init__(self, rule, detail):
+        super().__init__(rule)
+        self.rule, self.detail = rule, detail
+
+
+def evaluate_job_traced(job, trace=None, breakdown=None):
+    """(result, rejection). result is what evaluate_single_job returns; when it is None, rejection is
+    {"rejected_by": a DROP_RULES key, "detail": what matched}. With a `trace` list, every gate checked is
+    appended as {"rule", "passed", "detail"}; with a `breakdown` list, the score's parts as (label, points)."""
+    def gate(rule, detail):
+        if isinstance(detail, tuple):  # a gate that names a narrower rule than the one it is listed under
+            rule, detail = detail
+        if trace is not None:
+            trace.append({"rule": rule, "passed": not detail, "detail": detail or ""})
+        if detail:
+            raise _Rejected(rule, detail)
+
+    try:
+        return _evaluate(job, gate, breakdown), None
+    except _Rejected as r:
+        return None, {"rejected_by": r.rule, "detail": r.detail}
+
+
 def evaluate_single_job(job):
     """{'category': 'Strong' | 'Secondary' | 'Manual Review', 'score', 'reason'}, or None when rejected."""
+    return evaluate_job_traced(job)[0]
+
+
+def _job_texts(job):
+    """(title, requirements text, full JD, stack fallback, location), lower-cased, as the rules read them."""
     title = (job.get('title') or '').lower()
     desc = (job.get('description_ai') or '').lower()
     full_desc = (job.get('description_full') or desc).lower()
     # stack_detected is only a fallback for old rows saved without the full JD: skills are matched as whole
     # terms in the text itself, so a stack list built another way cannot add credit the JD does not support
     stack = [] if job.get('description_full') else [s.lower() for s in job.get('stack_detected', [])]
-    loc = (job.get('location') or '').lower()
+    return title, desc, full_desc, stack, (job.get('location') or '').lower()
+
+
+def score_breakdown(job):
+    """(keyword score, [(label, points)]) for a job whatever the hard rules say, e.g. to show what a dropped
+    posting would have scored."""
+    title, desc, full_desc, stack, _ = _job_texts(job)
+    parts = []
+    score, _, _ = _keyword_score(title, desc, full_desc, stack, bool(STRONG_TARGET_RE.search(title)),
+                                 [skill for skill, _ in _excluded_skill_mentions(desc)], parts)
+    return min(100, score), parts
+
+
+def _evaluate(job, gate, breakdown):
+    title, desc, full_desc, stack, loc = _job_texts(job)
 
     # 1. Dead postings and blind company listings
-    if desc.startswith('posting expired'):
-        return None
-    if str(job.get('company') or '').strip().lower() in _MISSING_COMPANY_VALUES:
-        return None
+    gate("expired", 'description starts "Posting expired"' if desc.startswith('posting expired') else '')
+    gate("missing_company", f"company is {job.get('company')!r}"
+         if str(job.get('company') or '').strip().lower() in _MISSING_COMPANY_VALUES else '')
 
-    # 2. Undesired seniority, roles, and locations
+    # 2. Undesired seniority, roles, and locations. Excluded title words (soft ones only on a non-strong
+    # title) are applied by title_reject_reason.
     strong_title = bool(STRONG_TARGET_RE.search(title))
-    if _title_rejected(title, strong_title) or _location_rejected(job, title, loc):
-        return None
+    gate("seniority", _seniority_hit(title))
+    gate("title", title_reject_reason(title))
+    gate("location", _location_reject_reason(job, title, loc))
 
     if not desc or len(desc) < 100 or _FAILED_SCRAPE_PATTERN.search(desc):
         # The URL path only: hosts such as job-boards.eu.greenhouse.io also list US roles
-        if names_foreign_place(re.sub(r'[-_/.]+', ' ', urlparse(job.get('url') or '').path.lower())):
-            return None
+        url_words = re.sub(r'[-_/.]+', ' ', urlparse(job.get('url') or '').path.lower())
+        gate("foreign_url", f"URL path names a foreign place: {url_words.strip()[:80]!r}"
+             if names_foreign_place(url_words) else '')
         return {"category": "Manual Review", "score": 0, "reason": "Failed scrape / missing description"}
 
     # No feed location: keep only when the JD itself says eligible remote or local metro
     location_unknown = loc.strip() in UNSPECIFIED_LOCATIONS and job.get('remote') is not True
-    if location_unknown and not jd_location_ok(job.get('description_full') or job.get('description_ai') or ''):
-        return None
+    gate("jd_location", "no feed location, and the JD states no US-remote or local-metro work"
+         if location_unknown and not jd_location_ok(job.get('description_full') or job.get('description_ai') or '')
+         else '')
 
     # 3. Hard rejects in requirements text
     excluded = list(_excluded_skill_mentions(desc))
-    if not all(optional for _, optional in excluded):
-        return None
-    if _requirements_rejected(title, desc, full_desc, stack, strong_title):
-        return None
+    required = distinct_skills([skill for skill, optional in excluded if not optional])
+    gate("hard_exclude_skills", f"asks for {', '.join(required)}" if required else '')
+    for rule, detail in _requirements_gates(title, desc, full_desc, stack, strong_title):
+        gate(rule, detail())
 
     # 4. Score calculation
     score, reasons, matched_strengths = _keyword_score(
-        title, desc, full_desc, stack, strong_title, [skill for skill, _ in excluded])
+        title, desc, full_desc, stack, strong_title, [skill for skill, _ in excluded], breakdown)
     match_pct = min(100, score)
-    if match_pct >= STRONG_FLOOR:
-        category = "Strong"
-    elif match_pct >= SECONDARY_FLOOR:
-        category = "Secondary"
-    else:
-        return None
+    gate("secondary_floor", f"score {match_pct}% < {SECONDARY_FLOOR}%" if match_pct < SECONDARY_FLOOR else '')
+    category = "Strong" if match_pct >= STRONG_FLOOR else "Secondary"
 
     unique_reasons = list(dict.fromkeys(reasons))
     reason_str = ", ".join(unique_reasons) if unique_reasons else f"Matches skills: {', '.join(matched_strengths[:3])}"
@@ -864,6 +991,26 @@ def _dedupe_by_role(entries):
     return deduped
 
 
+DROP_EXAMPLES = 3
+
+
+def record_drop(drops, job, rejection, stage="Stage 3"):
+    """Tally one rejection in `drops` (rule key -> {rule, label, stage, count, examples})."""
+    rule = rejection["rejected_by"]
+    entry = drops.setdefault(rule, {"rule": rule, "label": DROP_RULES.get(rule, rule), "stage": stage,
+                                    "count": 0, "examples": []})
+    entry["count"] += 1
+    if len(entry["examples"]) < DROP_EXAMPLES:
+        entry["examples"].append({"company": str(job.get("company") or "Unknown").strip(),
+                                  "title": job.get("title") or "Unknown Role",
+                                  "url": job.get("url", "#"), "detail": rejection["detail"]})
+
+
+def drop_funnel(drops):
+    """The tallied drops as a list, largest first."""
+    return sorted(drops.values(), key=lambda d: d["count"], reverse=True)
+
+
 def evaluate_jobs(input_path, output_path=None):
     if not os.path.exists(input_path):
         raise FileNotFoundError(f"Input file not found: {input_path}")
@@ -877,10 +1024,12 @@ def evaluate_jobs(input_path, output_path=None):
     evaluated_matches = []
     manual_reviews = []
     location_filtered = []
+    drops = {}
 
     for j in jobs:
-        res = evaluate_single_job(j)
+        res, rejection = evaluate_job_traced(j)
         if not res:
+            record_drop(drops, j, rejection)
             continue
         if res["category"] != "Manual Review":
             blocked_by = jd_logistics_block(j)
@@ -932,12 +1081,14 @@ def evaluate_jobs(input_path, output_path=None):
         "top_matches": evaluated_matches,
         "manual_reviews": manual_reviews,
         "location_filtered": location_filtered,
+        "dropped_by_rule": drop_funnel(drops),
     }
 
     if output_path:
         atomic_write_json(output_path, result)
         print(f"Evaluated {len(jobs)} jobs. Top matches: {len(evaluated_matches)}, Manual reviews: {len(manual_reviews)}, "
-              f"dropped for onsite/hybrid/ineligible location wording: {len(location_filtered)}.")
+              f"dropped for onsite/hybrid/ineligible location wording: {len(location_filtered)}, "
+              f"dropped by deterministic rules: {sum(d['count'] for d in drops.values())}.")
 
     return result
 
@@ -1003,6 +1154,23 @@ def generate_markdown(result, limit=25):
         for r in location_filtered:
             phrase = r['phrase'].replace('|', '/')[:140]
             lines.append(f"| {_cell(r['company'])} | {_cell(r['title'])} | {r['score']}% | \"{phrase}\" | [Apply]({r['url']}) |")
+
+    funnel = [*result.get("prefilter_drops", []), *result.get("dropped_by_rule", [])]
+    if funnel:
+        lines.extend([
+            "",
+            "<details><summary>Dropped by Deterministic Rules "
+            f"({sum(d['count'] for d in funnel)})</summary>",
+            "",
+            "| Stage | Rule | Count | Example |",
+            "|---|---|---|---|"
+        ])
+        for d in funnel:
+            ex = (d.get("examples") or [None])[0]
+            example = (f"[{_cell(ex['company'])} · {_cell(ex['title'])}]({ex['url']}): {_cell(ex['detail'])[:120]}"
+                       if ex else "")
+            lines.append(f"| {_cell(d.get('stage', ''))} | {_cell(d['label'])} | {d['count']} | {example} |")
+        lines.extend(["", "</details>"])
 
     health = result.get("source_health")
     if health:

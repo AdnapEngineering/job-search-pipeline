@@ -228,23 +228,31 @@ def _salary_from_row(sal_min, sal_max):
     return None
 
 
+def _dropped(counts, reason):
+    """Tally a Stage 1 drop reason (a filter.PREFILTER_RULES key, or "keyword_score") in counts["dropped"]."""
+    if counts is not None:
+        dropped = counts.setdefault("dropped", {})
+        dropped[reason] = dropped.get(reason, 0) + 1
+    return None
+
+
 def _row_to_job(row, counts=None):
     """Convert one jobspy row to a pipeline job dict, or None when it fails filters.
-    `counts` (optional dict) tallies rows dropped for a flat onsite requirement."""
+    `counts` (optional dict) tallies rows dropped for a flat onsite requirement, and every drop by reason."""
     direct = row.get("job_url_direct")
     url = (normalize_url(direct) if isinstance(direct, str) and direct and not is_aggregator_url(direct)
            else row.get("job_url"))
     if not url:
-        return None
+        return _dropped(counts, "no_url")
 
     title = str(row.get("title") or "")
     desc = str(row.get("description") or "")
 
     if not is_valid_jobspy_title(title):
-        return None
+        return _dropped(counts, "title")
     company = str(row.get("company")) if pd.notna(row.get("company")) else ""
     if company and not is_valid_company(company):
-        return None
+        return _dropped(counts, "company")
 
     raw_loc = str(row.get("location") or "")
     row_remote = row.get("is_remote")
@@ -252,7 +260,7 @@ def _row_to_job(row, counts=None):
     if not is_valid_jobspy_location(raw_loc, desc, remote_flag):
         if counts is not None and not is_local_metro(raw_loc) and remote_evidence(raw_loc, desc, remote_flag) == "onsite":
             counts["onsite_dropped"] = counts.get("onsite_dropped", 0) + 1
-        return None
+        return _dropped(counts, "location")
     evidence = "local" if is_local_metro(raw_loc) else remote_evidence(raw_loc, desc, remote_flag)
 
     sal_min = row.get("min_amount")
@@ -260,13 +268,13 @@ def _row_to_job(row, counts=None):
     if MIN_SALARY > 0 and pd.notna(sal_max):
         try:
             if float(sal_max) < MIN_SALARY:
-                return None
+                return _dropped(counts, "salary")
         except (TypeError, ValueError):
             pass
 
     score, reasons = score_job(title, desc)
     if score == 0:
-        return None
+        return _dropped(counts, "keyword_score")
 
     return {
         "title": title,
@@ -320,7 +328,8 @@ def _scrape_site(site, lookback_hours, terms):
         logger.removeHandler(counter)
         cache_hits = finish_cache()
     return jobs, {"raw": raw, "kept": len(jobs), "failed_queries": failed,
-                  "onsite_dropped": counts.get("onsite_dropped", 0), "errors": counter.count, "rate_limited": counter.rate_limited, "cached_details": cache_hits}
+                  "onsite_dropped": counts.get("onsite_dropped", 0), "errors": counter.count, "rate_limited": counter.rate_limited, "cached_details": cache_hits,
+                  "dropped": counts.get("dropped", {})}
 
 
 def fetch_indeed_jobs(lookback_hours=LOOKBACK_DAYS * 24, stats=None, terms=None):

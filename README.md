@@ -60,6 +60,7 @@ Every other setting keeps its built-in default; [`config.example.json`](config.e
    - [AI review spend and caps](#ai-review-spend-and-caps)
 - [Running it](#running-it)
    - [Flags](#flags)
+   - [Why was a posting dropped?](#why-was-a-posting-dropped)
    - [Obsidian](#obsidian)
    - [Without Notion](#without-notion)
    - [HTML digest](#html-digest)
@@ -197,7 +198,16 @@ cp candidate_profile.example.md candidate_profile.md
 
 Run the pipeline (and cron) straight from your clone: `config.json`, `candidate_profile.md`, `.env`, `data/`, the log and the summary are all ignored by git, so `git pull` updates the code and leaves them alone. To keep extra personal files in the clone (your own scripts or notes), list them in `.git/info/exclude`, which works like `.gitignore` but is never committed.
 
-Edit the copies, not the templates: see [Configuration](#configuration). Until `config.json` exists the pipeline runs on the template's placeholder values and prints a reminder. Until `candidate_profile.md` exists the AI review is skipped (the placeholder profile is never sent to the LLM) and matches are output on their keyword scores.
+Edit the copies, not the templates: see [Configuration](#configuration).
+
+To skip most of the hand-editing, write `candidate_profile.md` first and let the AI reviewer's CLI draft the career-specific settings from it, optionally reading up to three postings you would want:
+
+```bash
+python3 -m job_search_pipeline --init-config                       # from candidate_profile.md alone
+python3 -m job_search_pipeline --init-config URL1 URL2 URL3        # also learn from sample postings
+```
+
+It fills in `sources.search_terms`, the title patterns, `core_strengths` and their weights, `focus_keywords`, `hard_exclude_skills`, `max_min_yoe`, the AI review's `calibration_examples` and, when the profile says where you live, the location settings, on top of `config.starter.json`. Each field is type-checked and every regex compiled before anything is written; invalid ones are dropped and listed. The draft goes to `config.draft.json` (ignored by git), never over your `config.json`: review it, copy it over or merge in the parts you want, and run `--check`, which flags anything still at a placeholder (`sources.searches` always needs your city). It makes one call to the [configured provider](#ai-reviewer), with up to 10 minutes to answer. Until `config.json` exists the pipeline runs on the template's placeholder values and prints a reminder. Until `candidate_profile.md` exists the AI review is skipped (the placeholder profile is never sent to the LLM) and matches are output on their keyword scores.
 
 ### Environment variables
 
@@ -412,6 +422,8 @@ python3 -m job_search_pipeline --no-llm-review --min-score 75
 | Flag | Description |
 | :--- | :--- |
 | `--check` | Check the setup and exit without running (same as `python3 -m job_search_pipeline.check`); see [Checking the setup](#checking-the-setup). |
+| `--explain URL` | Trace one posting through the Stage 1 filters, every Stage 3 rule and the score breakdown, then exit; see [Why was a posting dropped?](#why-was-a-posting-dropped). `--title`, `--company` and `--location` fill in a posting the pipeline has not seen; `--rescrape` fetches its description again. |
+| `--init-config [URL ...]` | Draft the career-specific settings from `candidate_profile.md` (and up to 3 sample postings) with the AI reviewer's CLI, write them to `config.draft.json`, then exit; see [Your config and profile](#your-config-and-profile). `--init-output PATH` writes elsewhere; `--force` overwrites an existing file there. |
 | `--skip-fetch` | Skip Stage 1 (`sources/filter.py`) and reuse `data/filtered_jobs.json`. |
 | `--skip-scrape` | Skip Stage 2 (`scrape.py`) and reuse `data/enriched_jobs.json`. |
 | `--no-llm-review` | Skip Stage 4 (`review.py`) and keep Stage 3 keyword scores. |
@@ -428,6 +440,18 @@ python3 -m job_search_pipeline --no-llm-review --min-score 75
 | `--no-txt-export` | Skip exporting matches to a `.txt` file even when enabled in `config.json`. Cannot be combined with `--txt-output`. |
 | `--html-output PATH` | Write the HTML digest to `PATH` (overrides `html_digest` in `config.json`). |
 | `--no-html` | Skip the HTML digest even when enabled in `config.json`. Cannot be combined with `--html-output`. |
+
+### Why was a posting dropped?
+
+Every run counts what each deterministic rule dropped: the Stage 1 pre-filters per source (title, location, company, pay and, for LinkedIn/Indeed, the keyword gate) and every Stage 3 rule (seniority, title, feed location, missing JD location, `hard_exclude_skills`, `avoid_keywords`, `conditional_require_any`, clearance, language, `specialty_reject_rules`, `max_min_yoe`, `max_min_secondary_yoe`, `off_center_role_check`, `max_senior_role_years`, and scoring under `secondary_floor`). The HTML digest shows this as a collapsed **Dropped by deterministic rules** table, and `--md-output` as a collapsible section, each with the count per rule and an example posting with the exact phrase that matched. A rule dropping far more than you expect is the first place to look when matches dry up. Stage 3 counts cover every posting in the lookback window, so a posting is counted again on each run it stays in the window. Stage 1 leaves out the ATS feed's rows older than `lookback_days`, which are most of the feed's archive.
+
+To see exactly why one posting was dropped or scored as it was:
+
+```bash
+python3 -m job_search_pipeline --explain 'https://jobs.lever.co/acme/123'
+```
+
+It prints each Stage 1 filter and Stage 3 rule with ✓ or ✗ and what matched, then the score line by line (base, title credit, each core strength and domain term with its points, each penalty) and the tier it lands in. For a dropped posting it also shows what it would have scored without the rule that dropped it, which tells you whether loosening that rule would let a good match through. A posting that passes goes on to the location-wording check and the blocklist. The posting's company, title and location come from `data/enriched_jobs.json` or `data/filtered_jobs.json` when the pipeline has seen it; for a new one the company is guessed from the URL and `--title` / `--location` fill in the rest. Quote the URL, since shells treat `?` and `&` specially. It reads your current `config.json`, so you can edit a rule and run it again to see the effect.
 
 ### Obsidian
 
@@ -520,7 +544,7 @@ Each run appends a timestamped block containing only matches at or above `--min-
 
 Roles are matched by `company|title`, and also by JD text plus title, so the same posting under another company name (a brand and its parent, a reposter) is one role. Exported roles are added to the same URL and role blocklists (`data/blocklist.json`, `data/blocklist_roles.json`) that Notion sync uses, so a role is written once and reposts on other boards are skipped. If Notion or Obsidian is also active, that output handles the blocklisting instead, so a role that fails to reach it is retried on the next run (and may appear in the `.txt` again). To re-export everything from scratch, delete those two blocklist files.
 
-For other formats, `--md-output PATH` writes the full Markdown table (matches, manual reviews, AI skips, location drops), overwritten each run. `data/evaluated_jobs.json` holds the raw Stage 3 results as JSON for custom integrations.
+For other formats, `--md-output PATH` writes the full Markdown table (matches, manual reviews, AI skips, location drops, drop counts per rule), overwritten each run. `data/evaluated_jobs.json` holds the raw Stage 3 results as JSON for custom integrations.
 
 ### HTML digest
 
@@ -530,7 +554,7 @@ Every run writes `data/digest.html`, a single page with no external scripts that
 xdg-open data/digest.html   # macOS: open data/digest.html
 ```
 
-It lists matches in three groups: **New this run**, **Still open** (seen before and again now), and **Earlier** (no longer in the run because the posting closed, was reposted, or was already sent to Notion or the `.txt` export; kept for `keep_days`). Each card shows the Match %, the AI verdict and reason, the gaps, and badges for third-party posters, roles already in Notion, and held reviews. Search, a minimum-match filter and a "hide third-party" toggle sit at the top. Below the matches are this run's AI-filtered roles, location drops and failed scrapes, plus source counts, source warnings and AI review spend.
+It lists matches in three groups: **New this run**, **Still open** (seen before and again now), and **Earlier** (no longer in the run because the posting closed, was reposted, or was already sent to Notion or the `.txt` export; kept for `keep_days`). Each card shows the Match %, the AI verdict and reason, the gaps, and badges for third-party posters, roles already in Notion, and held reviews. Search, a minimum-match filter and a "hide third-party" toggle sit at the top. Below the matches are this run's AI-filtered roles, location drops, failed scrapes and the [drop counts per rule](#why-was-a-posting-dropped), plus source counts, source warnings and AI review spend.
 
 **Mark applied** and **Hide** remember your choice in that browser only (local storage); they do not change the pipeline's blocklists. The matches behind the page are kept in `paths.digest_store` (`data/digest_matches.json`), so the page keeps matches from earlier runs even though each run only finds new ones.
 
@@ -584,6 +608,9 @@ Almost all of it is the LinkedIn and Indeed searches (one per search term per en
 
 **Is there a shorter command?**
 `pip install -e .` adds `job-search`, which takes the same flags as `python3 -m job_search_pipeline`.
+
+**A posting I expected never showed up.**
+Run `python3 -m job_search_pipeline --explain 'URL'`: it names the rule that dropped it, the phrase that matched, and what it would have scored otherwise. See [Why was a posting dropped?](#why-was-a-posting-dropped).
 
 **I changed `config.json`; do I have to fetch again?**
 No: `--skip-fetch --skip-scrape` re-evaluates the jobs already in `data/enriched_jobs.json`, and cached AI reviews are rescored under the new settings for free.
@@ -798,6 +825,7 @@ Your own files sit next to these, ignored by git: `config.json`, `candidate_prof
 | [`config.starter.json`](config.starter.json) | Minimal starting config: only the career-specific settings, as placeholders (`cp config.starter.json config.json`). |
 | [`config.example.json`](config.example.json) | Tracked template for the career-agnostic configuration (sources, locations, pay, titles, skills, LLM rubric). |
 | `config.json` | Your own copy of the template, ignored by git; this is the file the pipeline reads and the one you edit. |
+| `config.draft.json` | Written by `--init-config` for you to review, ignored by git; the pipeline never reads it. |
 | [`candidate_profile.example.md`](candidate_profile.example.md) | Tracked template for the candidate profile. |
 | `candidate_profile.md` | Your own copy of the template, ignored by git; read by `review.py` during Stage 4 rubric grading. |
 | [`pyproject.toml`](pyproject.toml) | Package metadata (dependencies come from `requirements.txt`), the optional `job-search` command for `pip install -e .`, and ruff settings. |
@@ -810,6 +838,8 @@ Your own files sit next to these, ignored by git: `config.json`, `candidate_prof
 | :--- | :--- |
 | [`__main__.py`](job_search_pipeline/__main__.py) | Entry point for `python3 -m job_search_pipeline`. |
 | [`pipeline.py`](job_search_pipeline/pipeline.py) | End-to-end orchestrator and CLI flags, source-health monitor, pre-LLM blocklist filter, and notifier. |
+| [`explain.py`](job_search_pipeline/explain.py) | `--explain URL`: traces one posting through the Stage 1 filters, the Stage 3 rules and the score breakdown. |
+| [`init_config.py`](job_search_pipeline/init_config.py) | `--init-config`: drafts the career-specific settings from `candidate_profile.md` with the AI reviewer's CLI and validates them into `config.draft.json`. |
 | [`check.py`](job_search_pipeline/check.py) | Setup check (`--check`): dependencies, config typos and placeholders, profile, AI reviewer CLI, Notion database properties, Obsidian vault, outputs. |
 | [`config.py`](job_search_pipeline/config.py) | Central loader for `config.json`, path resolution (relative `paths` entries resolve from the repository root), shared JSON read/atomic-write helpers, and regex compilation helpers. |
 | [`blocklist.py`](job_search_pipeline/blocklist.py) | Shared dedup state: `company\|title` role keys plus the URL and role blocklists used by every stage. |

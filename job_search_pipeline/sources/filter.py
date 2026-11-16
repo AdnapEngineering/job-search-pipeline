@@ -9,6 +9,7 @@ import gzip
 import json
 import re
 import sys
+from collections import Counter
 from datetime import datetime, timedelta, timezone
 
 import aiohttp
@@ -172,21 +173,31 @@ def is_valid_location(loc, remote_flag=False):
     return is_local_metro(loc_lower)
 
 
-def is_valid_title(title):
+def title_reject_reason(title):
+    """Why the title rules drop a title (naming the config key), or '' when it passes."""
     t = (title or "").lower()
 
-    if any(p.search(t) for p in _EXCLUDE_TECH_PATTERNS):
-        return False
+    tech = next((p for p in _EXCLUDE_TECH_PATTERNS if p.search(t)), None)
+    if tech:
+        return f'matches titles.exclude_tech_patterns "{tech.pattern}"'
 
     if _TITLE_ONSITE_RE.search(t) and 'remote' not in t and not is_local_metro(t):
-        return False
+        return 'title says hybrid/onsite/in-office and names neither remote nor the local metro'
 
     strong = STRONG_TARGET_RE.search(t)
-    if any(p.search(t) and not (strong and p.pattern in _SOFT_ROLE_EXCLUDES)
-           for p in _EXCLUDE_ROLE_PATTERNS):
-        return False
+    role = next((p for p in _EXCLUDE_ROLE_PATTERNS
+                 if p.search(t) and not (strong and p.pattern in _SOFT_ROLE_EXCLUDES)), None)
+    if role:
+        key = 'soft_exclude_role_patterns' if role.pattern in _SOFT_ROLE_EXCLUDES else 'exclude_role_patterns'
+        return f'matches titles.{key} "{role.pattern}"'
 
-    return bool(strong or any(p.search(t) for p in _TARGET_PATTERNS))
+    if strong or any(p.search(t) for p in _TARGET_PATTERNS):
+        return ''
+    return 'matches none of titles.target_patterns / strong_target_patterns'
+
+
+def is_valid_title(title):
+    return not title_reject_reason(title)
 
 
 def is_valid_salary(job):
@@ -219,14 +230,38 @@ def is_valid_company(company):
     return True
 
 
-def passes_filters(job):
+# Stage 1 drop reasons, in the order passes_filters checks them, with the config they come from
+PREFILTER_RULES = {
+    "no_url": "No posting URL",
+    "not_recent": "Older than sources.lookback_days",
+    "company": "Company excluded (companies.exclude_companies / exclude_recruiters)",
+    "location": "Location not remote or local metro (location.*)",
+    "title": "Title rules (titles.*)",
+    "salary": "Top of pay band under compensation.min_salary",
+    "keyword_score": "No target-title or skill signal (LinkedIn/Indeed keyword gate)",
+}
+
+
+def filter_reason(job):
+    """The PREFILTER_RULES key of the first Stage 1 filter that drops `job`, or None when it passes."""
     # Cheapest checks first: the recency window alone drops most of the ~1.4M feed rows
-    return bool(job.get('url')
-                and is_recent(job.get('first_seen'))
-                and is_valid_company(job.get('company'))
-                and is_valid_location(job.get('location', ''), job.get('remote') is True)
-                and is_valid_title(job.get('title', ''))
-                and is_valid_salary(job))
+    if not job.get('url'):
+        return "no_url"
+    if not is_recent(job.get('first_seen')):
+        return "not_recent"
+    if not is_valid_company(job.get('company')):
+        return "company"
+    if not is_valid_location(job.get('location', ''), job.get('remote') is True):
+        return "location"
+    if not is_valid_title(job.get('title', '')):
+        return "title"
+    if not is_valid_salary(job):
+        return "salary"
+    return None
+
+
+def passes_filters(job):
+    return filter_reason(job) is None
 
 
 def _ats_index_rows(jobs):
@@ -277,12 +312,19 @@ def link_ats_postings(jobs, ats_index):
 
 def _filter_chunk(data):
     jobs = json.loads(gzip.decompress(data))
-    return len(jobs), [j for j in jobs if passes_filters(j)], _ats_index_rows(jobs)
+    kept, dropped = [], Counter()
+    for j in jobs:
+        reason = filter_reason(j)
+        if reason is None:
+            kept.append(j)
+        else:
+            dropped[reason] += 1
+    return len(jobs), kept, _ats_index_rows(jobs), dropped
 
 
 async def fetch_chunk(session, semaphore, url):
-    """Download one gzipped chunk and return (rows fetched, rows that pass filters, ATS index rows),
-    or None when the download fails, so the full feed is never held in memory at once."""
+    """Download one gzipped chunk and return (rows fetched, rows that pass filters, ATS index rows,
+    Counter of drop reasons), or None when the download fails, so the full feed is never held in memory at once."""
     async with semaphore:
         try:
             async with session.get(url, timeout=HTTP_TIMEOUT) as response:
@@ -320,17 +362,19 @@ async def fetch_github_feed(stats):
 
     failed_chunks = sum(1 for r in results if r is None)
     results = [r for r in results if r is not None]
-    fetched = sum(n for n, _, _ in results)
+    fetched = sum(r[0] for r in results)
     print(f"Total jobs fetched: {fetched}" + (f" ({failed_chunks} chunks failed)" if failed_chunks else ""))
 
-    filtered = [job for _, kept, _ in results for job in kept]
-    ats_index = build_ats_index(row for _, _, rows in results for row in rows)
+    filtered = [job for _, kept, _, _ in results for job in kept]
+    ats_index = build_ats_index(row for _, _, rows, _ in results for row in rows)
+    dropped = sum((d for _, _, _, d in results), Counter())
     print(f"Total jobs after filtering: {len(filtered)}")
     stats["github_feed"] = {
         "fetched": fetched,
         "kept": len(filtered),
         "chunks": len(chunks),
         "failed_chunks": failed_chunks,
+        "dropped": dict(dropped.most_common()),
         "last_updated": manifest.get("last_updated"),
     }
     return filtered, ats_index

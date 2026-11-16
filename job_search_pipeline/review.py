@@ -396,7 +396,7 @@ def priced_usd(usage, provider=None):
             + usage["output"] * float(rate_out)) / 1_000_000
 
 
-def _cli_response(executable, provider, model, prompt):
+def _cli_response(executable, provider, model, prompt, timeout=None):
     """Run a CLI in an empty directory; returns (final response text, usage dict or None)."""
     if provider == "agy":
         command = [executable, "-p", prompt, "--model", model, "--output-format", "json"]
@@ -414,7 +414,7 @@ def _cli_response(executable, provider, model, prompt):
         raise ValueError("unsupported CLI provider")
     with tempfile.TemporaryDirectory() as cwd:
         result = subprocess.run(command, input=stdin, capture_output=True, text=True,
-                                timeout=TIMEOUT_SECONDS, cwd=cwd)
+                                timeout=timeout or TIMEOUT_SECONDS, cwd=cwd)
     if result.returncode != 0:
         raise RuntimeError(f"CLI exited with code {result.returncode}")
     if provider == "openai":

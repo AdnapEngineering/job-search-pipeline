@@ -19,6 +19,7 @@ from job_search_pipeline.outputs.notion import (DEFAULT_DB_ID, log_run_summary_t
 from job_search_pipeline.outputs.obsidian import (OBSIDIAN_ENABLED, VAULT_PATH, log_run_summary_to_obsidian,
                                                   sync_jobs_to_obsidian)
 from job_search_pipeline.outputs.text_export import TEXT_EXPORT_ENABLED, TEXT_EXPORT_PATH, export_jobs_to_text
+from job_search_pipeline.sources.filter import PREFILTER_RULES
 
 FILTERED_JOBS = get_path("filtered_jobs", "data/filtered_jobs.json")
 ENRICHED_JOBS = get_path("enriched_jobs", "data/enriched_jobs.json")
@@ -83,6 +84,23 @@ def source_health(path=SOURCE_STATS_PATH):
     return {"line": "Sources (postings that passed filters): " + " · ".join(parts), "warnings": warnings}
 
 
+def prefilter_drops(path=SOURCE_STATS_PATH):
+    """Stage 1 drop counts per source and rule from the last fetch, shaped like evaluate's dropped_by_rule.
+    Rows outside the recency window are left out: in the ATS feed they are its whole archive (over a million
+    rows a run), which says nothing about whether a filter is too aggressive."""
+    stats = load_json(path)
+    if not isinstance(stats, dict):
+        return []
+    drops = []
+    for key, label in [("github_feed", "GitHub feed"), *_SOURCE_LABELS]:
+        for rule, count in ((stats.get(key) or {}).get("dropped") or {}).items():
+            if rule in ("not_recent", "no_url"):
+                continue
+            drops.append({"rule": rule, "label": PREFILTER_RULES.get(rule, rule), "stage": f"Stage 1 · {label}",
+                          "count": count, "examples": []})
+    return sorted(drops, key=lambda d: d["count"], reverse=True)
+
+
 def send_notification(title: str, message: str, priority: int = PRIORITY_DEFAULT, click: str = ""):
     notify_url = os.getenv("NOTIFY_URL") or _NOTIF_CFG.get("notify_url") or CFG.get("notify_url")
     if not notify_url:
@@ -141,6 +159,19 @@ def parse_args(argv=None):
                                      description="End-to-End Automated Job Search Pipeline")
     parser.add_argument("--check", action="store_true",
                         help="Check the setup (config, profile, AI reviewer, Notion, Obsidian, outputs) and exit without running")
+    parser.add_argument("--explain", metavar="URL", default=None,
+                        help="Trace one posting through the filters, rules and score breakdown, then exit")
+    parser.add_argument("--title", default=None, help="With --explain: the posting's title, for one not seen yet")
+    parser.add_argument("--company", default=None, help="With --explain: the company (guessed from the URL otherwise)")
+    parser.add_argument("--location", default=None, help="With --explain: the posting's location")
+    parser.add_argument("--rescrape", action="store_true",
+                        help="With --explain: fetch the description again even if it is saved")
+    parser.add_argument("--init-config", nargs="*", metavar="SAMPLE_URL", default=None,
+                        help="Draft a config from candidate_profile.md (and up to 3 sample postings you would "
+                             "want) with the AI reviewer's CLI, write it to config.draft.json, then exit")
+    parser.add_argument("--init-output", metavar="PATH", default=None,
+                        help="With --init-config: where to write the draft (default config.draft.json)")
+    parser.add_argument("--force", action="store_true", help="With --init-config: overwrite --init-output if it exists")
     parser.add_argument("--skip-fetch", action="store_true", help="Skip fetching and filtering step")
     parser.add_argument("--skip-scrape", action="store_true", help="Skip batch scraping JD step")
     parser.add_argument("--no-notion", action="store_true", help="Skip syncing to Notion")
@@ -311,6 +342,8 @@ def run(args):
     eval_results = evaluate_jobs(ENRICHED_JOBS, EVALUATED_JOBS)
     eval_results.setdefault("top_matches", [])
     health = None if args.skip_fetch else source_health()
+    if not args.skip_fetch:
+        eval_results["prefilter_drops"] = prefilter_drops()
     if health:
         eval_results["source_health"] = health
         print(health["line"])
@@ -403,6 +436,13 @@ def main():
     if args.check:
         from job_search_pipeline.check import run_checks
         sys.exit(run_checks())
+    if args.explain:
+        from job_search_pipeline.explain import explain
+        sys.exit(explain(args.explain, title=args.title, company=args.company, location=args.location,
+                         rescrape=args.rescrape))
+    if args.init_config is not None:
+        from job_search_pipeline.init_config import init_config
+        sys.exit(init_config(args.init_config, output=args.init_output, force=args.force))
     try:
         run(args)
     except Exception as e:

@@ -55,7 +55,7 @@ class RemoteEvidenceTests(unittest.TestCase):
                "location": "Austin, TX", "is_remote": True, "site": "linkedin",
                "description": "React and TypeScript. This role is 100% onsite in Austin."}
         self.assertIsNone(fi._row_to_job(row, counts))
-        self.assertEqual(counts, {"onsite_dropped": 1})
+        self.assertEqual(counts, {"onsite_dropped": 1, "dropped": {"location": 1}})
 
 
 class StackDetectionTests(unittest.TestCase):
