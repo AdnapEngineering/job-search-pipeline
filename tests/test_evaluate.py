@@ -83,6 +83,31 @@ class RemoteRestrictionTests(unittest.TestCase):
         self.assertFalse(self.blocked("You must be based in the Mountain or Pacific time zones."))
         self.assertFalse(self.blocked("We collaborate during Eastern time business hours."))
 
+    def test_time_zone_abbreviations(self):
+        self.assertTrue(self.blocked("Candidates must be located in the EST time zone."))
+        self.assertTrue(self.blocked("This role is restricted to ET or CT."))
+        self.assertTrue(self.blocked("You must be based in PST."))
+        self.assertFalse(self.blocked("Must reside in PST or MST."))
+        self.assertFalse(self.blocked("Must reside in the MST time zone."))
+
+    def test_mt_and_ct_read_as_time_zones_when_listed_as_zones(self):
+        # MT and CT are also Montana and Connecticut; zone context sends them to the time zone rule
+        self.assertFalse(self.blocked("You must be based in CT, MT, or PT."))
+        self.assertFalse(self.blocked("Must be located in CT time zone or MT time zone."))
+        self.assertTrue(self.blocked("Must be located in CT time zone or ET time zone."))
+        self.assertTrue(self.blocked("You must be based in CT or ET."))
+        # Without zone context they are still states (and CT excludes the candidate either way)
+        self.assertTrue(self.blocked("Applicants must reside in CT or NY."))
+        self.assertTrue(self.blocked("Must be located in CT."))
+
+    def test_working_hours_time_zone_is_not_residency(self):
+        self.assertFalse(self.blocked("We are considering candidates from US and Canada only (EST time zone)."))
+        self.assertFalse(self.blocked("You will work EST hours."))
+        self.assertFalse(self.blocked("Must be located in the US and able to overlap with ET business hours."))
+        self.assertFalse(self.blocked("Located in EST hours overlap is required."))
+        # Lower-case words are not zone abbreviations
+        self.assertFalse(self.blocked("Must be based in pt-BR locales."))
+
     def test_rules_are_off_without_a_configured_home(self):
         with unittest.mock.patch.object(ev, "_HOME_STATES", set()), \
                 unittest.mock.patch.object(ev, "_HOME_TIMEZONES", set()):
