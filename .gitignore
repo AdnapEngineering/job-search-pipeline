@@ -8,5 +8,6 @@ candidate_profile.md
 __pycache__/
 *.py[cod]
 cron_job_search.log
+cron_job_search.log.tmp
 latest_job_summary.md
 data/

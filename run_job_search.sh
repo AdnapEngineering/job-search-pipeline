@@ -47,6 +47,12 @@ else
   trap 'rm -rf "$LOCK_DIR"' EXIT
 fi
 
+# Keep the log bounded: past JOB_SEARCH_LOG_MAX_BYTES (default 5 MB), keep its newest half, from a line start
+LOG_MAX_BYTES="${JOB_SEARCH_LOG_MAX_BYTES:-5242880}"
+if [ "$LOG_MAX_BYTES" -gt 0 ] && [ -f "$LOG_FILE" ] && [ "$(( $(wc -c < "$LOG_FILE") ))" -gt "$LOG_MAX_BYTES" ]; then
+  tail -c "$(( LOG_MAX_BYTES / 2 ))" "$LOG_FILE" | tail -n +2 > "${LOG_FILE}.tmp" && mv "${LOG_FILE}.tmp" "$LOG_FILE"
+fi
+
 echo "==========================================" | tee -a "$LOG_FILE"
 echo "Job Search Pipeline Started: $(date '+%Y-%m-%d %H:%M:%S')" | tee -a "$LOG_FILE"
 echo "==========================================" | tee -a "$LOG_FILE"
