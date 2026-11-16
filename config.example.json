@@ -474,6 +474,13 @@
     "summary_page_id": "",
     "summary_block_id": ""
   },
+  "obsidian": {
+    "enabled": false,
+    "vault_path": "",
+    "folder": "Job Prospects",
+    "summary_note": "Job Search Run Summary",
+    "tag": "job-prospect"
+  },
   "text_export": {
     "enabled": false
   },

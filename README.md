@@ -30,7 +30,7 @@ xdg-open data/digest.html            # macOS: open data/digest.html
 - **`skills_and_scoring`:** your skills (`core_strengths`), weighted domain terms (`focus_keywords`) and skills that rule a job out (`hard_exclude_skills`).
 - **`compensation.min_salary` / `experience.max_min_yoe`:** the pay floor and the most years of experience a posting may ask for.
 
-Every other setting keeps its built-in default; [`config.example.json`](config.example.json) lists them all with what they do (see [Configuring for Another Career](#4-configuring-for-another-career-configjson--candidate_profilemd)). Next steps: write [`candidate_profile.md`](#step-1-edit-candidate_profilemd) and [choose an LLM provider](#choose-an-llm-provider) for the AI review, add [Notion and ntfy](#set-up-environment-variables), and [schedule it with cron](#automate-with-cron).
+Every other setting keeps its built-in default; [`config.example.json`](config.example.json) lists them all with what they do (see [Configuring for Another Career](#4-configuring-for-another-career-configjson--candidate_profilemd)). Next steps: write [`candidate_profile.md`](#step-1-edit-candidate_profilemd) and [choose an LLM provider](#choose-an-llm-provider) for the AI review, add [Notion](#set-up-environment-variables) or [Obsidian](#write-matches-to-an-obsidian-vault) and [ntfy](#set-up-environment-variables), and [schedule it with cron](#automate-with-cron).
 
 ---
 
@@ -100,14 +100,14 @@ Every other setting keeps its built-in default; [`config.example.json`](config.e
 └─────────────────────────────────────┬──────────────────────────────────────┘
                                       ▼
 ┌────────────────────────────────────────────────────────────────────────────┐
-│ 5. Output, Summary & Notifications (outputs/: notion.py, text_export.py,   │
-│    html_digest.py)                                                         │
+│ 5. Output, Summary & Notifications (outputs/: notion.py, obsidian.py,      │
+│    text_export.py, html_digest.py)                                         │
 │    • Rewrites data/digest.html, a self-contained page of matches.          │
-│    • Syncs qualified matches (>= min_score) to a Notion database and/or    │
-│      appends them to a plain .txt log for any other documentation tool.    │
+│    • Syncs qualified matches (>= min_score) to a Notion database, writes   │
+│      them as notes in an Obsidian vault, and/or appends them to a .txt log.│
 │    • Appends output URLs and company|title keys to persistent blocklists.  │
-│    • Updates a Notion Callout dashboard block, saves Markdown summary,     │
-│      and sends a push notification with source-health warnings.            │
+│    • Updates the Notion Callout / Obsidian summary note, saves Markdown    │
+│      summary, and sends a push notification with source-health warnings.   │
 └────────────────────────────────────────────────────────────────────────────┘
 ```
 
@@ -484,8 +484,11 @@ python3 -m job_search_pipeline --no-llm-review --min-score 75
 | `--no-llm-review` | Skip Stage 4 (`review.py`) and keep Stage 3 keyword scores. |
 | `--no-notion` | Skip syncing matches to Notion. |
 | `--no-notion-log` | Skip updating the Notion parent-page Callout summary block. |
+| `--obsidian-vault PATH` | Write new matches as notes in the Obsidian vault at `PATH` (overrides `obsidian` in `config.json`). |
+| `--no-obsidian` | Skip the Obsidian notes even when enabled in `config.json`. Cannot be combined with `--obsidian-vault`. |
+| `--no-obsidian-log` | Write the Obsidian notes but skip rewriting the run-summary note. |
 | `--no-notify` | Skip sending the `ntfy` push notification. |
-| `--min-score INT` | Minimum Match % to sync to Notion / export to `.txt` (defaults to `skills_and_scoring.min_sync_score`, `80`). |
+| `--min-score INT` | Minimum Match % to sync to Notion / Obsidian / export to `.txt` (defaults to `skills_and_scoring.min_sync_score`, `80`). |
 | `--review-min-score INT` | Minimum Stage 3 keyword score to send to LLM review (defaults to `55`). |
 | `--md-output PATH` | Write a Markdown summary table of matches, manual reviews, and skips to `PATH`. |
 | `--txt-output PATH` | Append new qualified matches to `PATH` (overrides `text_export` in `config.json`). |
@@ -493,9 +496,52 @@ python3 -m job_search_pipeline --no-llm-review --min-score 75
 | `--html-output PATH` | Write the HTML digest to `PATH` (overrides `html_digest` in `config.json`). |
 | `--no-html` | Skip the HTML digest even when enabled in `config.json`. Cannot be combined with `--html-output`. |
 
+### Write Matches to an Obsidian Vault
+
+Instead of (or as well as) Notion, the pipeline can write each new match as a note in an Obsidian vault. The vault is just a folder, so Obsidian doesn't need to be running, and the notes sync like any others (Obsidian Sync, iCloud, Syncthing, git).
+
+Enable it in `config.json` (ideal for cron), or set `OBSIDIAN_VAULT` in `.env` in place of `vault_path`:
+
+```json
+"obsidian": {
+  "enabled": true,
+  "vault_path": "~/Documents/MyVault",
+  "folder": "Job Prospects",
+  "summary_note": "Job Search Run Summary",
+  "tag": "job-prospect"
+}
+```
+
+Or per run: `./run_job_search.sh --obsidian-vault ~/Documents/MyVault`. For Obsidian only, also leave Notion unset (see below) or pass `--no-notion`.
+
+Each match at or above `--min-score` becomes `<folder>/<Company> - <Title>.md`. Its frontmatter holds the same fields as the Notion database, shown as Obsidian Properties:
+
+```markdown
+---
+company: "Example Corp"
+role: "Senior Specialist"
+location: "Remote"
+match: 92
+link: "https://example.com/jobs/123"
+date_added: 2026-11-16
+originally_posted: 2026-11-12
+status: Prospect
+tags:
+  - job-prospect
+---
+
+## Why It Matches
+
+APPLY: Strong skill alignment (keyword score 85%)
+```
+
+Change `status` or add your own notes freely: an existing note is never overwritten. To get a table like the Notion database, create a Base (or a Dataview `TABLE company, role, match, status FROM #job-prospect SORT match DESC`). Each run also rewrites `<folder>/Job Search Run Summary.md` with the same counts, top matches and recent runs as the Notion Callout (`--no-obsidian-log` skips it).
+
+Written roles go into the same blocklists as Notion and the `.txt` export. When Notion is also on, Notion does the blocklisting, so a role that fails to reach Notion is retried next run (its Obsidian note is left as it is). `--check` reports whether the vault folder exists and is writable.
+
 ### Using Your Own Documentation Platform (Disable Notion / Export to .txt)
 
-Notion is optional. If you track applications somewhere else (Obsidian, Confluence, a wiki, a spreadsheet, a plain notes folder), turn off Notion writes and have the pipeline write matches to a text file instead.
+Notion is optional. If you use Obsidian, see [above](#write-matches-to-an-obsidian-vault). If you track applications somewhere else (Confluence, a wiki, a spreadsheet, a plain notes folder), turn off Notion writes and have the pipeline write matches to a text file instead.
 
 **1. Disable Notion writes**
 
@@ -545,7 +591,7 @@ Each run appends a timestamped block containing only matches at or above `--min-
     Link: https://jobs.example.org/456
 ```
 
-**How deduplication works:** roles are matched by `company|title`, and also by JD text plus title, so the same posting under another company name (a brand and its parent, a reposter) is one role. Exported roles are added to the same URL and role blocklists (`data/blocklist.json`, `data/blocklist_roles.json`) that Notion sync uses, so a role is written once and reposts on other boards are skipped. If Notion is also active, Notion sync handles the blocklisting instead, so a role that fails to reach Notion is retried on the next run (and may appear in the `.txt` again). To re-export everything from scratch, delete those two blocklist files.
+**How deduplication works:** roles are matched by `company|title`, and also by JD text plus title, so the same posting under another company name (a brand and its parent, a reposter) is one role. Exported roles are added to the same URL and role blocklists (`data/blocklist.json`, `data/blocklist_roles.json`) that Notion sync uses, so a role is written once and reposts on other boards are skipped. If Notion or Obsidian is also active, that output handles the blocklisting instead, so a role that fails to reach it is retried on the next run (and may appear in the `.txt` again). To re-export everything from scratch, delete those two blocklist files.
 
 **Other formats:** `--md-output PATH` writes the full Markdown table (matches, manual reviews, AI skips, location drops), overwritten each run. `data/evaluated_jobs.json` holds the raw Stage 3 results as JSON for custom integrations.
 
@@ -624,7 +670,7 @@ Your own files sit next to these, ignored by git: `config.json`, `candidate_prof
 | :--- | :--- |
 | [`__main__.py`](job_search_pipeline/__main__.py) | Entry point for `python3 -m job_search_pipeline`. |
 | [`pipeline.py`](job_search_pipeline/pipeline.py) | End-to-end orchestrator and CLI flags, source-health monitor, pre-LLM blocklist filter, and notifier. |
-| [`check.py`](job_search_pipeline/check.py) | Setup check (`--check`): dependencies, config typos and placeholders, profile, AI reviewer CLI, Notion database properties, outputs. |
+| [`check.py`](job_search_pipeline/check.py) | Setup check (`--check`): dependencies, config typos and placeholders, profile, AI reviewer CLI, Notion database properties, Obsidian vault, outputs. |
 | [`config.py`](job_search_pipeline/config.py) | Central loader for `config.json`, path resolution (relative `paths` entries resolve from the repository root), shared JSON read/atomic-write helpers, and regex compilation helpers. |
 | [`blocklist.py`](job_search_pipeline/blocklist.py) | Shared dedup state: `company\|title` role keys plus the URL and role blocklists used by every stage. |
 | [`urls.py`](job_search_pipeline/urls.py) | Canonical URL normalizer (strips tracking parameters, redundant `gh_jid`, and fragments). |
@@ -635,6 +681,7 @@ Your own files sit next to these, ignored by git: `config.json`, `candidate_prof
 | [`evaluate.py`](job_search_pipeline/evaluate.py) | Stage 3 deterministic evaluator, JD logistics/onsite blocker, context-aware requirement parser, and scorer. |
 | [`review.py`](job_search_pipeline/review.py) | Stage 4 LLM reviewer with SHA-256 caching, verbatim quote verification, and deterministic score calculation. |
 | [`outputs/notion.py`](job_search_pipeline/outputs/notion.py) | Stage 5 Notion database syncer (records synced roles in the blocklists) and Callout dashboard logger. |
+| [`outputs/obsidian.py`](job_search_pipeline/outputs/obsidian.py) | Stage 5 Obsidian alternative to Notion: one note per new match with Notion-like Properties, plus a run-summary note; records written roles in the blocklists. |
 | [`outputs/html_digest.py`](job_search_pipeline/outputs/html_digest.py) | Stage 5 self-contained HTML page of matches (`data/digest.html`), with a store that keeps earlier runs' matches for `keep_days`. |
 | [`outputs/text_export.py`](job_search_pipeline/outputs/text_export.py) | Stage 5 plain-text alternative to Notion: appends new qualified matches to a `.txt` log and records them in the blocklists. |
 
