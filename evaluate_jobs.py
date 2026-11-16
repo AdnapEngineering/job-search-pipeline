@@ -919,6 +919,10 @@ def generate_markdown(result, limit=25):
         lines.extend(["", "### Sources", "", health["line"]])
         lines.extend(f"- ⚠️ {w}" for w in health["warnings"])
 
+    if result.get("ai_spend"):
+        from llm_review import spend_line  # deferred: evaluate_jobs runs standalone without the review stage
+        lines.extend(["", "### AI Review Spend", "", spend_line(result["ai_spend"])])
+
     return "\n".join(lines)
 
 

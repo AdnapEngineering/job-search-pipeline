@@ -15,18 +15,32 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import threading
 from concurrent.futures import ThreadPoolExecutor
+from datetime import datetime, timedelta
 
 from bs4 import BeautifulSoup
 
+from blocklist import role_key
 from pipeline_config import CFG, atomic_write_json, get_path, load_json
 from url_normalizer import normalize_url
 
 _LLM_CFG = CFG.get("llm_review") or {}
 _COMP_CFG = CFG.get("compensation") or {}
+_BUDGET_CFG = _LLM_CFG.get("budget") or {}
+_PRICING_CFG = _LLM_CFG.get("pricing") or {}
 
 PROFILE_PATH = get_path("candidate_profile", "candidate_profile.md")
 CACHE_PATH = get_path("review_cache", "data/review_cache.json")
+SPEND_PATH = get_path("llm_spend", "data/llm_spend.json")
+SPEND_KEEP_DAYS = 90
+# A cached review is reused for a repost (new URL, same company and title) when the JD texts are this similar
+REPOST_SIMILARITY = float(_LLM_CFG.get("repost_similarity", 0.8))
+SIGNATURE_SIZE = 64
+SHINGLE_WORDS = 5
+# Output tokens assumed for a review before any has finished, when checking it against a cap
+EST_OUTPUT_TOKENS = 600
+CHARS_PER_TOKEN = 4
 
 DEFAULT_MODEL = _LLM_CFG.get("model", "gemini-4-hydrogen-medium")
 PROVIDER = _LLM_CFG.get("provider", "agy")
@@ -38,6 +52,7 @@ JD_HEAD_CHARS = int(_LLM_CFG.get("jd_head_chars", 2500))
 VERDICTS = ("apply", "stretch", "skip")
 THIRD_PARTY_LABEL = "[Third-party poster]"
 REVIEW_FAILED_LABEL = "[AI review failed, held for retry]"
+REVIEW_DEFERRED_LABEL = "[AI review deferred: budget cap reached, held for next run]"
 REVIEW_VERSION = str(_LLM_CFG.get("review_version", "1"))
 
 COMPONENTS = _LLM_CFG.get("components") or {"hard_reqs": 4, "core_work": 3, "evidence": 3, "level": 2}
@@ -288,8 +303,55 @@ def _provider_config(provider):
     return executable
 
 
+def _int(v):
+    try:
+        return max(0, int(v))
+    except (TypeError, ValueError):
+        return 0
+
+
+def _usage(provider, source):
+    """Token counts (and the CLI's own cost, when it reports one) from a reply envelope or Codex event:
+    {"input": uncached input, "cached": cached input, "output": output incl. thinking, "usd": float|None}."""
+    u = source.get("usage") if isinstance(source, dict) else None
+    if not isinstance(u, dict):
+        return None
+    if provider == "anthropic":
+        uncached = _int(u.get("input_tokens")) + _int(u.get("cache_creation_input_tokens"))
+        cached = _int(u.get("cache_read_input_tokens"))
+        output = _int(u.get("output_tokens"))
+        cost = source.get("total_cost_usd")
+        usd = float(cost) if isinstance(cost, (int, float)) and not isinstance(cost, bool) else None
+    else:  # agy and Codex count cached tokens inside input_tokens
+        cached = _int(u.get("cache_read_tokens") if provider == "agy" else u.get("cached_input_tokens"))
+        uncached = max(0, _int(u.get("input_tokens")) - cached)
+        output = _int(u.get("output_tokens")) + _int(u.get("thinking_tokens") or u.get("reasoning_output_tokens"))
+        usd = None
+    return {"input": uncached, "cached": cached, "output": output, "usd": usd}
+
+
+def _rates(provider=None):
+    """The pricing block for `provider`: llm_review.pricing.<provider> when present, else flat rates in
+    llm_review.pricing itself (applied to whichever provider is configured)."""
+    provider = provider or PROVIDER
+    nested = _PRICING_CFG.get(provider)
+    return nested if isinstance(nested, dict) else _PRICING_CFG
+
+
+def priced_usd(usage, provider=None):
+    """Cost of `usage` at the configured rates (USD per million tokens), or None when unpriced."""
+    rates = _rates(provider)
+    rate_in = rates.get("input_per_mtok")
+    rate_out = rates.get("output_per_mtok")
+    if rate_in is None or rate_out is None:
+        return None
+    rate_cached = rates.get("cached_input_per_mtok", rate_in)
+    return (usage["input"] * float(rate_in) + usage["cached"] * float(rate_cached)
+            + usage["output"] * float(rate_out)) / 1_000_000
+
+
 def _cli_response(executable, provider, model, prompt):
-    """Run a CLI in an empty directory and extract its final response."""
+    """Run a CLI in an empty directory; returns (final response text, usage dict or None)."""
     if provider == "agy":
         command = [executable, "-p", prompt, "--model", model, "--output-format", "json"]
         stdin = None
@@ -321,10 +383,12 @@ def _cli_response(executable, provider, model, prompt):
                     if event.get("type") == "item.completed" and isinstance(event.get("item"), dict)
                     and event["item"].get("type") == "agent_message"]
         response = messages[-1] if messages else None
+        usage = _usage(provider, events[-1])
     else:
         envelope = json.loads(result.stdout)
         if not isinstance(envelope, dict):
             raise ValueError("invalid CLI response")
+        usage = _usage(provider, envelope)
         if provider == "agy":
             if envelope.get("status") != "SUCCESS":
                 raise RuntimeError("agy reported failure")
@@ -335,11 +399,12 @@ def _cli_response(executable, provider, model, prompt):
             response = envelope.get("result")
     if not isinstance(response, str):
         raise ValueError("CLI returned no text")
-    return response
+    return response, usage
 
 
-def _review_one(executable, model, profile, job, jd_by_url, salary_by_url=None, provider="agy"):
-    """Run one provider review; return the parsed verdict or None on a provider failure."""
+def _review_one(executable, model, profile, job, jd_by_url, salary_by_url=None, provider="agy", on_usage=None):
+    """Run one provider review; return the parsed verdict or None on a provider failure.
+    on_usage(usage) is called for every reply the CLI completed, parseable or not, since each one was paid for."""
     key = normalize_url(job.get("url", ""))
     jd = jd_by_url.get(key) or ""
     salary = (salary_by_url or {}).get(key)
@@ -349,7 +414,9 @@ def _review_one(executable, model, profile, job, jd_by_url, salary_by_url=None, 
                            title=job.get("title") or "", location=job.get("location") or "",
                            salary=_salary_text(salary), jd=jd)
     try:
-        response_text = _cli_response(executable, provider, model, prompt)
+        response_text, usage = _cli_response(executable, provider, model, prompt)
+        if on_usage:
+            on_usage(usage)
         parsed = _parse_verdict(response_text, jd, salary)
         if not parsed:
             print(f"[AI review] unparseable reply for {job.get('company')}", file=sys.stderr)
@@ -377,11 +444,184 @@ def _rescored(result):
     return dict(result, score=score, verdict=verdict)
 
 
-def review_matches(matches, enriched_path, min_score=55):
-    """Review every match scoring >= min_score. Returns (kept, skipped).
+def _jd_hash(jd):
+    return hashlib.sha256(_norm_quote(jd).encode()).hexdigest()[:16]
+
+
+def jd_signature(jd):
+    """Bottom-k sketch of the JD's 5-word shingles: a few dozen numbers that estimate how much of two
+    JDs' text is shared, so a repost with small edits still matches its earlier review."""
+    words = _norm_quote(_strip_html(jd or "")).split()
+    shingles = {" ".join(words[i:i + SHINGLE_WORDS]) for i in range(max(1, len(words) - SHINGLE_WORDS + 1))}
+    # 52-bit hashes stay exact as JSON numbers
+    hashes = {int.from_bytes(hashlib.blake2b(s.encode(), digest_size=8).digest(), "big") >> 12
+              for s in shingles if s}
+    return sorted(hashes)[:SIGNATURE_SIZE]
+
+
+def signature_similarity(a, b):
+    """Estimated Jaccard similarity (0-1) of the two JDs a and b were taken from."""
+    if not a or not b:
+        return 0.0
+    sa, sb = set(a), set(b)
+    union = sorted(sa | sb)[:SIGNATURE_SIZE]
+    return sum(1 for h in union if h in sa and h in sb) / len(union)
+
+
+def _find_repost(job, jd, cache, phash):
+    """Key of a current-profile cached review of the same posting under another URL, or None:
+    the same JD text, or the same company|title with JD text at least REPOST_SIMILARITY alike."""
+    h, role = _jd_hash(jd), role_key(job.get("company"), job.get("title"))
+    sig = None
+    for key, hit in cache.items():
+        if not isinstance(hit, dict) or hit.get("profile") != phash:
+            continue
+        if hit.get("jd") == h:
+            return key
+        if role and hit.get("role") == role and hit.get("sig"):
+            sig = sig if sig is not None else jd_signature(jd)
+            if signature_similarity(sig, hit["sig"]) >= REPOST_SIMILARITY:
+                return key
+    return None
+
+
+def _cap(name, cast=float):
+    try:
+        return max(0, cast(_BUDGET_CFG.get(name) or 0))
+    except (TypeError, ValueError):
+        return 0
+
+
+def load_spend(path=None):
+    entries = load_json(path or SPEND_PATH, default=[])
+    return entries if isinstance(entries, list) else []
+
+
+def spent_on(day, entries):
+    """(usd, tokens) the AI review used on `day` (YYYY-MM-DD, local time), from the spend ledger."""
+    todays = [e for e in entries if isinstance(e, dict) and e.get("date") == day]
+    return (sum(float(e.get("usd") or 0) for e in todays),
+            sum(_int(e.get("input_tokens")) + _int(e.get("cached_tokens")) + _int(e.get("output_tokens"))
+                for e in todays))
+
+
+class Budget:
+    """Running spend for one review pass, checked against the llm_review.budget caps (0 = no cap).
+
+    Each review reserves its estimated cost before it starts and settles to the real usage after, so
+    reviews running in parallel cannot jointly pass a cap. The first cap reached stops the pass: the
+    remaining jobs (lower keyword scores, since the pass runs best-first) are deferred to the next run."""
+
+    def __init__(self, today_usd=0.0, today_tokens=0):
+        self.max_reviews = _cap("max_reviews_per_run", int)
+        self.max_usd_run, self.max_usd_day = _cap("max_usd_per_run"), _cap("max_usd_per_day")
+        self.max_tokens_run, self.max_tokens_day = _cap("max_tokens_per_run", int), _cap("max_tokens_per_day", int)
+        self.today_usd, self.today_tokens = today_usd, today_tokens
+        self.calls = self.input = self.cached = self.output = 0
+        self.usd, self.usd_estimated, self.usd_unknown = 0.0, False, False
+        self.started = self.reserved_tokens = 0
+        self.reserved_usd = 0.0
+        self.stopped_by = ""
+        self._lock = threading.Lock()
+
+    @property
+    def tokens(self):
+        return self.input + self.cached + self.output
+
+    def caps(self):
+        named = {"reviews/run": self.max_reviews, "USD/run": self.max_usd_run, "USD/day": self.max_usd_day,
+                 "tokens/run": self.max_tokens_run, "tokens/day": self.max_tokens_day}
+        return {k: v for k, v in named.items() if v}
+
+    def _estimate(self, prompt_chars):
+        out = self.output / self.calls if self.calls else EST_OUTPUT_TOKENS
+        tokens = prompt_chars // CHARS_PER_TOKEN + int(out)
+        usd = priced_usd({"input": tokens - int(out), "cached": 0, "output": int(out)})
+        if usd is None:  # no pricing set: assume the average reported cost so far
+            usd = self.usd / self.calls if self.calls else 0.0
+        return tokens, usd
+
+    def reserve(self, prompt_chars):
+        """The (tokens, usd) reserved for one review, or None once a cap would be passed."""
+        with self._lock:
+            if self.stopped_by:
+                return None
+            tokens, usd = self._estimate(prompt_chars)
+            run_tokens, run_usd = self.tokens + self.reserved_tokens + tokens, self.usd + self.reserved_usd + usd
+            checks = (
+                ("reviews/run", self.max_reviews, self.started + 1),
+                ("tokens/run", self.max_tokens_run, run_tokens),
+                ("tokens/day", self.max_tokens_day, self.today_tokens + run_tokens),
+                ("USD/run", self.max_usd_run, run_usd),
+                ("USD/day", self.max_usd_day, self.today_usd + run_usd),
+            )
+            for name, cap, value in checks:
+                if cap and value > cap:
+                    self.stopped_by = name
+                    return None
+            self.started += 1
+            self.reserved_tokens += tokens
+            self.reserved_usd += usd
+            return tokens, usd
+
+    def release(self, reservation):
+        with self._lock:
+            self.reserved_tokens -= reservation[0]
+            self.reserved_usd -= reservation[1]
+
+    def record(self, usage):
+        """Add one completed reply's usage (None when the CLI reported none)."""
+        with self._lock:
+            self.calls += 1
+            if not usage:
+                self.usd_unknown = True
+                return
+            self.input += usage["input"]
+            self.cached += usage["cached"]
+            self.output += usage["output"]
+            usd = usage.get("usd")
+            if usd is None:
+                usd = priced_usd(usage)
+                if usd is None:
+                    self.usd_unknown = True
+                    return
+                self.usd_estimated = True
+            self.usd += usd
+
+
+def _write_spend(stats, path=None):
+    """Append this pass to the spend ledger, dropping entries older than SPEND_KEEP_DAYS."""
+    path = path or SPEND_PATH
+    cutoff = (datetime.now() - timedelta(days=SPEND_KEEP_DAYS)).strftime("%Y-%m-%d")
+    entries = [e for e in load_spend(path) if isinstance(e, dict) and str(e.get("date", "")) >= cutoff]
+    entries.append({k: stats[k] for k in (
+        "time", "date", "provider", "model", "reviewed", "failed", "deferred", "cache_hits", "repost_hits",
+        "input_tokens", "cached_tokens", "output_tokens", "usd", "usd_estimated", "usd_unknown")})
+    atomic_write_json(path, entries, indent=1)
+
+
+def spend_line(stats):
+    """One-line summary of an AI review pass's spend, for logs and notifications."""
+    if not stats:
+        return ""
+    if stats["usd_unknown"] and not stats["usd"]:
+        cost = f"{stats['tokens']:,} tokens"
+    else:
+        cost = f"{'~' if stats['usd_estimated'] or stats['usd_unknown'] else ''}${stats['usd']:.2f} ({stats['tokens']:,} tokens)"
+    text = (f"AI review: {stats['reviewed'] + stats['failed']} call(s), {cost}; "
+            f"{stats['cache_hits'] + stats['repost_hits']} reused from cache"
+            + (f" ({stats['repost_hits']} reposts)" if stats["repost_hits"] else ""))
+    if stats["deferred"]:
+        text += f"; {stats['deferred']} deferred by the {stats['stopped_by']} cap"
+    return text + "."
+
+
+def review_matches(matches, enriched_path, min_score=55, stats=None):
+    """Review every match scoring >= min_score, best keyword score first. Returns (kept, skipped).
 
     A match that was due a review and did not get one (timeout, CLI failure, unparseable reply, JD too
-    short) is kept with review_failed=True: it is shown but not synced or exported, and is retried next run."""
+    short, or a budget cap reached) is kept with review_failed=True: it is shown but not synced or
+    exported, and is retried next run. Pass a dict as `stats` to receive this pass's usage and spend."""
     executable = _provider_config(PROVIDER)
     if not executable:
         return matches, []
@@ -395,38 +635,77 @@ def review_matches(matches, enriched_path, min_score=55):
     phash = _profile_hash(profile, model, PROVIDER)
 
     cache = load_json(CACHE_PATH, default={})
-    todo, results = [], {}
-    for job in matches:
-        if job.get("score", 0) < min_score:
-            continue
+    if not isinstance(cache, dict):
+        cache = {}
+    due = sorted((j for j in matches if j.get("score", 0) >= min_score),
+                 key=lambda j: j.get("score", 0), reverse=True)
+    results, misses = {}, []
+    for job in due:
         key = normalize_url(job.get("url", ""))
         hit = cache.get(key)
-        if hit and hit.get("profile") == phash:
+        if isinstance(hit, dict) and hit.get("profile") == phash:
             results[key] = _rescored(hit["result"])
         else:
-            todo.append(job)
+            misses.append(job)
+    cache_hits = len(results)
 
-    print(f"[AI review] {len(results)} cached, {len(todo)} to review with {model} via {PROVIDER}.")
-    if todo:
-        todo_keys = {normalize_url(j.get("url", "")) for j in todo}
-        with open(enriched_path) as f:
-            enriched = [j for j in json.load(f) if normalize_url(j.get("url", "")) in todo_keys]
+    jd_by_url, salary_by_url = {}, {}
+    if misses:
+        miss_keys = {normalize_url(j.get("url", "")) for j in misses}
+        enriched = [j for j in (load_json(enriched_path, default=[]) or [])
+                    if normalize_url(j.get("url", "")) in miss_keys]
         jd_by_url = {normalize_url(j.get("url", "")): jd_for_review(j.get("description_full") or j.get("description_ai"),
                                                                     j.get("description_ai"))
                      for j in enriched}
         salary_by_url = {normalize_url(j.get("url", "")): j.get("salary") for j in enriched if j.get("salary")}
+
+    # A repost under a new URL reuses the review already paid for
+    todo, repost_hits = [], 0
+    for job in misses:
+        key = normalize_url(job.get("url", ""))
+        jd = jd_by_url.get(key) or ""
+        source = _find_repost(job, jd, cache, phash) if len(jd) >= 200 else None
+        if source:
+            results[key] = _rescored(cache[source]["result"])
+            cache[key] = dict(cache[source], repost_of=source)
+            repost_hits += 1
+        else:
+            todo.append(job)
+
+    today = datetime.now().strftime("%Y-%m-%d")
+    budget = Budget(*spent_on(today, load_spend()))
+    print(f"[AI review] {cache_hits} cached, {repost_hits} reposts of cached reviews, "
+          f"{len(todo)} to review with {model} via {PROVIDER}."
+          + (f" Caps: {', '.join(f'{v:g} {k}' for k, v in budget.caps().items())}." if budget.caps() else ""))
+
+    deferred = set()
+    if todo:
+        profile_chars = len(profile) + len(PROMPT)
+
+        def run_one(job):
+            key = normalize_url(job.get("url", ""))
+            reservation = budget.reserve(profile_chars + len(jd_by_url.get(key) or ""))
+            if reservation is None:
+                deferred.add(key)
+                return None
+            try:
+                return _review_one(executable, model, profile, job, jd_by_url, salary_by_url, PROVIDER,
+                                   on_usage=budget.record)
+            finally:
+                budget.release(reservation)
+
         with ThreadPoolExecutor(max_workers=WORKERS) as pool:
-            outs = list(pool.map(
-                lambda j: _review_one(executable, model, profile, j, jd_by_url, salary_by_url, PROVIDER), todo
-            ))
+            outs = list(pool.map(run_one, todo))
         for job, out in zip(todo, outs, strict=True):
             if out:
                 key = normalize_url(job.get("url", ""))
+                jd = jd_by_url.get(key) or ""
                 results[key] = out
-                cache[key] = {"profile": phash, "result": out}
+                cache[key] = {"profile": phash, "result": out, "role": role_key(job.get("company"), job.get("title")),
+                              "jd": _jd_hash(jd), "sig": jd_signature(jd)}
     # Entries reviewed under another profile, prompt, model or provider can never be read again
     stale = [key for key, hit in cache.items() if not isinstance(hit, dict) or hit.get("profile") != phash]
-    if todo or stale:
+    if todo or stale or repost_hits:
         for key in stale:
             del cache[key]
         atomic_write_json(CACHE_PATH, cache, indent=1)
@@ -435,25 +714,47 @@ def review_matches(matches, enriched_path, min_score=55):
 
     kept, skipped, failed = [], [], 0
     for job in matches:
-        out = results.get(normalize_url(job.get("url", "")))
+        key = normalize_url(job.get("url", ""))
+        out = results.get(key)
         if out:
             job = dict(job, verdict=out["verdict"], ai_reason=out["reason"], blockers=out["blockers"],
                        components=out.get("components"), third_party=bool(out.get("third_party")))
             if out.get("score") is not None:
                 job["keyword_score"], job["score"] = job.get("score", 0), out["score"]
+        elif key in deferred:
+            job = dict(job, review_failed=True, review_deferred=True)
         elif job.get("score", 0) >= min_score:
             job = dict(job, review_failed=True)
             failed += 1
         (skipped if out and out["verdict"] == "skip" else kept).append(job)
     kept.sort(key=lambda j: j.get("score", 0), reverse=True)
+
+    reviewed = sum(1 for j in todo if normalize_url(j.get("url", "")) in results)
+    summary = {
+        "time": datetime.now().strftime("%Y-%m-%d %H:%M"), "date": today, "provider": PROVIDER, "model": model,
+        "reviewed": reviewed, "failed": failed, "deferred": len(deferred), "cache_hits": cache_hits,
+        "repost_hits": repost_hits, "input_tokens": budget.input, "cached_tokens": budget.cached,
+        "output_tokens": budget.output, "tokens": budget.tokens, "usd": round(budget.usd, 4),
+        "usd_estimated": budget.usd_estimated, "usd_unknown": budget.usd_unknown, "stopped_by": budget.stopped_by,
+        "caps": budget.caps(), "today_usd": round(budget.today_usd + budget.usd, 4),
+        "today_tokens": budget.today_tokens + budget.tokens,
+    }
+    if due:
+        _write_spend(summary)
+    if stats is not None:
+        stats.update(summary)
     print(f"[AI review] kept {len(kept)}, skipped {len(skipped)}"
-          + (f", {failed} not reviewed (held back until a review succeeds)." if failed else "."))
+          + (f", {failed} not reviewed (held back until a review succeeds)" if failed else "")
+          + (f", {len(deferred)} deferred by the {budget.stopped_by} cap" if deferred else "") + ".")
+    print(f"[AI review] {spend_line(summary)}")
     return kept, skipped
 
 
 def reason_for_notion(job):
     """Text for the Notion 'Why It Matches' column: the AI verdict when there is one."""
     if not job.get("verdict"):
+        if job.get("review_deferred"):
+            return f"{REVIEW_DEFERRED_LABEL} {job.get('reason', '')}".strip()
         if job.get("review_failed"):
             return f"{REVIEW_FAILED_LABEL} {job.get('reason', '')}".strip()
         return job.get("reason", "")

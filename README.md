@@ -19,8 +19,10 @@ All career-specific rules—target titles, skills, scoring weights, experience c
    - [Direct ATS JSON Endpoints (`batch_scraper.py`)](#36-direct-ats-json-endpoints-batch_scraperpy)
    - [Notion API & `ntfy` Push Notifications](#37-notion-api--ntfy-push-notifications)
 4. [Configuring for Another Career (`config.json` & `candidate_profile.md`)](#4-configuring-for-another-career-configjson--candidate_profilemd)
+   - [AI Review Spend and Caps](#ai-review-spend-and-caps)
 5. [Usage, CLI Flags & Cron Automation](#5-usage-cli-flags--cron-automation)
    - [Using Your Own Documentation Platform (Disable Notion / Export to .txt)](#using-your-own-documentation-platform-disable-notion--export-to-txt)
+   - [View Matches in Your Browser (HTML Digest)](#view-matches-in-your-browser-html-digest)
 6. [Repository File Reference](#6-repository-file-reference)
 
 ---
@@ -59,6 +61,8 @@ All career-specific rules—target titles, skills, scoring weights, experience c
                                       ▼
 ┌────────────────────────────────────────────────────────────────────────────┐
 │ 4. Calibrated LLM Rubric Review (llm_review.py)                            │
+│    • Reuses cached reviews (also for reposts), records token/USD spend,    │
+│      and stops at the configured per-run / per-day caps.                   │
 │    • Drops roles already in Notion blocklists, and remote roles limited to │
 │      other states/time zones, before spending LLM quota.                   │
 │    • Grades each match against candidate_profile.md on a 12-point rubric:  │
@@ -68,7 +72,9 @@ All career-specific rules—target titles, skills, scoring weights, experience c
 └─────────────────────────────────────┬──────────────────────────────────────┘
                                       ▼
 ┌────────────────────────────────────────────────────────────────────────────┐
-│ 5. Output, Summary & Notifications (sync_notion_db.py / text_export.py)    │
+│ 5. Output, Summary & Notifications (sync_notion_db.py / text_export.py /   │
+│    html_digest.py)                                                         │
+│    • Rewrites data/digest.html, a self-contained page of matches.          │
 │    • Syncs qualified matches (>= min_score) to a Notion database and/or    │
 │      appends them to a plain .txt log for any other documentation tool.    │
 │    • Appends output URLs and company|title keys to persistent blocklists.  │
@@ -325,7 +331,7 @@ Create it from the template first if you have not already (`cp config.example.js
 
 | Section | What to Customize |
 | :--- | :--- |
-| `paths` | Override where data files (`filtered_jobs`, `enriched_jobs`, `blocklist`, `review_cache`, `text_export`, ...) and `candidate_profile` live. Relative paths resolve from the repository directory, not the directory you run from; `~` is expanded. |
+| `paths` | Override where data files (`filtered_jobs`, `enriched_jobs`, `blocklist`, `review_cache`, `llm_spend`, `text_export`, `html_digest`, `digest_store`, ...) and `candidate_profile` live. Relative paths resolve from the repository directory, not the directory you run from; `~` is expanded. |
 | `sources` | Set `lookback_days`, LinkedIn/Indeed `search_terms` and `searches` (`[site, location, suffix, count]`), and `jobicy_url` industry parameter. |
 | `location` | Set `allow_remote`, `local_metro_patterns` (cities/suburbs in your metro area), `local_metro_exclude_patterns` (same-named cities in other states), and `allowed_country_pattern`. Set `home_states` (e.g. `["CO"]`) and `home_timezones` (any of `eastern`, `central`, `mountain`, `pacific`) to drop remote roles restricted to other states or time zones ("Remote - TX", "must reside in MA, IN, or TX", "must be located in the Eastern time zone") before the LLM review; both rules are off while the lists are empty. |
 | `compensation` | Set `min_salary` (annual USD floor), `pay_midpoint_max_cap`, and `pay_midpoint_penalty`. Set `min_salary: 0` to disable salary filtering. A posting whose pay band tops out below `min_salary` is capped at `llm_review.blocker_cap`. Set `pay_floor_taper_from` (a figure below `min_salary`) to soften that cliff: the cap then rises in a straight line from `blocker_cap` at `pay_floor_taper_from` to 100 at `min_salary`. `0` keeps the cliff. |
@@ -333,9 +339,10 @@ Create it from the template first if you have not already (`cp config.example.js
 | `titles` | Define `target_patterns` (Stage 1 pre-filter), `strong_target_patterns` (titles that override soft exclusions), `primary_role_groups` (+20 pt title bonus), `primary_role_patterns` (+20 pt LinkedIn/Indeed title boost), `exclude_seniority_patterns`, `exclude_tech_patterns`, and `exclude_role_patterns`. |
 | `companies` | List `exclude_companies`, `exclude_recruiters` (staffing agencies/aggregators), `allow_recruiters`, and `company_aliases` (e.g. parent company -> brand name). |
 | `skills_and_scoring` | Define `core_strengths` (+5 pts each, up to `core_strengths_cap`), `focus_keywords` (weighted +5/+10/+15 domain terms, up to `domain_score_cap`), `hard_exclude_skills` (rejected in requirements unless listed as an optional/alternative skill), `hard_ask_penalties`, and `off_center_role_check`. |
-| `llm_review` | Select `provider` and `model`, customize `rubric_descriptions` (`hard_reqs`, `core_work`, `evidence`, `level`), and provide 3–8 `calibration_examples` for your career. `apply_min_score` is the Match % at which the verdict reads APPLY; leave it out to follow `skills_and_scoring.min_sync_score`, so that APPLY always means "will be synced". |
+| `llm_review` | Select `provider` and `model`, customize `rubric_descriptions` (`hard_reqs`, `core_work`, `evidence`, `level`), and provide 3–8 `calibration_examples` for your career. `apply_min_score` is the Match % at which the verdict reads APPLY; leave it out to follow `skills_and_scoring.min_sync_score`, so that APPLY always means "will be synced". Set spending limits in `budget` and token prices in `pricing`, and tune `repost_similarity` (see [AI Review Spend and Caps](#ai-review-spend-and-caps)). |
 | `notion` | Set `database_id` (or use `NOTION_DATABASE_ID` in `.env`). Optionally set `summary_page_id` (the page that hosts the run-summary Callout; defaults to the database's parent page). `summary_block_id` is filled in automatically the first time the Callout is created. Expects Notion database properties: `Company & Stage` (Title), `Role Title & Compensation` (Text), `Location` (Text), `Why It Matches` (Text), `Match %` (Text), `Link` (URL), `Date Posted` (Date), and `Originally Posted` (Date). |
 | `text_export` | Set `enabled: true` to append new qualified matches to `paths.text_export` (`data/job_matches.txt` by default)—a plain-text alternative or companion to Notion. |
+| `html_digest` | On by default: every run rewrites a self-contained web page of matches at `paths.html_digest` (`data/digest.html`). Set `title`, `keep_days` (how long matches stay listed after they were last seen, default 30), and `url` (a link to the page if you host it; ntfy then opens it on tap). `enabled: false` turns it off. See [View Matches in Your Browser](#view-matches-in-your-browser-html-digest). |
 
 **How the config is loaded:**
 - The pipeline reads `config.json` from the repository directory. It is your own copy of the tracked template `config.example.json` and is ignored by git. Set `JOB_PIPELINE_CONFIG=/path/to/other.json` to use a different file (e.g. one per career).
@@ -366,6 +373,42 @@ If a review times out, fails, or returns an invalid/incomplete reply, the pipeli
 **Third-party posters.** The review also flags postings that come from a staffing agency, recruiter, consultancy or aggregator rather than the employer. The flag never changes the score: flagged roles sync as usual, with `[Third-party poster]` at the start of the "Why It Matches" text in Notion, the Markdown summary and the `.txt` export, and a count in the push notification.
 
 **Cache upkeep.** Cached reviews made under an older profile, prompt, model or provider can never be read again and are pruned on the next run. The Match % and verdict of a cached review are recomputed from its stored grades on every run, so changes to `min_sync_score`, `apply_min_score` or the pay rules apply without paying for new reviews. Editing the profile, rubric or calibration examples still re-reviews every open match once.
+
+**Reposts reuse reviews.** A posting with a new URL is not reviewed again when it is a repost of one already reviewed: either the JD text is identical, or the company and title match and the JD text is at least `repost_similarity` alike (0–1, default `0.8`, estimated from a small fingerprint stored with each review). This covers the same role on LinkedIn and on the company's ATS, and reposts under a new ID with small edits. Reviews cached before this feature have no fingerprint, so only reviews made since then can be matched this way.
+
+### AI Review Spend and Caps
+
+Every run records what the review used, in `paths.llm_spend` (`data/llm_spend.json`, kept for 90 days): calls made, reviews reused from the cache or from reposts, input/cached/output tokens, and cost. The figures appear in the console log, the push notification, the Markdown summary and the HTML digest (this run and today).
+
+How cost is known depends on the CLI:
+
+| Provider | Tokens | Cost in USD |
+| :--- | :--- | :--- |
+| Claude Code (`anthropic`) | Reported | Reported by the CLI (`total_cost_usd`); no setup needed. On a subscription this is the API-equivalent figure, not a charge. |
+| Codex (`openai`) | Reported | Estimated from `pricing` when you set it; otherwise tokens only. |
+| agy | Reported | Estimated from `pricing` when you set it; otherwise tokens only. |
+
+Prices are USD per million tokens, either keyed by provider (so switching `provider` picks up the right rates) or flat (applied to whichever provider is configured):
+
+```json
+"pricing": {
+  "openai": { "input_per_mtok": 1.25, "cached_input_per_mtok": 0.125, "output_per_mtok": 10 }
+}
+```
+
+Caps go in `llm_review.budget`. Every cap defaults to `0`, which means no limit:
+
+| Key | Limit |
+| :--- | :--- |
+| `max_reviews_per_run` | New reviews per run (cached and repost reviews are free and never count). |
+| `max_tokens_per_run` / `max_tokens_per_day` | Tokens per run / per calendar day across runs. Good for subscription CLIs, where quota is counted in tokens. |
+| `max_usd_per_run` / `max_usd_per_day` | Dollars per run / per day. Needs a reported cost (Claude) or `pricing`; without either, cost is unknown and these caps cannot trigger, so use a token cap. |
+
+```json
+"budget": { "max_reviews_per_run": 20, "max_tokens_per_day": 600000, "max_usd_per_day": 1.50 }
+```
+
+Reviews run highest keyword score first. Each one reserves its estimated cost (prompt length, plus the average output of earlier reviews) before it starts, so reviews running in parallel cannot jointly pass a cap. When the next review would pass a cap, the pass stops: the remaining matches are **deferred**, i.e. held like a failed review (`[AI review deferred: budget cap reached, held for next run]`, not synced or exported) and reviewed first on a later run. Real usage can still run over a cap slightly when a reply is longer than estimated.
 
 ---
 
@@ -405,6 +448,8 @@ python3 run_pipeline.py --no-llm-review --min-score 75
 | `--md-output PATH` | Write a Markdown summary table of matches, manual reviews, and skips to `PATH`. |
 | `--txt-output PATH` | Append new qualified matches to `PATH` (overrides `text_export` in `config.json`). |
 | `--no-txt-export` | Skip exporting matches to a `.txt` file even when enabled in `config.json`. Cannot be combined with `--txt-output`. |
+| `--html-output PATH` | Write the HTML digest to `PATH` (overrides `html_digest` in `config.json`). |
+| `--no-html` | Skip the HTML digest even when enabled in `config.json`. Cannot be combined with `--html-output`. |
 
 ### Using Your Own Documentation Platform (Disable Notion / Export to .txt)
 
@@ -417,7 +462,11 @@ Notion is optional. If you track applications somewhere else (Obsidian, Confluen
 | One run | Pass `--no-notion` (skips both the database sync and the run-summary Callout). Pass `--no-notion-log` to keep the sync but skip only the Callout. |
 | Permanently | Leave `notion.database_id` empty in `config.json` and don't set `NOTION_DATABASE_ID` / `NOTION_TOKEN`. Both Notion steps then skip themselves with a notice, and no token is needed. |
 
-**2. Export matches to a `.txt` file**
+**2. View matches in your browser**
+
+Nothing to set up: every run writes a web page of matches to `data/digest.html`. See [View Matches in Your Browser](#view-matches-in-your-browser-html-digest).
+
+**3. Export matches to a `.txt` file**
 
 Enable it permanently in `config.json` (ideal for cron):
 
@@ -457,6 +506,20 @@ Each run appends a timestamped block containing only matches at or above `--min-
 **How deduplication works:** roles are matched by `company|title`, and also by JD text plus title, so the same posting under another company name (a brand and its parent, a reposter) is one role. Exported roles are added to the same URL and role blocklists (`data/blocklist.json`, `data/blocklist_roles.json`) that Notion sync uses, so a role is written once and reposts on other boards are skipped. If Notion is also active, Notion sync handles the blocklisting instead, so a role that fails to reach Notion is retried on the next run (and may appear in the `.txt` again). To re-export everything from scratch, delete those two blocklist files.
 
 **Other formats:** `--md-output PATH` writes the full Markdown table (matches, manual reviews, AI skips, location drops), overwritten each run. `data/evaluated_jobs.json` holds the raw Stage 3 results as JSON for custom integrations.
+
+### View Matches in Your Browser (HTML Digest)
+
+Without any setup, every run writes `data/digest.html`: a single self-contained page (no server, no external scripts, works offline) that you open in any browser:
+
+```bash
+xdg-open data/digest.html   # macOS: open data/digest.html
+```
+
+It lists matches in three groups: **New this run**, **Still open** (seen before and again now), and **Earlier** (no longer in the run because the posting closed, was reposted, or was already sent to Notion or the `.txt` export; kept for `keep_days`). Each card shows the Match %, the AI verdict and reason, the gaps, and badges for third-party posters, roles already in Notion, and held reviews. Search, a minimum-match filter and a "hide third-party" toggle sit at the top. Below the matches are this run's AI-filtered roles, location drops and failed scrapes, plus source counts, source warnings and AI review spend.
+
+**Mark applied** and **Hide** remember your choice in that browser only (local storage); they do not change the pipeline's blocklists. The matches behind the page are kept in `paths.digest_store` (`data/digest_matches.json`), so the page keeps matches from earlier runs even though each run only finds new ones.
+
+To open the page from your phone, serve the folder (for example `python3 -m http.server -d data 8080` on your home network, or any static host) and set `html_digest.url` to its address. The push notification then opens the digest when tapped; without a `url`, the notification shows the file path.
 
 ### Automate with Cron
 
@@ -498,6 +561,7 @@ The tests load `tests/fixtures/search_config.json` (a made-up search) through `t
 | [`evaluate_jobs.py`](evaluate_jobs.py) | Stage 3 deterministic evaluator, JD logistics/onsite blocker, context-aware requirement parser, and scorer. |
 | [`llm_review.py`](llm_review.py) | Stage 4 LLM reviewer with SHA-256 caching, verbatim quote verification, and deterministic score calculation. |
 | [`sync_notion_db.py`](sync_notion_db.py) | Stage 5 Notion database syncer (records synced roles in the blocklists) and Callout dashboard logger. |
+| [`html_digest.py`](html_digest.py) | Stage 5 self-contained HTML page of matches (`data/digest.html`), with a store that keeps earlier runs' matches for `keep_days`. |
 | [`text_export.py`](text_export.py) | Stage 5 plain-text alternative to Notion: appends new qualified matches to a `.txt` log and records them in the blocklists. |
 | [`url_normalizer.py`](url_normalizer.py) | Canonical URL normalizer (strips tracking parameters, redundant `gh_jid`, and fragments). |
 | [`tests/`](tests) | Unit and regression tests, run against the generic `tests/fixtures/search_config.json`. |

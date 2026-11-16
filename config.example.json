@@ -10,7 +10,10 @@
     "run_history": "data/run_history.json",
     "linkedin_details_cache": "data/linkedin_details_cache.json",
     "candidate_profile": "candidate_profile.md",
-    "text_export": "data/job_matches.txt"
+    "text_export": "data/job_matches.txt",
+    "llm_spend": "data/llm_spend.json",
+    "html_digest": "data/digest.html",
+    "digest_store": "data/digest_matches.json"
   },
   "sources": {
     "lookback_days": 3,
@@ -28,10 +31,30 @@
       "Specialist Role Title"
     ],
     "searches": [
-      ["linkedin", "United States", " remote", 40],
-      ["linkedin", "Your City, ST", "", 20],
-      ["indeed", "Remote", "", 40],
-      ["indeed", "Your City, ST", "", 20]
+      [
+        "linkedin",
+        "United States",
+        " remote",
+        40
+      ],
+      [
+        "linkedin",
+        "Your City, ST",
+        "",
+        20
+      ],
+      [
+        "indeed",
+        "Remote",
+        "",
+        40
+      ],
+      [
+        "indeed",
+        "Your City, ST",
+        "",
+        20
+      ]
     ],
     "job_boards_enabled": true,
     "remoteok_enabled": true,
@@ -62,13 +85,35 @@
     "country_token_pattern": "(?:US|USA|U\\.S\\.A?\\.?|United States|continental U\\.?S\\.?)",
     "global_eligible_pattern": "\\b(worldwide|anywhere|global|north america|northern america|americas)\\b",
     "foreign_exclude_patterns": [
-      "\\bcanada\\b", "\\buk\\b", "\\bunited kingdom\\b", "\\bemea\\b", "\\blatam\\b",
-      "\\bapac\\b", "\\bindia\\b", "\\bgermany\\b", "\\bireland\\b", "\\bmexico\\b",
-      "\\baustralia\\b", "\\beurope\\b", "\\blatin america\\b", "\\bsingapore\\b",
-      "\\bbrazil\\b", "\\bpoland\\b", "\\bfrance\\b", "\\bspain\\b", "\\bnetherlands\\b"
+      "\\bcanada\\b",
+      "\\buk\\b",
+      "\\bunited kingdom\\b",
+      "\\bemea\\b",
+      "\\blatam\\b",
+      "\\bapac\\b",
+      "\\bindia\\b",
+      "\\bgermany\\b",
+      "\\bireland\\b",
+      "\\bmexico\\b",
+      "\\baustralia\\b",
+      "\\beurope\\b",
+      "\\blatin america\\b",
+      "\\bsingapore\\b",
+      "\\bbrazil\\b",
+      "\\bpoland\\b",
+      "\\bfrance\\b",
+      "\\bspain\\b",
+      "\\bnetherlands\\b"
     ],
     "jd_non_allowed_locations": [
-      "türkiye", "australia", "new zealand", "uk", "india", "europe", "latam", "canada"
+      "türkiye",
+      "australia",
+      "new zealand",
+      "uk",
+      "india",
+      "europe",
+      "latam",
+      "canada"
     ]
   },
   "compensation": {
@@ -127,7 +172,14 @@
     ],
     "generic_body_signal_min": 2,
     "exclude_seniority_patterns": [
-      "staff", "principal", "director", "vp", "head", "intern", "entry level", "junior"
+      "staff",
+      "principal",
+      "director",
+      "vp",
+      "head",
+      "intern",
+      "entry level",
+      "junior"
     ],
     "exclude_tech_patterns": [
       "\\bunwanted_tool_1\\b",
@@ -162,9 +214,24 @@
       "excluded_company_2"
     ],
     "exclude_recruiters": [
-      "staffing", "recruit\\w*", "talent\\w*", "headhunt\\w*", "search partners",
-      "jobot", "jobgether", "dice", "crossover", "cybercoders", "motion recruitment",
-      "robert half", "randstad", "teksystems", "insight global", "kforce", "adecco", "hays"
+      "staffing",
+      "recruit\\w*",
+      "talent\\w*",
+      "headhunt\\w*",
+      "search partners",
+      "jobot",
+      "jobgether",
+      "dice",
+      "crossover",
+      "cybercoders",
+      "motion recruitment",
+      "robert half",
+      "randstad",
+      "teksystems",
+      "insight global",
+      "kforce",
+      "adecco",
+      "hays"
     ],
     "allow_recruiters": [],
     "company_aliases": {
@@ -218,8 +285,12 @@
       "secondary_tool_with_minor_penalty": 5
     },
     "conditional_require_any": {
-      "if_present": ["secondary_tool_with_minor_penalty"],
-      "require_any_of": ["core_skill_1"]
+      "if_present": [
+        "secondary_tool_with_minor_penalty"
+      ],
+      "require_any_of": [
+        "core_skill_1"
+      ]
     },
     "hard_ask_penalties": [
       {
@@ -263,6 +334,21 @@
     "jd_chars": 9000,
     "jd_head_chars": 2500,
     "review_version": "1",
+    "repost_similarity": 0.8,
+    "budget": {
+      "max_reviews_per_run": 0,
+      "max_tokens_per_run": 0,
+      "max_tokens_per_day": 0,
+      "max_usd_per_run": 0,
+      "max_usd_per_day": 0
+    },
+    "pricing": {
+      "openai": {
+        "input_per_mtok": null,
+        "cached_input_per_mtok": null,
+        "output_per_mtok": null
+      }
+    },
     "components": {
       "hard_reqs": 4,
       "core_work": 3,
@@ -293,6 +379,12 @@
   },
   "text_export": {
     "enabled": false
+  },
+  "html_digest": {
+    "enabled": true,
+    "title": "Job Matches",
+    "keep_days": 30,
+    "url": ""
   },
   "notifications": {
     "notify_url": ""
