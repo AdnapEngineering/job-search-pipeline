@@ -215,14 +215,53 @@ _RESIDENCY_STATES_RE = re.compile(
     r'[^.\n]{0,40}?(?i:\b(?:resid\w+|live|living|located|based)\s+(?:with)?in)\s+'
     r'(?i:(?:one of )?(?:the )?(?:following )?(?:states?|locations?)\s*(?:of\s+)?:?\s*)?(' + _STATE_LIST + r')'
 )
-_TZ_NAMES = r'(?:eastern|central|mountain|pacific)'
+_TZ_ABBR_TO_NAME = {
+    'est': 'eastern', 'edt': 'eastern', 'et': 'eastern',
+    'cst': 'central', 'cdt': 'central', 'ct': 'central',
+    'mst': 'mountain', 'mdt': 'mountain', 'mt': 'mountain',
+    'pst': 'pacific', 'pdt': 'pacific', 'pt': 'pacific',
+}
+# Abbreviations match upper case only, so "pt" or "mt" inside ordinary text is not read as a zone
+_TZ_ABBRS = r'(?-i:(?:' + '|'.join(sorted((a.upper() for a in _TZ_ABBR_TO_NAME), key=len, reverse=True)) + r')\b)'
+_TZ_NAMES = r'(?:eastern|central|mountain|pacific|' + _TZ_ABBRS + r')'
 _TZ_LIST = _TZ_NAMES + r'(?:\s*(?:,|/|,?\s*(?:or|and))\s*' + _TZ_NAMES + r')*'
-# "must be located in the Eastern or Central time zone", "remote restricted to Central or Eastern time"
+# Residency only: "must be located in the Eastern or Central time zone", "remote restricted to Central or
+# Eastern time", "must be based in EST", "restricted to the ET or CT time zones". Working-hours wording
+# ("candidates from the US only (EST time zone)", "work EST hours") is left alone: it sets hours, not residence.
 _RESIDENCY_TZ_RE = re.compile(
     r'\b(?:(?:located|based|resid\w+|live|living)\s+(?:with)?in|restricted to|limited to)\s+(?:the\s+)?'
-    r'(' + _TZ_LIST + r')\s+(?:standard\s+)?time(?:\s*zones?)?\b', re.I
+    r'(?:(' + _TZ_LIST + r')\s+(?:standard\s+)?time(?:\s*zones?)?\b'
+    r'|(' + _TZ_ABBRS + r'(?:\s*(?:,|/|,?\s*(?:or|and))\s*' + _TZ_ABBRS + r')*)(?!\s+(?:hours|business))\b)', re.I
 )
 _TZ_NAME_RE = re.compile(_TZ_NAMES, re.I)
+
+
+def _tz_zones(listed):
+    """Canonical zone names ('eastern', ...) from a matched list of zone names and abbreviations."""
+    return {_TZ_ABBR_TO_NAME.get(z.lower(), z.lower()) for z in _TZ_NAME_RE.findall(listed)}
+
+
+_TZ_CONNECTOR = r'\s*(?:,|/|&|,?\s*(?:or|and))\s*'
+# MT and CT are also Montana and Connecticut. A state-code match followed by "time (zone)" or listed with a
+# zone-only abbreviation ("MT or PT") is a time zone list, so the state rule leaves it to the time zone rule.
+_TZ_ONLY_ABBRS = r'(?-i:(?:' + '|'.join(sorted((a.upper() for a in _TZ_ABBR_TO_NAME if a not in _US_STATES),
+                                               key=len, reverse=True)) + r')\b)'
+_TZ_AFTER_STATES_RE = re.compile(
+    r'(?:\s+(?:standard\s+)?time\b|(?:' + _TZ_CONNECTOR + r'[A-Z]{2}\b)*' + _TZ_CONNECTOR + _TZ_ONLY_ABBRS + r')', re.I
+)
+# Further zones after a time zone match: "in MT time zone or PT time zone", "in the Eastern time zone or Pacific"
+_TZ_CONTINUATION_RE = re.compile(
+    _TZ_CONNECTOR + r'(?:the\s+)?(' + _TZ_NAMES + r')(?:\s+(?:standard\s+)?time(?:\s*zones?)?\b)?', re.I
+)
+
+
+def _residency_tz_zones(text, m):
+    """Zones named by a time zone residency match, plus any listed right after it."""
+    zones, end = _tz_zones(m.group(1) or m.group(2)), m.end()
+    while (more := _TZ_CONTINUATION_RE.match(text, end)):
+        zones |= _tz_zones(more.group(1))
+        end = more.end()
+    return zones
 _REMOTE_ALTERNATIVE_RE = re.compile(r'\bremote(?:ly)?\b|\b(?:anywhere|elsewhere)\b', re.I)
 
 
@@ -246,11 +285,13 @@ def remote_restriction(job, text):
                 return m.group(0).strip(' )]')
         for m in _RESIDENCY_STATES_RE.finditer(text):
             # "...located in Texas or work remotely" offers a way out; leave those to the AI review
+            if _TZ_AFTER_STATES_RE.match(text, m.end()):
+                continue
             if _other_states_only(m.group(1)) and not _REMOTE_ALTERNATIVE_RE.search(text[m.end():m.end() + 60]):
                 return m.group(0).replace('\n', ' ').strip()[:140]
     if _HOME_TIMEZONES:
         for m in _RESIDENCY_TZ_RE.finditer(text):
-            zones = {z.lower() for z in _TZ_NAME_RE.findall(m.group(1))}
+            zones = _residency_tz_zones(text, m)
             if zones and not (zones & _HOME_TIMEZONES):
                 return m.group(0).replace('\n', ' ').strip()
     return ''
