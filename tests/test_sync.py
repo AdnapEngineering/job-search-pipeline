@@ -106,7 +106,7 @@ class SummaryLabelTests(_Base):
 
     def test_run_history_line(self):
         with patch.object(sync, "_save_run_history") as save:
-            sync._record_run({"top_matches": self.MATCHES, "total_evaluated": 100}, [], 80)
+            sync.record_run({"top_matches": self.MATCHES, "total_evaluated": 100}, [], 80)
         self.assertIn("4 open matches (1 at 80%+), 0 synced", save.call_args.args[0][-1]["summary"])
 
     def notify(self, matches, synced=()):

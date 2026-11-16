@@ -251,8 +251,8 @@ def _build_summary_rich_text(eval_results, synced_urls, min_score=65, history=No
     return rich_text
 
 
-def _record_run(eval_results, synced_urls, min_score=80) -> list[dict]:
-    """Append this run to the persisted history and return the previous runs."""
+def record_run(eval_results, synced_urls, min_score=80) -> list[dict]:
+    """Append this run to the persisted history and return the previous runs (call once per run)."""
     top_matches = eval_results.get("top_matches", [])
     manual_reviews = eval_results.get("manual_reviews", [])
     ai_skipped = eval_results.get("ai_skipped", [])
@@ -337,8 +337,9 @@ def _remember_summary_block(block_id):
         print(f"[Notion Log] Could not save summary_block_id to {CONFIG_PATH}: {e}", file=sys.stderr)
 
 
-def log_run_summary_to_notion(eval_results, synced_urls, min_score=65, database_id=DEFAULT_DB_ID):
-    """Creates or updates the Callout run summary block on the parent page of the Job Prospects DB."""
+def log_run_summary_to_notion(eval_results, synced_urls, min_score=65, database_id=DEFAULT_DB_ID, history=None):
+    """Creates or updates the Callout run summary block on the parent page of the Job Prospects DB.
+    `history` is the previous runs from record_run; when None, this run is recorded here."""
     if not database_id:
         return None
     headers = _notion_headers()
@@ -348,7 +349,7 @@ def log_run_summary_to_notion(eval_results, synced_urls, min_score=65, database_
     notion_cfg = cfg.get("notion") or {}
     summary_block_id = notion_cfg.get("summary_block_id") or cfg.get("summary_block_id")
 
-    previous_runs = _record_run(eval_results, synced_urls, min_score)
+    previous_runs = record_run(eval_results, synced_urls, min_score) if history is None else history
     rich_text = _build_summary_rich_text(eval_results, synced_urls, min_score=min_score, history=previous_runs)
 
     if summary_block_id and _update_summary_block(summary_block_id, rich_text, headers):

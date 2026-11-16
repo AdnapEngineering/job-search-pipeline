@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Check that the pipeline is set up: dependencies, config, profile, AI reviewer, Notion, outputs.
+"""Check that the pipeline is set up: dependencies, config, profile, AI reviewer, Notion, Obsidian, outputs.
 
 Run `python3 -m job_search_pipeline --check` (or `python3 -m job_search_pipeline.check`). It fetches no jobs, spends no AI
 quota and writes nothing to Notion; the only network call is one read of the Notion database, when
@@ -230,6 +230,31 @@ def check_notion(report, cfg, env):
         report.add(OK, "Notion", f"database {title!r} reachable with all required properties")
 
 
+def check_obsidian(report, cfg, env):
+    obsidian = cfg.get("obsidian") or {}
+    if not obsidian.get("enabled", False):
+        report.add(OFF, "Obsidian", "off (obsidian.enabled is false)")
+        return
+    vault = os.path.expanduser(env.get("OBSIDIAN_VAULT") or obsidian.get("vault_path") or "")
+    if not vault:
+        report.add(FAIL, "Obsidian", "enabled, but obsidian.vault_path (or OBSIDIAN_VAULT) is empty; set it to your "
+                                     "vault folder, or run with --no-obsidian")
+        return
+    if not os.path.isdir(vault):
+        report.add(FAIL, "Obsidian", f"vault folder {vault} does not exist")
+        return
+    folder = os.path.join(vault, obsidian.get("folder") or "Job Prospects")
+    probe = folder if os.path.isdir(folder) else vault
+    if not os.access(probe, os.W_OK):
+        report.add(FAIL, "Obsidian", f"{probe} is not writable")
+        return
+    if not os.path.isdir(os.path.join(vault, ".obsidian")):
+        report.add(WARN, "Obsidian", f"{vault} has no .obsidian folder, so it may not be a vault (open it in "
+                                     "Obsidian once); notes will still be written there")
+        return
+    report.add(OK, "Obsidian", f"notes go to {folder}")
+
+
 def check_outputs(report, cfg, env, config):
     data_dir = os.path.dirname(config.get_path("filtered_jobs", "data/filtered_jobs.json"))
     probe = data_dir
@@ -246,7 +271,7 @@ def check_outputs(report, cfg, env, config):
     if (cfg.get("text_export") or {}).get("enabled", False):
         outputs.append("text export")
     if outputs:
-        report.add(OK, "Outputs", ", ".join(outputs) + " (plus Notion, when on)")
+        report.add(OK, "Outputs", ", ".join(outputs) + " (plus Notion and Obsidian, when on)")
     notify = env.get("NOTIFY_URL") or (cfg.get("notifications") or {}).get("notify_url") or cfg.get("notify_url")
     if notify:
         report.add(OK, "Notifications", f"set ({urlparse(notify).netloc or 'custom URL'})")
@@ -265,6 +290,7 @@ def run_checks():
             has_profile = check_profile(report, config)
             check_ai_review(report, cfg, has_profile)
             check_notion(report, cfg, env)
+            check_obsidian(report, cfg, env)
             check_outputs(report, cfg, env, config)
     errors, warnings = report.count(FAIL), report.count(WARN)
     print(f"\n{errors} problem(s), {warnings} warning(s). "

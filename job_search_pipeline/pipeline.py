@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""End-to-end orchestrator: fetch, scrape, evaluate, AI review, .txt export / Notion sync, summary and notification."""
+"""End-to-end orchestrator: fetch, scrape, evaluate, AI review, .txt export / Obsidian / Notion sync, summary and notification."""
 import argparse
 import os
 import subprocess
@@ -14,7 +14,10 @@ from job_search_pipeline.evaluate import evaluate_jobs, generate_markdown
 from job_search_pipeline.outputs.html_digest import HTML_DIGEST_ENABLED, HTML_DIGEST_PATH, HTML_DIGEST_URL, write_digest
 from job_search_pipeline.review import PROVIDER, reason_for_notion, review_matches, spend_line
 from job_search_pipeline.config import CFG, ROOT_DIR, get_path, load_json
-from job_search_pipeline.outputs.notion import DEFAULT_DB_ID, log_run_summary_to_notion, match_tally, sync_jobs_to_notion
+from job_search_pipeline.outputs.notion import (DEFAULT_DB_ID, log_run_summary_to_notion, match_tally, record_run,
+                                                sync_jobs_to_notion)
+from job_search_pipeline.outputs.obsidian import (OBSIDIAN_ENABLED, VAULT_PATH, log_run_summary_to_obsidian,
+                                                  sync_jobs_to_obsidian)
 from job_search_pipeline.outputs.text_export import TEXT_EXPORT_ENABLED, TEXT_EXPORT_PATH, export_jobs_to_text
 
 FILTERED_JOBS = get_path("filtered_jobs", "data/filtered_jobs.json")
@@ -137,14 +140,20 @@ def parse_args(argv=None):
     parser = argparse.ArgumentParser(prog="python3 -m job_search_pipeline",
                                      description="End-to-End Automated Job Search Pipeline")
     parser.add_argument("--check", action="store_true",
-                        help="Check the setup (config, profile, AI reviewer, Notion, outputs) and exit without running")
+                        help="Check the setup (config, profile, AI reviewer, Notion, Obsidian, outputs) and exit without running")
     parser.add_argument("--skip-fetch", action="store_true", help="Skip fetching and filtering step")
     parser.add_argument("--skip-scrape", action="store_true", help="Skip batch scraping JD step")
     parser.add_argument("--no-notion", action="store_true", help="Skip syncing to Notion")
     parser.add_argument("--no-notion-log", action="store_true", help="Skip logging run summary to Notion")
+    vault = parser.add_mutually_exclusive_group()
+    vault.add_argument("--obsidian-vault", type=str, default=None,
+                       help="Write new matches as notes in this Obsidian vault (overrides obsidian in config.json)")
+    vault.add_argument("--no-obsidian", action="store_true",
+                       help="Skip the Obsidian notes even when obsidian.enabled is true in config.json")
+    parser.add_argument("--no-obsidian-log", action="store_true", help="Skip writing the run-summary note to Obsidian")
     parser.add_argument("--no-notify", action="store_true", help="Skip sending push notification")
     parser.add_argument("--min-score", type=int, default=default_min_score,
-                        help=f"Minimum Match %% to sync to Notion / export to .txt (default: {default_min_score})")
+                        help=f"Minimum Match %% to sync to Notion / Obsidian / .txt (default: {default_min_score})")
     parser.add_argument("--review-min-score", type=int, default=default_review_score,
                         help=f"Minimum keyword score for the AI review (default: {default_review_score})")
     parser.add_argument("--no-llm-review", action="store_true",
@@ -172,6 +181,15 @@ def text_export_path(args):
     return None
 
 
+def obsidian_vault(args):
+    """The Obsidian vault to write this run's notes into, or None when that output is off."""
+    if args.obsidian_vault:
+        return os.path.expanduser(args.obsidian_vault)
+    if OBSIDIAN_ENABLED and not args.no_obsidian:
+        return VAULT_PATH or None
+    return None
+
+
 def html_digest_path(args):
     """Where to write this run's HTML digest, or None when it is off."""
     if args.html_output:
@@ -187,7 +205,7 @@ def drop_blocklisted(eval_results):
     top_matches = eval_results.get("top_matches", [])
     kept = [j for j in top_matches if not is_blocked(j, blocked_urls, blocked_roles)]
     if len(top_matches) > len(kept):
-        print(f"Dropped {len(top_matches) - len(kept)} match(es) already synced to or removed from Notion.")
+        print(f"Dropped {len(top_matches) - len(kept)} match(es) already synced, exported or dismissed.")
     eval_results["top_matches"] = kept
 
 
@@ -216,7 +234,8 @@ def write_markdown(eval_results, path):
     print(f"\nSaved Markdown evaluation table to: {path}")
 
 
-def notify_results(eval_results, synced_urls, exported_urls, health, notion_enabled, min_score=80, digest_path=None):
+def notify_results(eval_results, synced_urls, exported_urls, health, notion_enabled, min_score=80, digest_path=None,
+                   obsidian_urls=()):
     top_matches = eval_results["top_matches"]
     tally = match_tally(top_matches, min_score)
     manual_reviews = eval_results.get("manual_reviews", [])
@@ -226,6 +245,8 @@ def notify_results(eval_results, synced_urls, exported_urls, health, notion_enab
 
     lines = [f"{len(top_matches)} open match(es), {tally['at_threshold']} at {min_score}%+"
              + (f" ({len(synced_urls)} synced to Notion)." if notion_enabled else ".")]
+    if obsidian_urls:
+        lines.append(f"{len(obsidian_urls)} new note(s) added to Obsidian.")
     if exported_urls:
         lines.append(f"{len(exported_urls)} new match(es) exported to text file.")
     deferred = sum(1 for j in top_matches if j.get("review_deferred"))
@@ -306,17 +327,27 @@ def run(args):
           + f"{tally['third_party']} from third-party posters)")
     print(f"Total manual reviews needed: {len(eval_results.get('manual_reviews', []))}")
 
-    # 5. Export to .txt / sync to Notion. The export runs first and leaves blocklisting to Notion when
-    # Notion is active, so a role that fails to sync is retried next run instead of being dropped.
+    # 5. Export to .txt / Obsidian / Notion. Only the last active output blocklists what it wrote, so a
+    # role that fails there is retried next run instead of being dropped. Obsidian never overwrites a
+    # note, so retrying a role it already wrote is harmless.
     notion_active = not args.no_notion and bool(DEFAULT_DB_ID)
+    vault = obsidian_vault(args)
     exported_urls = []
     txt_path = text_export_path(args)
     if txt_path:
         print_banner(f"Export to Text File (Min Score: {args.min_score}%)")
         exported_urls = export_jobs_to_text(eval_results["top_matches"], txt_path, min_score=args.min_score,
-                                            record_in_blocklist=not notion_active)
+                                            record_in_blocklist=not (notion_active or vault))
     else:
         print("\n--> [Step: Export to Text File] Skipped.")
+
+    obsidian_urls = []
+    if vault:
+        print_banner(f"Write Notes to Obsidian (Min Score: {args.min_score}%)")
+        obsidian_urls = sync_jobs_to_obsidian(eval_results["top_matches"], vault, min_score=args.min_score,
+                                              record_in_blocklist=not notion_active)
+    else:
+        print("\n--> [Step: Write Notes to Obsidian] Skipped.")
 
     synced_urls = []
     if args.no_notion:
@@ -326,11 +357,11 @@ def run(args):
         synced_urls = sync_jobs_to_notion(eval_results["top_matches"], min_score=args.min_score)
         print(f"Successfully synced {len(synced_urls)} new prospect(s) to Notion.")
 
-    # 6. HTML digest, Markdown summary and Notion run log
+    # 6. HTML digest, Markdown summary and Notion / Obsidian run logs
     digest_path = html_digest_path(args)
     if digest_path:
         print_banner("Write HTML Digest")
-        write_digest(eval_results, synced_urls, exported_urls, digest_path, min_score=args.min_score,
+        write_digest(eval_results, synced_urls, [*exported_urls, *obsidian_urls], digest_path, min_score=args.min_score,
                      spend=eval_results.get("ai_spend"))
     else:
         print("\n--> [Step: Write HTML Digest] Skipped.")
@@ -338,16 +369,26 @@ def run(args):
     if args.md_output:
         write_markdown(eval_results, args.md_output)
 
-    if args.no_notion or args.no_notion_log:
-        print("\n--> [Step: Log Run Summary to Notion] Skipped.")
-    else:
+    notion_log = notion_active and not args.no_notion_log
+    obsidian_log = bool(vault) and not args.no_obsidian_log
+    # Record the run once, so the shared run history gets one entry however many logs are written
+    history = record_run(eval_results, synced_urls or obsidian_urls, args.min_score) if notion_log or obsidian_log else None
+    if notion_log:
         print_banner("Log Run Summary to Notion")
-        log_run_summary_to_notion(eval_results, synced_urls, min_score=args.min_score)
+        log_run_summary_to_notion(eval_results, synced_urls, min_score=args.min_score, history=history)
+    else:
+        print("\n--> [Step: Log Run Summary to Notion] Skipped.")
+    if obsidian_log:
+        print_banner("Log Run Summary to Obsidian")
+        log_run_summary_to_obsidian(eval_results, obsidian_urls, min_score=args.min_score, history=history,
+                                    vault_path=vault)
+    else:
+        print("\n--> [Step: Log Run Summary to Obsidian] Skipped.")
 
     # 7. Push notification
     if not args.no_notify:
         notify_results(eval_results, synced_urls, exported_urls, health, notion_enabled=not args.no_notion,
-                       min_score=args.min_score, digest_path=digest_path)
+                       min_score=args.min_score, digest_path=digest_path, obsidian_urls=obsidian_urls)
 
     print("\n[Pipeline Complete] Done.")
 
