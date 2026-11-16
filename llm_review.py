@@ -58,6 +58,8 @@ REVIEW_VERSION = str(_LLM_CFG.get("review_version", "1"))
 COMPONENTS = _LLM_CFG.get("components") or {"hard_reqs": 4, "core_work": 3, "evidence": 3, "level": 2}
 MAX_TOTAL = sum(COMPONENTS.values())
 BLOCKER_CAP = int(_LLM_CFG.get("blocker_cap", 30))
+# Highest Match % for a role graded level 0 (under- or over-leveled for the candidate); 100 = no cap
+LEVEL_MISMATCH_CAP = int(_LLM_CFG.get("level_mismatch_cap", 100))
 # "apply" means "will be synced": unless set explicitly, the verdict line follows the sync threshold
 APPLY_MIN = int(_LLM_CFG.get("apply_min_score") or (CFG.get("skills_and_scoring") or {}).get("min_sync_score") or 80)
 STRETCH_MIN = int(_LLM_CFG.get("stretch_min_score", 50))
@@ -255,6 +257,8 @@ def score_components(parts, logistics_ok=True, pay=None):
         score -= PAY_MIDPOINT_PENALTY
     if parts["hard_reqs"] == 0 or not logistics_ok:
         score = min(score, BLOCKER_CAP)
+    if parts.get("level") == 0:
+        score = min(score, LEVEL_MISMATCH_CAP)
     score = min(score, pay_floor_cap(pay))
     verdict = "apply" if score >= APPLY_MIN else "stretch" if score >= STRETCH_MIN else "skip"
     return score, verdict
