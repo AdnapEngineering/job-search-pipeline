@@ -91,7 +91,8 @@ def page_data(eval_results, store, now, min_score, spend=None):
                                    ("company", "title", "score", "phrase", "url")),
         "manual_reviews": _rows(eval_results.get("manual_reviews", []), ("company", "title", "reason", "url")),
         "sources": health.get("line", ""),
-        "warnings": health.get("warnings", []),
+        "warnings": ([eval_results["ai_review_skipped"]] if eval_results.get("ai_review_skipped") else [])
+                    + list(health.get("warnings", [])),
         "spend": spend or None,
     }
 

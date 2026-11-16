@@ -5,10 +5,8 @@ Run `python3 -m job_search_pipeline --check` (or `python3 -m job_search_pipeline
 quota and writes nothing to Notion; the only network call is one read of the Notion database, when
 Notion is configured. Exits 1 when something would make a run fail, 0 otherwise.
 """
-import contextlib
 import difflib
 import importlib.util
-import io
 import os
 import sys
 from urllib.parse import urlparse
@@ -165,22 +163,31 @@ def check_profile(report, config):
 
 def check_ai_review(report, cfg, has_profile):
     llm = cfg.get("llm_review") or {}
-    provider = llm.get("provider", "agy")
     import job_search_pipeline.review as llm_review
+    auto = (llm.get("provider") or "auto").strip().lower() == "auto"
+    provider = llm_review.resolve_provider(llm)
     try:
-        with contextlib.redirect_stderr(io.StringIO()):  # it prints its own 'not found' line
-            executable = llm_review._provider_config(provider)
+        executable = llm_review._cli_path(provider)
     except ValueError as e:
         report.add(FAIL, "AI review", str(e))
         return
     if not executable:
-        report.add(WARN, "AI review", f"provider {provider!r} is set but its CLI was not found, so matches go out "
-                                      "on keyword scores only; install and sign in to it, set its *_path in "
-                                      "llm_review, or pick another provider")
-    elif has_profile:
-        report.add(OK, "AI review", f"{provider} via {executable} (model {llm.get('model', llm_review.DEFAULT_MODEL)})")
+        if auto:
+            report.add(WARN, "AI review", "no supported CLI (agy, claude or codex) was found, so matches go out on "
+                                          "keyword scores only; install and sign in to one, or set its *_path in "
+                                          "llm_review")
+        else:
+            report.add(WARN, "AI review", f"provider {provider!r} is set but its CLI was not found, so matches go "
+                                          "out on keyword scores only; install and sign in to it, set its *_path "
+                                          "in llm_review, or pick another provider (or \"auto\")")
+        return
+    detail = f"{provider}{' (auto-detected)' if auto else ''} via {executable}"
+    model = llm_review.resolve_model(llm, provider)
+    detail += f" (model {model})" if model else " (the CLI's default model)"
+    if has_profile:
+        report.add(OK, "AI review", detail)
     else:
-        report.add(WARN, "AI review", f"{provider} CLI found, but skipped until candidate_profile.md exists")
+        report.add(WARN, "AI review", f"{detail} found, but skipped until candidate_profile.md exists")
 
 
 def check_notion(report, cfg, env):

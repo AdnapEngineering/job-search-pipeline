@@ -148,6 +148,42 @@ class ProviderTests(unittest.TestCase):
         with patch.object(review, "_provider_config", return_value=None):
             self.assertEqual(review.review_matches([JOB], "unused.json"), ([JOB], []))
 
+    def test_missing_cli_reports_why_the_review_was_skipped(self):
+        stats = {}
+        with (patch.object(review, "PROVIDER", "anthropic"), patch.object(review, "_LLM_CFG", {}),
+              patch("job_search_pipeline.review.shutil.which", return_value=None),
+              contextlib.redirect_stderr(io.StringIO())):
+            self.assertEqual(review.review_matches([JOB], "unused.json", stats=stats), ([JOB], []))
+        self.assertEqual(list(stats), ["skipped"])
+        self.assertIn("claude CLI", stats["skipped"])
+        self.assertIn("keyword scores only", stats["skipped"])
+
+    def test_missing_profile_reports_why_the_review_was_skipped(self):
+        stats = {}
+        with (patch.object(review, "_provider_config", return_value="/test/cli"),
+              patch.object(review, "_cli_path", return_value="/test/cli"),
+              patch.object(review, "PROFILE_PATH", "/nonexistent/candidate_profile.md"),
+              contextlib.redirect_stderr(io.StringIO())):
+            review.review_matches([JOB], "unused.json", stats=stats)
+        self.assertIn("candidate_profile.md not found", stats["skipped"])
+
+    def test_auto_provider_picks_the_first_installed_cli(self):
+        installed = {"agy": None, "anthropic": "/bin/claude", "openai": "/bin/codex"}
+        with patch.object(review, "_cli_path", side_effect=installed.get):
+            self.assertEqual(review.resolve_provider({}), "anthropic")
+            self.assertEqual(review.resolve_provider({"provider": "auto"}), "anthropic")
+            self.assertEqual(review.resolve_provider({"provider": "openai"}), "openai")
+        with patch.object(review, "_cli_path", return_value=None):
+            self.assertEqual(review.resolve_provider({}), "anthropic")
+        with patch.object(review, "_cli_path", return_value="/bin/agy"):
+            self.assertEqual(review.resolve_provider({}), "agy")  # existing agy caches stay valid
+
+    def test_model_defaults_follow_the_provider(self):
+        self.assertEqual(review.resolve_model({}, "anthropic"), "sonnet")
+        self.assertEqual(review.resolve_model({}, "agy"), "gemini-4-hydrogen-medium")
+        self.assertEqual(review.resolve_model({}, "openai"), "")
+        self.assertEqual(review.resolve_model({"model": "opus"}, "anthropic"), "opus")
+
     def test_real_subprocess_pipes_prompt_and_parses_cli_output(self):
         with tempfile.TemporaryDirectory() as tmp:
             executable = Path(tmp) / "fake_cli"
