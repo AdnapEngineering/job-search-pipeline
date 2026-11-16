@@ -21,9 +21,9 @@ from datetime import datetime, timedelta
 
 from bs4 import BeautifulSoup
 
-from blocklist import role_key
-from pipeline_config import CFG, atomic_write_json, get_path, load_json
-from url_normalizer import normalize_url
+from job_search_pipeline.blocklist import role_key
+from job_search_pipeline.config import CFG, atomic_write_json, get_path, load_json
+from job_search_pipeline.urls import normalize_url
 
 _LLM_CFG = CFG.get("llm_review") or {}
 _COMP_CFG = CFG.get("compensation") or {}

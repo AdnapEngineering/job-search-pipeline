@@ -15,7 +15,7 @@ from urllib.parse import parse_qs, urlparse
 import aiohttp
 from bs4 import BeautifulSoup
 
-from pipeline_config import CFG, atomic_write_json, get_path, load_json
+from job_search_pipeline.config import CFG, atomic_write_json, get_path, load_json
 
 _SKILLS_CFG = CFG.get("skills_and_scoring") or {}
 _SCRAPER_CFG = CFG.get("scraper") or {}

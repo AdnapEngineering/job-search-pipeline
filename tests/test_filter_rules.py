@@ -9,9 +9,9 @@ import _fixture_config  # noqa: F401  (must come before any pipeline import)
 import unittest
 import unittest.mock
 
-import evaluate_jobs as ev
-import fetch_and_filter as ff
-from blocklist import canon_company, role_key
+import job_search_pipeline.evaluate as ev
+import job_search_pipeline.sources.filter as ff
+from job_search_pipeline.blocklist import canon_company, role_key
 
 
 def logistics(desc, loc="Remote? (unverified)", ats="Linkedin", remote=False, title="Software Engineer"):

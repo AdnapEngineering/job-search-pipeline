@@ -65,9 +65,9 @@ PYTHON="${SCRIPT_DIR}/.venv/bin/python"
 
 EXIT_CODE=0
 if [ $# -gt 0 ]; then
-  "$PYTHON" "${SCRIPT_DIR}/run_pipeline.py" "$@" 2>&1 | tee -a "$LOG_FILE" || EXIT_CODE=$?
+  "$PYTHON" -m job_search_pipeline "$@" 2>&1 | tee -a "$LOG_FILE" || EXIT_CODE=$?
 else
-  "$PYTHON" "${SCRIPT_DIR}/run_pipeline.py" \
+  "$PYTHON" -m job_search_pipeline \
     --md-output "$SUMMARY_FILE" 2>&1 | tee -a "$LOG_FILE" || EXIT_CODE=$?
 fi
 

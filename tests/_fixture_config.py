@@ -23,7 +23,7 @@ _DATA_FILES = {
     "html_digest": "digest.html", "digest_store": "digest_matches.json",
 }
 
-if "pipeline_config" in sys.modules and not os.environ.get("JOB_PIPELINE_TEST_DIR"):
+if "job_search_pipeline.config" in sys.modules and not os.environ.get("JOB_PIPELINE_TEST_DIR"):
     raise RuntimeError("tests/_fixture_config.py must be imported before any pipeline module")
 
 if not os.environ.get("JOB_PIPELINE_TEST_DIR"):

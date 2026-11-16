@@ -12,13 +12,13 @@ from urllib.parse import urlparse
 import sys
 from typing import NamedTuple
 
-from blocklist import role_key
-from fetch_and_filter import (
+from job_search_pipeline.blocklist import role_key
+from job_search_pipeline.sources.filter import (
     FOREIGN_CITY_RE, FOREIGN_PLACES, FOREIGN_RE, STRONG_TARGET_RE, UNSPECIFIED_LOCATIONS, US_PATTERN, is_local_metro,
     is_recent, is_valid_title, names_foreign_place,
 )
-from pipeline_config import CFG, atomic_write_json, compile_alternation, get_path, term_regex
-from url_normalizer import is_aggregator_url
+from job_search_pipeline.config import CFG, atomic_write_json, compile_alternation, get_path, term_regex
+from job_search_pipeline.urls import is_aggregator_url
 
 _SKILLS_CFG = CFG.get("skills_and_scoring") or {}
 _TITLES_CFG = CFG.get("titles") or {}
@@ -276,7 +276,7 @@ def remote_restriction(job, text):
     These are stated outright in the title, feed location or JD, so they need no AI review."""
     if _HOME_STATES:
         fields = [job.get('title') or '']
-        # LinkedIn/Indeed locations are rewritten by fetch_indeed ("Remote (City, ST)"), not a restriction
+        # LinkedIn/Indeed locations are rewritten by sources/linkedin_indeed.py ("Remote (City, ST)"), not a restriction
         if (job.get('ats') or '').lower() not in ('linkedin', 'indeed'):
             fields.append(job.get('location') or '')
         for field in fields:
@@ -972,7 +972,7 @@ def generate_markdown(result, limit=25):
         lines.extend(f"- ⚠️ {w}" for w in health["warnings"])
 
     if result.get("ai_spend"):
-        from llm_review import spend_line  # deferred: evaluate_jobs runs standalone without the review stage
+        from job_search_pipeline.review import spend_line  # deferred: evaluate.py runs standalone without the review stage
         lines.extend(["", "### AI Review Spend", "", spend_line(result["ai_spend"])])
 
     return "\n".join(lines)

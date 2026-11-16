@@ -9,13 +9,13 @@ from datetime import datetime, timezone
 
 import requests
 
-from blocklist import is_blocked, load_blocklist, load_role_blocklist
-from evaluate_jobs import evaluate_jobs, generate_markdown
-from html_digest import HTML_DIGEST_ENABLED, HTML_DIGEST_PATH, HTML_DIGEST_URL, write_digest
-from llm_review import PROVIDER, reason_for_notion, review_matches, spend_line
-from pipeline_config import CFG, SCRIPT_DIR, get_path, load_json
-from sync_notion_db import DEFAULT_DB_ID, log_run_summary_to_notion, match_tally, sync_jobs_to_notion
-from text_export import TEXT_EXPORT_ENABLED, TEXT_EXPORT_PATH, export_jobs_to_text
+from job_search_pipeline.blocklist import is_blocked, load_blocklist, load_role_blocklist
+from job_search_pipeline.evaluate import evaluate_jobs, generate_markdown
+from job_search_pipeline.outputs.html_digest import HTML_DIGEST_ENABLED, HTML_DIGEST_PATH, HTML_DIGEST_URL, write_digest
+from job_search_pipeline.review import PROVIDER, reason_for_notion, review_matches, spend_line
+from job_search_pipeline.config import CFG, ROOT_DIR, get_path, load_json
+from job_search_pipeline.outputs.notion import DEFAULT_DB_ID, log_run_summary_to_notion, match_tally, sync_jobs_to_notion
+from job_search_pipeline.outputs.text_export import TEXT_EXPORT_ENABLED, TEXT_EXPORT_PATH, export_jobs_to_text
 
 FILTERED_JOBS = get_path("filtered_jobs", "data/filtered_jobs.json")
 ENRICHED_JOBS = get_path("enriched_jobs", "data/enriched_jobs.json")
@@ -109,7 +109,7 @@ def print_banner(step_name, detail=""):
     print("==========================================")
 
 
-def run_step(step_name, cmd, cwd=SCRIPT_DIR):
+def run_step(step_name, cmd, cwd=ROOT_DIR):
     """Run a stage script as a subprocess; returns True on exit code 0."""
     print_banner(step_name, f"Running: {' '.join(cmd)}")
     started = time.monotonic()
@@ -134,7 +134,8 @@ def parse_args(argv=None):
     default_min_score = int(_SKILLS_CFG.get("min_sync_score", 80))
     default_review_score = int(_SKILLS_CFG.get("min_review_score", 55))
 
-    parser = argparse.ArgumentParser(description="End-to-End Automated Job Search Pipeline")
+    parser = argparse.ArgumentParser(prog="python3 -m job_search_pipeline",
+                                     description="End-to-End Automated Job Search Pipeline")
     parser.add_argument("--check", action="store_true",
                         help="Check the setup (config, profile, AI reviewer, Notion, outputs) and exit without running")
     parser.add_argument("--skip-fetch", action="store_true", help="Skip fetching and filtering step")
@@ -271,13 +272,13 @@ def run(args):
     if args.skip_fetch:
         print("\n--> [Step: Fetch & Filter] Skipped.")
     else:
-        run_stage_script(args, "Fetch & Filter", [sys.executable, "fetch_and_filter.py"])
+        run_stage_script(args, "Fetch & Filter", [sys.executable, "-m", "job_search_pipeline.sources.filter"])
 
     # 2. Batch scrape JDs
     if args.skip_scrape:
         print("\n--> [Step: Batch Scrape JDs] Skipped.")
     else:
-        run_stage_script(args, "Batch Scrape JDs", [sys.executable, "batch_scraper.py", FILTERED_JOBS, ENRICHED_JOBS])
+        run_stage_script(args, "Batch Scrape JDs", [sys.executable, "-m", "job_search_pipeline.scrape", FILTERED_JOBS, ENRICHED_JOBS])
 
     # 3. Evaluate jobs
     print_banner("Evaluate Matches")
@@ -354,7 +355,7 @@ def run(args):
 def main():
     args = parse_args()
     if args.check:
-        from check_setup import run_checks
+        from job_search_pipeline.check import run_checks
         sys.exit(run_checks())
     try:
         run(args)

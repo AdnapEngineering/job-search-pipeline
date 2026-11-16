@@ -14,14 +14,14 @@ from datetime import datetime, timezone
 import pandas as pd
 from jobspy import scrape_jobs
 
-from evaluate_jobs import JD_HYBRID_ONSITE_RE, JD_US_REMOTE_RE, hard_onsite_passage
-from fetch_and_filter import (
+from job_search_pipeline.evaluate import JD_HYBRID_ONSITE_RE, JD_US_REMOTE_RE, hard_onsite_passage
+from job_search_pipeline.sources.filter import (
     FILTERED_JOBS_PATH, LOOKBACK_DAYS, MIN_SALARY, is_local_metro, is_valid_company, names_foreign_place,
 )
-from pipeline_config import (
+from job_search_pipeline.config import (
     CFG, atomic_write_json, compile_alternation, compile_regex_list, get_path, load_json, term_regex,
 )
-from url_normalizer import is_aggregator_url, normalize_url
+from job_search_pipeline.urls import is_aggregator_url, normalize_url
 
 _TITLES_CFG = CFG.get("titles") or {}
 _SKILLS_CFG = CFG.get("skills_and_scoring") or {}

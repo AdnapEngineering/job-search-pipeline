@@ -5,8 +5,8 @@ import os
 import tempfile
 import unittest
 
-import check_setup as cs
-import sync_notion_db as sync
+import job_search_pipeline.check as cs
+import job_search_pipeline.outputs.notion as sync
 
 TEMPLATE = {
     "sources": {"lookback_days": 3, "search_terms": ["Target Role Title 1"]},

@@ -6,10 +6,10 @@ import io
 import unittest
 from unittest.mock import patch
 
-import blocklist
-import run_pipeline
-import sync_notion_db as sync
-from pipeline_config import atomic_write_json
+import job_search_pipeline.blocklist as blocklist
+import job_search_pipeline.pipeline as run_pipeline
+import job_search_pipeline.outputs.notion as sync
+from job_search_pipeline.config import atomic_write_json
 
 
 class _Res:

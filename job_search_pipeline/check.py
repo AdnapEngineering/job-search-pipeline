@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Check that the pipeline is set up: dependencies, config, profile, AI reviewer, Notion, outputs.
 
-Run `python3 check_setup.py` (or `python3 run_pipeline.py --check`). It fetches no jobs, spends no AI
+Run `python3 -m job_search_pipeline --check` (or `python3 -m job_search_pipeline.check`). It fetches no jobs, spends no AI
 quota and writes nothing to Notion; the only network call is one read of the Notion database, when
 Notion is configured. Exits 1 when something would make a run fail, 0 otherwise.
 """
@@ -13,7 +13,7 @@ import os
 import sys
 from urllib.parse import urlparse
 
-SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
+ROOT_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
 # pip package -> import name, for every runtime dependency in requirements.txt
 DEPENDENCIES = {"requests": "requests", "beautifulsoup4": "bs4", "aiohttp": "aiohttp", "pandas": "pandas",
@@ -36,7 +36,7 @@ PLACEHOLDER_KEYS = [
 ]
 
 # The cron wrapper loads these before running; read them here too so a direct run checks the same values
-ENV_FILES = [os.path.expanduser("~/.config/notion/job-search.env"), os.path.join(SCRIPT_DIR, ".env")]
+ENV_FILES = [os.path.expanduser("~/.config/notion/job-search.env"), os.path.join(ROOT_DIR, ".env")]
 
 OK, WARN, FAIL, OFF = "ok", "warn", "fail", "off"
 _MARKS = {OK: "✓", WARN: "!", FAIL: "✗", OFF: "-"}
@@ -123,34 +123,34 @@ def check_dependencies(report):
 
 
 def check_config(report):
-    """Load the config the way a run does; returns (pipeline_config module, cfg) or (None, None)."""
+    """Load the config the way a run does; returns (config module, cfg) or (None, None)."""
     try:
-        import pipeline_config
+        import job_search_pipeline.config as config
     except SystemExit as e:  # a malformed config.json stops the run with this message
         report.add(FAIL, "Config", str(e.code))
         return None, None
-    path, source = pipeline_config.CONFIG_PATH, pipeline_config.config_source()
-    template = pipeline_config.load_json(pipeline_config.EXAMPLE_CONFIG_PATH, default={}) or {}
-    cfg = pipeline_config.CFG
+    path, source = config.CONFIG_PATH, config.config_source()
+    template = config.load_json(config.EXAMPLE_CONFIG_PATH, default={}) or {}
+    cfg = config.CFG
     if source != path:
         report.add(WARN, "Config", f"no {os.path.basename(path)} yet, so the template's placeholder search is used; "
                                    "run `cp config.starter.json config.json` and edit it")
-        return pipeline_config, cfg
+        return config, cfg
     if not os.path.exists(path):
         report.add(WARN, "Config", f"{path} (JOB_PIPELINE_CONFIG) does not exist; every setting uses its default")
-        return pipeline_config, cfg
-    report.add(OK, "Config", os.path.relpath(path, SCRIPT_DIR) if path.startswith(SCRIPT_DIR) else path)
+        return config, cfg
+    report.add(OK, "Config", os.path.relpath(path, ROOT_DIR) if path.startswith(ROOT_DIR) else path)
     for issue in config_key_issues(cfg, template):
         report.add(WARN, "Config", issue)
     placeholders = placeholder_issues(cfg, template)
     if placeholders:
         report.add(WARN, "Config", f"still the template's placeholder value: {', '.join(placeholders)}")
-    return pipeline_config, cfg
+    return config, cfg
 
 
-def check_profile(report, pipeline_config):
-    path = pipeline_config.get_path("candidate_profile", "candidate_profile.md")
-    example = os.path.join(SCRIPT_DIR, "candidate_profile.example.md")
+def check_profile(report, config):
+    path = config.get_path("candidate_profile", "candidate_profile.md")
+    example = os.path.join(ROOT_DIR, "candidate_profile.example.md")
     if not os.path.exists(path):
         report.add(WARN, "Profile", f"{os.path.basename(path)} not found, so the AI review is skipped; "
                                     "run `cp candidate_profile.example.md candidate_profile.md` and edit it")
@@ -166,7 +166,7 @@ def check_profile(report, pipeline_config):
 def check_ai_review(report, cfg, has_profile):
     llm = cfg.get("llm_review") or {}
     provider = llm.get("provider", "agy")
-    import llm_review
+    import job_search_pipeline.review as llm_review
     try:
         with contextlib.redirect_stderr(io.StringIO()):  # it prints its own 'not found' line
             executable = llm_review._provider_config(provider)
@@ -196,7 +196,7 @@ def check_notion(report, cfg, env):
         return
     import requests
 
-    import sync_notion_db as sync
+    import job_search_pipeline.outputs.notion as sync
     headers = {"Authorization": token if token.startswith("Bearer ") else f"Bearer {token}",
                "Notion-Version": notion.get("notion_version", sync.NOTION_VERSION)}
     try:
@@ -230,19 +230,19 @@ def check_notion(report, cfg, env):
         report.add(OK, "Notion", f"database {title!r} reachable with all required properties")
 
 
-def check_outputs(report, cfg, env, pipeline_config):
-    data_dir = os.path.dirname(pipeline_config.get_path("filtered_jobs", "data/filtered_jobs.json"))
+def check_outputs(report, cfg, env, config):
+    data_dir = os.path.dirname(config.get_path("filtered_jobs", "data/filtered_jobs.json"))
     probe = data_dir
     while not os.path.exists(probe):
         probe = os.path.dirname(probe)
     if os.access(probe, os.W_OK):
-        report.add(OK, "Data folder", os.path.relpath(data_dir, SCRIPT_DIR) if data_dir.startswith(SCRIPT_DIR) else data_dir)
+        report.add(OK, "Data folder", os.path.relpath(data_dir, ROOT_DIR) if data_dir.startswith(ROOT_DIR) else data_dir)
     else:
         report.add(FAIL, "Data folder", f"{data_dir} is not writable")
     outputs = []
     if (cfg.get("html_digest") or {}).get("enabled", True):
-        outputs.append("HTML digest (" + pipeline_config.get_path("html_digest", "data/digest.html")
-                       .removeprefix(SCRIPT_DIR + os.sep) + ")")
+        outputs.append("HTML digest (" + config.get_path("html_digest", "data/digest.html")
+                       .removeprefix(ROOT_DIR + os.sep) + ")")
     if (cfg.get("text_export") or {}).get("enabled", False):
         outputs.append("text export")
     if outputs:
@@ -255,20 +255,17 @@ def check_outputs(report, cfg, env, pipeline_config):
 
 
 def run_checks():
-    os.chdir(SCRIPT_DIR)
-    if SCRIPT_DIR not in sys.path:
-        sys.path.insert(0, SCRIPT_DIR)
     print("Setup check")
     report = Report()
     check_python(report)
     if check_dependencies(report):
         env = effective_env()
-        pipeline_config, cfg = check_config(report)
-        if pipeline_config is not None:
-            has_profile = check_profile(report, pipeline_config)
+        config, cfg = check_config(report)
+        if config is not None:
+            has_profile = check_profile(report, config)
             check_ai_review(report, cfg, has_profile)
             check_notion(report, cfg, env)
-            check_outputs(report, cfg, env, pipeline_config)
+            check_outputs(report, cfg, env, config)
     errors, warnings = report.count(FAIL), report.count(WARN)
     print(f"\n{errors} problem(s), {warnings} warning(s). "
           + ("Fix the problems (✗) before running." if errors else "Ready to run: ./run_job_search.sh"))

@@ -1,9 +1,9 @@
 """Fetch postings from public job-board APIs: Remote OK, Jobicy, and the
 monthly Hacker News "Who is hiring?" thread.
 
-Jobs are filtered with the same title/company/salary rules as fetch_and_filter
+Jobs are filtered with the same title/company/salary rules as sources/filter.py
 and returned in the same shape, with description_ai already filled so
-batch_scraper skips them.
+scrape.py skips them.
 """
 import html
 import json
@@ -12,11 +12,11 @@ import sys
 import urllib.request
 from datetime import datetime, timedelta, timezone
 
-from batch_scraper import HEADERS, clean_html
-from fetch_and_filter import (
+from job_search_pipeline.scrape import HEADERS, clean_html
+from job_search_pipeline.sources.filter import (
     FOREIGN_RE, LOOKBACK_DAYS, US_PATTERN, is_local_metro, is_valid_company, is_valid_salary, is_valid_title,
 )
-from pipeline_config import CFG
+from job_search_pipeline.config import CFG
 
 _SOURCES_CFG = CFG.get("sources") or {}
 _TITLES_CFG = CFG.get("titles") or {}

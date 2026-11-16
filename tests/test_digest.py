@@ -9,7 +9,7 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-import html_digest as digest
+import job_search_pipeline.outputs.html_digest as digest
 
 MATCH = {"url": "https://example.com/jobs/1", "company": "acme", "title": "Frontend Engineer", "score": 88,
          "verdict": "apply", "ai_reason": "Strong fit", "blockers": ["no Go"], "location": "Remote"}
