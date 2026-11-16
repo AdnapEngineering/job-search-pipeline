@@ -221,6 +221,16 @@ class ScoringAndFlagTests(unittest.TestCase):
         self.assertEqual(review.score_components({"hard_reqs": 3, "core_work": 3, "evidence": 3, "level": 1}),
                          (83, "apply"))
 
+    def test_level_mismatch_cap_is_off_by_default_and_caps_level_zero_when_set(self):
+        under_leveled = {"hard_reqs": 4, "core_work": 3, "evidence": 3, "level": 0}  # 83% uncapped
+        self.assertEqual(review.score_components(under_leveled), (83, "apply"))
+        with patch.object(review, "LEVEL_MISMATCH_CAP", 65):
+            self.assertEqual(review.score_components(under_leveled), (65, "stretch"))
+            self.assertEqual(review.score_components(dict(under_leveled, level=1))[0], 92)
+            cached = {"verdict": "apply", "score": 83, "reason": "r", "blockers": [], "pay": None,
+                      "components": dict(under_leveled, logistics_ok=True)}
+            self.assertEqual(review._rescored(cached)["score"], 65)  # applies to reviews already paid for
+
     def test_pay_floor_is_a_cliff_by_default(self):
         self.assertEqual(review.score_components(self.PARTS, pay=(128500.0, 128500.0)), (30, "skip"))
         self.assertEqual(review.score_components(self.PARTS, pay=(130000.0, 130000.0)), (92, "apply"))

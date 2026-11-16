@@ -356,6 +356,7 @@
       "level": 2
     },
     "blocker_cap": 30,
+    "level_mismatch_cap": 65,
     "apply_min_score": 80,
     "stretch_min_score": 50,
     "quote_match_ratio": 0.85,

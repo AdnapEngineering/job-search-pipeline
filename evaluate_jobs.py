@@ -96,12 +96,14 @@ JD_US_REMOTE_RE = re.compile(
 _JD_GENERIC_REMOTE_RE = re.compile(
     r'\b(?:fully|100%|completely|entirely) remote\b|\bremote[- ]first\b|\bremote(?:ly)?\b', re.I
 )
-_FOREIGN_PLACES = (
-    r'canada|british columbia|ontario|quebec|alberta|uk|united kingdom|england|europe|eu|emea'
-    r'|india|mexico|latam|latin america|brazil|poland|germany|ireland|australia|philippines'
-)
+# Places outside the candidate's own country, as named in JD residency/remote wording ("remote within Canada",
+# "based in Australia", "anywhere in LATAM"). The defaults assume a US-based candidate: set
+# location.jd_foreign_places in config.json to search from another country.
+_DEFAULT_FOREIGN_PLACES = ['canada', 'british columbia', 'ontario', 'quebec', 'alberta', 'uk', 'united kingdom', 'england', 'europe', 'eu', 'emea', 'india', 'mexico', 'latam', 'latin america', 'brazil', 'poland', 'germany', 'ireland', 'australia', 'philippines', 'manitoba', 'saskatchewan', 'nova scotia', 'newfoundland', 'prince edward island', 'sweden', 'norway', 'denmark', 'finland', 'netherlands', 'spain', 'portugal', 'france', 'italy', 'switzerland', 'austria', 'belgium', 'argentina', 'colombia', 'costa rica', 'new zealand', 'singapore']
+_FOREIGN_PLACES = '|'.join(_LOC_CFG.get("jd_foreign_places") or _DEFAULT_FOREIGN_PLACES)
 _JD_FOREIGN_REMOTE_RE = re.compile(
-    r'\b(?:remote(?:ly)?|based)\s+(?:with)?in\s+(?:the\s+)?(?:' + _FOREIGN_PLACES + r')\b'
+    r'\b(?:remote(?:ly)?|based)\s+(?:(?:with)?in|from)\s+(?:the\s+)?(?:' + _FOREIGN_PLACES + r')\b'
+    r'|\banywhere (?:with)?in\s+(?:the\s+)?(?:' + _FOREIGN_PLACES + r')\b'
     r'|\b(?:located|based|reside|residing|living)\s+in\s+(?:[\w .]{0,30},\s*)?(?:the\s+)?(?:'
     + _FOREIGN_PLACES + r')\b', re.I
 )
@@ -114,11 +116,26 @@ JD_HYBRID_ONSITE_RE = re.compile(
 )
 
 
+# "unable to consider applications from candidates based in France": an exclusion, not a requirement
+_FOREIGN_EXCLUSION_BEFORE_RE = re.compile(
+    r"\b(?:unable to|cannot|can't|can not|won't|will not|do not|don't|not able to)\b[^.\n]{0,60}$"
+    r"|\b(?:except|excluding|other than|outside(?: of)?)\b[^.\n]{0,30}$", re.I
+)
+
+
+def foreign_remote_match(text):
+    """First foreign-only remote/residency phrase that is not stated as an exclusion, or None."""
+    for m in _JD_FOREIGN_REMOTE_RE.finditer(text):
+        if not _FOREIGN_EXCLUSION_BEFORE_RE.search(text[max(0, m.start() - 90):m.start()]):
+            return m
+    return None
+
+
 def jd_location_ok(text):
     """For jobs with no feed location: accept only if the JD itself says eligible remote or local metro."""
     if (_JD_LOCAL_METRO_RE and _JD_LOCAL_METRO_RE.search(text)) or JD_US_REMOTE_RE.search(text):
         return True
-    if _JD_FOREIGN_REMOTE_RE.search(text) or JD_HYBRID_ONSITE_RE.search(text):
+    if foreign_remote_match(text) or JD_HYBRID_ONSITE_RE.search(text):
         return False
     return bool(_JD_GENERIC_REMOTE_RE.search(text))
 
@@ -140,7 +157,7 @@ _JD_SOFT_ONSITE_RE = re.compile(
     r'\b' + _IN_PLACE + r'\s+(?:role|position|job|requirement|only|presence is required)\b'
     r'|\b(?:this|the) (?:role|position|job) (?:is|will be) (?:an? )?(?:fully )?(?:on[- ]?site|in[- ]office|in[- ]person|hybrid)\b'
     r'|\b' + _DAYS_A_WEEK + r'\s+(?:in|at|from|on)[- ](?:the |our |an? )?(?:office|site|hq|headquarters|studio|campus)'
-    r'|\b' + _IN_PLACE + r'\s+(?:at least\s+)?' + _DAYS_A_WEEK +
+    r'|\b' + _IN_PLACE + r',?\s+(?:at least\s+)?' + _DAYS_A_WEEK +
     r'|\bhybrid (?:work(?:place)? |office |in-office )?(?:schedule|role|position|model|arrangement|approach|policy|requirement)\b',
     re.I
 )
@@ -154,11 +171,22 @@ _INDEED_WORK_LOCATION_RE = re.compile(r'\bwork location:\s*((?:in person|hybrid 
 _JD_LOCATION_LINE_RE = re.compile(r'\blocations?\s*:\s*([^\n|]{2,60})', re.I)
 _OFFICE_LOCATIONS_RE = re.compile(r'\b(?:office|offices|other|our|hub|headquarters)\s*$', re.I)
 _LOCATION_LINE_END_RE = re.compile(r'\s{2,}|\s+(?:type|job type|department|team|employment|salary|compensation|about|reports)\b', re.I)
+# Foreign countries and cities that rule out a JD "Location:" line (lower-case; US-candidate defaults,
+# override with location.jd_foreign_terms)
+_DEFAULT_FOREIGN_TERMS = ['romania', 'bucharest', 'vietnam', 'hanoi', 'bulgaria', 'sofia', 'ukraine', 'kyiv', 'nigeria', 'philippines', 'manila', 'israel', 'tel aviv', 'japan', 'china', 'korea', 'egypt', 'pakistan', 'serbia', 'croatia', 'greece', 'turkey', 'türkiye', 'south africa', 'chile', 'peru', 'uruguay', 'guatemala', 'noida', 'bangalore', 'bengaluru', 'hyderabad', 'pune', 'chennai', 'warsaw', 'berlin', 'paris', 'amsterdam', 'dublin', 'toronto', 'vancouver,? bc', 'sweden', 'stockholm', 'norway', 'oslo', 'denmark', 'copenhagen', 'finland', 'helsinki', 'switzerland', 'zurich', 'austria', 'belgium', 'brussels', 'czechia', 'czech republic', 'prague', 'estonia', 'latvia', 'hungary', 'budapest', 'slovakia', 'slovenia', 'iceland', 'luxembourg', 'manitoba', 'winnipeg', 'saskatchewan', 'nova scotia', 'newfoundland']
 _EXTRA_FOREIGN_RE = re.compile(
-    r'\b(romania|bucharest|vietnam|hanoi|bulgaria|sofia|ukraine|kyiv|nigeria|philippines|manila|israel|tel aviv|japan'
-    r'|china|korea|egypt|pakistan|serbia|croatia|greece|turkey|türkiye|south africa|chile|peru|uruguay|guatemala'
-    r'|noida|bangalore|bengaluru|hyderabad|pune|chennai|warsaw|berlin|paris|amsterdam|dublin|toronto|vancouver,? bc)\b'
+    r'\b(' + '|'.join(_LOC_CFG.get("jd_foreign_terms") or _DEFAULT_FOREIGN_TERMS) + r')\b'
 )
+# Countries and provinces only (no city names shared with home-country towns, like Dublin or Paris): safe to
+# reject a feed location or title on when no home-country token is present. US-candidate defaults; override
+# with location.foreign_countries
+_DEFAULT_FOREIGN_COUNTRIES = ['sweden', 'norway', 'denmark', 'finland', 'switzerland', 'austria', 'belgium', 'czechia', 'czech republic', 'estonia', 'latvia', 'hungary', 'slovakia', 'slovenia', 'iceland', 'luxembourg', 'romania', 'bulgaria', 'ukraine', 'serbia', 'croatia', 'greece', 'vietnam', 'philippines', 'nigeria', 'israel', 'japan', 'south korea', 'egypt', 'pakistan', 'south africa', 'chile', 'peru', 'uruguay', 'guatemala', 'manitoba', 'saskatchewan', 'nova scotia', 'newfoundland', 'prince edward island']
+_FOREIGN_COUNTRY_RE = re.compile(
+    r'\b(' + '|'.join(_LOC_CFG.get("foreign_countries") or _DEFAULT_FOREIGN_COUNTRIES) + r')\b'
+)
+# A location line naming hybrid/onsite work ("Location: Durham, NC (Hybrid - 2 weeks onsite)"), unless remote is
+# offered first or as an alternative ("Remote (US) or hybrid in NYC")
+_LOCATION_ARRANGEMENT_RE = re.compile(r'\b(?:hybrid|on[- ]?site|in[- ]office|in[- ]person)\b')
 
 
 def _onsite_passage(text, patterns):
@@ -268,6 +296,10 @@ def jd_logistics_block(job):
         foreign = any(p.search(value) for p in FOREIGN_PATTERNS) or _EXTRA_FOREIGN_RE.search(value)
         if foreign and not (US_PATTERN.search(value) or 'anywhere' in value or is_local_metro(value)):
             return m.group(0).strip()[:120]
+        arrangement = _LOCATION_ARRANGEMENT_RE.search(value)
+        if (arrangement and not is_local_metro(value) and 'remote' not in value[:arrangement.start()]
+                and not _JD_OPTIONS_RE.search(value)):
+            return m.group(0).strip()[:120]
 
     if _JD_LOCAL_METRO_RE and _JD_LOCAL_METRO_RE.search(text):
         return ''
@@ -279,7 +311,7 @@ def jd_logistics_block(job):
     if passage:
         return passage
 
-    m = _JD_FOREIGN_REMOTE_RE.search(text)
+    m = foreign_remote_match(text)
     if m and not JD_US_REMOTE_RE.search(text):
         return m.group(0)
     return remote_restriction(job, text)
@@ -531,6 +563,8 @@ def _title_rejected(title, strong_title):
 def _location_rejected(job, title, loc):
     """Non-allowed country in location/title, or a named location that is neither remote nor local metro."""
     if _NON_US_LOCATIONS and (_NON_US_LOCATIONS.search(loc) or _NON_US_LOCATIONS.search(title)):
+        return True
+    if (_FOREIGN_COUNTRY_RE.search(loc) or _FOREIGN_COUNTRY_RE.search(title)) and not US_PATTERN.search(loc):
         return True
     remote_or_local = (job.get('remote') is True or 'remote' in loc or 'anywhere' in loc or is_local_metro(loc))
     return loc.strip() not in UNSPECIFIED_LOCATIONS and not remote_or_local

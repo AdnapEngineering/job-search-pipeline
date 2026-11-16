@@ -82,6 +82,51 @@ class LogisticsTests(unittest.TestCase):
             with self.subTest(desc=desc[:60]):
                 self.assertEqual(logistics(desc), want)
 
+    def test_hybrid_onsite_and_foreign_only_remote_phrasings(self):
+        """Postings that reached the AI review in Nov 2026 although they were not eligible remote roles."""
+        cases = [
+            ("Location: Durham, NC (Hybrid \u2013 2 Weeks Onsite / 2 Weeks Remote)", True),
+            ("Location: Hybrid \u2013 Washington, DC Metro Area - 2 days onsite per week.", True),
+            ("Location: Onsite; Lanham, Maryland", True),
+            ("Location: Remote (US) or hybrid in our NYC office", False),
+            ("Location: Remote or Hybrid", False),
+            ("Location: Hybrid in Denver, CO", False),  # hybrid in the home metro is fine
+            ("### Location On-site, five days per week in New York, New York.", True),
+            ("We're remote-first, with the opportunity to work anywhere in Australia.", True),
+            ("Build interfaces for US-based clients. You'll work 100% remotely from LATAM, collaborating closely "
+             "with design and backend teams.", True),
+            ("This is a remote role open to candidates based in Manitoba.", True),
+            ("We are unable to consider applications from candidates based in France, Italy, or Germany. "
+             "Join a remote-first, global team.", False),
+        ]
+        for desc, want in cases:
+            with self.subTest(desc=desc[:60]):
+                self.assertEqual(logistics(desc), want)
+
+    def test_foreign_lists_follow_the_config(self):
+        """A candidate outside the US replaces the US-default foreign lists in config.json."""
+        import importlib
+        canada = {"jd_foreign_places": ["united states", "usa"], "foreign_countries": ["united states"],
+                  "jd_foreign_terms": ["seattle"]}
+        try:
+            with unittest.mock.patch.dict(ev._LOC_CFG, canada):
+                reloaded = importlib.reload(ev)
+            self.assertTrue(reloaded._FOREIGN_COUNTRY_RE.search("united states (remote)"))
+            self.assertFalse(reloaded._FOREIGN_COUNTRY_RE.search("manitoba (remote)"))
+            self.assertIsNotNone(reloaded.foreign_remote_match("This role is remote within the United States."))
+            self.assertIsNone(reloaded.foreign_remote_match("Open to candidates based in Manitoba."))
+        finally:
+            importlib.reload(ev)
+
+    def test_foreign_country_in_feed_location_or_title(self):
+        def rejected(loc, title="senior full stack engineer"):
+            return ev._location_rejected({"remote": True}, title, loc)
+        self.assertTrue(rejected("sweden (remote)"))
+        self.assertTrue(rejected("not specified", "product developer (remote) - manitoba"))
+        for us_town in ("dublin, oh", "paris, tx", "vienna, va", "remote - us"):
+            with self.subTest(loc=us_town):
+                self.assertFalse(rejected(us_town))
+
     def test_company_hybrid_policy_under_a_feed_labeled_remote_role_is_not_a_requirement(self):
         blurb = "Our Approach to Hybrid Working: We embrace a hybrid work model"
         self.assertFalse(logistics(blurb, loc="Remote, US", ats="Greenhouse", remote=True))
