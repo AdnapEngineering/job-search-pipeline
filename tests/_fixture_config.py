@@ -19,7 +19,8 @@ _DATA_FILES = {
     "blocklist": "blocklist.json", "role_blocklist": "blocklist_roles.json",
     "review_cache": "review_cache.json", "run_history": "run_history.json",
     "linkedin_details_cache": "linkedin_details_cache.json", "candidate_profile": "candidate_profile.md",
-    "text_export": "job_matches.txt",
+    "text_export": "job_matches.txt", "llm_spend": "llm_spend.json",
+    "html_digest": "digest.html", "digest_store": "digest_matches.json",
 }
 
 if "pipeline_config" in sys.modules and not os.environ.get("JOB_PIPELINE_TEST_DIR"):

@@ -307,3 +307,121 @@ class CacheAndHoldTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class SpendAndRepostTests(unittest.TestCase):
+    """Usage parsing, budget caps, the spend ledger, and reuse of cached reviews for reposts."""
+
+    def run_review(self, run, jobs, jds=None, budget=None, pricing=None, cache_seed=None):
+        jds = jds or {}
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "profile.md").write_text("test profile", encoding="utf-8")
+            (root / "jobs.json").write_text(json.dumps([dict(j, description_full=jds.get(j["url"], JD)) for j in jobs]),
+                                            encoding="utf-8")
+            cache, spend = root / "cache.json", root / "spend.json"
+            if cache_seed:
+                cache.write_text(json.dumps(cache_seed), encoding="utf-8")
+            stats = {}
+            with (patch.object(review, "PROFILE_PATH", str(root / "profile.md")),
+                  patch.object(review, "CACHE_PATH", str(cache)), patch.object(review, "SPEND_PATH", str(spend)),
+                  patch.object(review, "_provider_config", return_value="/test/cli"),
+                  patch.object(review, "WORKERS", 1),
+                  patch.dict(review._BUDGET_CFG, budget or {}, clear=True),
+                  patch.dict(review._PRICING_CFG, pricing or {}, clear=True),
+                  contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO())):
+                kept, skipped = review.review_matches(jobs, str(root / "jobs.json"), stats=stats)
+                return kept, skipped, stats, json.loads(cache.read_text()), json.loads(spend.read_text())
+
+    def test_usage_is_read_from_each_cli_envelope(self):
+        agy = {"usage": {"input_tokens": 1000, "output_tokens": 50, "thinking_tokens": 20, "cache_read_tokens": 400}}
+        claude = {"total_cost_usd": 0.0123, "usage": {"input_tokens": 10, "cache_creation_input_tokens": 90,
+                                                      "cache_read_input_tokens": 500, "output_tokens": 70}}
+        codex = {"type": "turn.completed", "usage": {"input_tokens": 800, "cached_input_tokens": 300, "output_tokens": 40}}
+        self.assertEqual(review._usage("agy", agy), {"input": 600, "cached": 400, "output": 70, "usd": None})
+        self.assertEqual(review._usage("anthropic", claude), {"input": 100, "cached": 500, "output": 70, "usd": 0.0123})
+        self.assertEqual(review._usage("openai", codex), {"input": 500, "cached": 300, "output": 40, "usd": None})
+        self.assertIsNone(review._usage("agy", {"status": "SUCCESS"}))
+        with patch.dict(review._PRICING_CFG, {"input_per_mtok": 3, "output_per_mtok": 15, "cached_input_per_mtok": 0.3},
+                        clear=True):
+            self.assertAlmostEqual(review.priced_usd({"input": 1_000_000, "cached": 1_000_000, "output": 100_000}), 4.8)
+        with patch.dict(review._PRICING_CFG, {}, clear=True):
+            self.assertIsNone(review.priced_usd({"input": 1, "cached": 0, "output": 1}))
+        per_provider = {"openai": {"input_per_mtok": 1, "output_per_mtok": 10}, "agy": {"input_per_mtok": 0, "output_per_mtok": 0}}
+        with patch.dict(review._PRICING_CFG, per_provider, clear=True):
+            usage = {"input": 1_000_000, "cached": 0, "output": 100_000}
+            self.assertAlmostEqual(review.priced_usd(usage, "openai"), 2.0)
+            self.assertEqual(review.priced_usd(usage, "agy"), 0)
+            self.assertIsNone(review.priced_usd(usage, "anthropic"))  # Claude reports its own cost
+
+    @patch("llm_review.subprocess.run")
+    def test_spend_is_recorded_per_run_and_reported_cost_wins(self, run):
+        envelope = {"type": "result", "is_error": False, "result": VERDICT, "total_cost_usd": 0.02,
+                    "usage": {"input_tokens": 3000, "output_tokens": 200}}
+        run.return_value = completed(json.dumps(envelope))
+        with patch.object(review, "PROVIDER", "anthropic"):
+            jobs = [dict(JOB, url=f"https://example.com/jobs/{i}", title=f"Engineer {i}") for i in range(2)]
+            jds = {j["url"]: JD + f" Unique text for posting number {i}. " * 10 for i, j in enumerate(jobs)}
+            _, _, stats, _, ledger = self.run_review(run, jobs, jds)
+        self.assertEqual((stats["reviewed"], stats["tokens"], stats["usd"]), (2, 6400, 0.04))
+        self.assertFalse(stats["usd_estimated"] or stats["usd_unknown"])
+        self.assertEqual(len(ledger), 1)
+        self.assertEqual(ledger[0]["usd"], 0.04)
+        self.assertIn("$0.04", review.spend_line(stats))
+
+    @patch("llm_review.subprocess.run")
+    def test_review_cap_defers_lowest_scores_and_holds_them(self, run):
+        run.return_value = completed(AGY_OUTPUT)
+        jobs = [dict(JOB, url=f"https://example.com/jobs/{i}", title=f"Engineer {i}", score=s)
+                for i, s in enumerate((60, 90, 75))]
+        jds = {j["url"]: JD + f" Different posting {i} body. " * 10 for i, j in enumerate(jobs)}
+        kept, _, stats, _, _ = self.run_review(run, jobs, jds, budget={"max_reviews_per_run": 2})
+        self.assertEqual(run.call_count, 2)
+        by_url = {j["url"]: j for j in kept}
+        deferred = by_url["https://example.com/jobs/0"]  # the lowest keyword score waits for the next run
+        self.assertTrue(deferred["review_failed"] and deferred["review_deferred"])
+        self.assertTrue(review.reason_for_notion(deferred).startswith(review.REVIEW_DEFERRED_LABEL))
+        self.assertEqual((stats["deferred"], stats["stopped_by"]), (1, "reviews/run"))
+        self.assertIn("deferred by the reviews/run cap", review.spend_line(stats))
+
+    @patch("llm_review.subprocess.run")
+    def test_daily_token_cap_counts_earlier_runs(self, run):
+        run.return_value = completed(AGY_OUTPUT)
+        today = review.datetime.now().strftime("%Y-%m-%d")
+        earlier = [{"date": today, "input_tokens": 9_900, "cached_tokens": 0, "output_tokens": 0, "usd": 0}]
+        with patch.object(review, "load_spend", return_value=earlier):
+            kept, _, stats, _, _ = self.run_review(run, [JOB], budget={"max_tokens_per_day": 10_000})
+        run.assert_not_called()
+        self.assertTrue(kept[0]["review_deferred"])
+        self.assertEqual(stats["stopped_by"], "tokens/day")
+
+    @patch("llm_review.subprocess.run")
+    def test_reposts_reuse_cached_reviews(self, run):
+        run.return_value = completed(AGY_OUTPUT)
+        phash = review._profile_hash("test profile", review.DEFAULT_MODEL, review.PROVIDER)
+        body = " ".join(f"Responsibility number {i} covers building product features with the team." for i in range(40))
+        cached_result = review._parse_verdict(VERDICT, QUOTE + " " + body)
+        seed = {"https://example.com/jobs/original": {
+            "profile": phash, "result": cached_result, "role": review.role_key("Example", "Engineer"),
+            "jd": review._jd_hash(review.jd_for_review(QUOTE + " " + body)),
+            "sig": review.jd_signature(review.jd_for_review(QUOTE + " " + body))}}
+        exact = dict(JOB, url="https://boards.example.org/123")
+        edited = dict(JOB, url="https://www.linkedin.com/jobs/view/999", title="Engineer (Remote)")
+        other_role = dict(JOB, url="https://example.com/jobs/other", title="Designer")
+        jds = {exact["url"]: QUOTE + " " + body,
+               edited["url"]: QUOTE + " " + body.replace("number 3 ", "number three "),
+               other_role["url"]: QUOTE + " " + body.replace("number 3 ", "number three ")}
+        kept, _, stats, cache, _ = self.run_review(run, [exact, edited, other_role], jds, cache_seed=seed)
+        self.assertEqual(stats["repost_hits"], 2)
+        self.assertEqual(run.call_count, 1)  # only the different role is reviewed
+        self.assertEqual(cache[review.normalize_url(edited["url"])]["repost_of"], "https://example.com/jobs/original")
+        self.assertTrue(all(j.get("verdict") for j in kept))
+
+    def test_signature_similarity_separates_edits_from_different_jds(self):
+        base = " ".join(f"Sentence {i} about the frontend platform and design systems work." for i in range(60))
+        tweaked = base.replace("Sentence 7 ", "Sentence seven ")
+        other = " ".join(f"Clause {i} on payroll compliance and warehouse logistics duties." for i in range(60))
+        sig = review.jd_signature(base)
+        self.assertEqual(len(sig), review.SIGNATURE_SIZE)
+        self.assertGreater(review.signature_similarity(sig, review.jd_signature(tweaked)), 0.8)
+        self.assertLess(review.signature_similarity(sig, review.jd_signature(other)), 0.1)
