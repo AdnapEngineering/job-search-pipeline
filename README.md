@@ -532,7 +532,7 @@ Run 3 times daily (e.g., 7:10 AM, 12:10 PM, 7:10 PM):
 10 7,12,19 * * * /path/to/job-search-pipeline/run_job_search.sh
 ```
 
-The wrapper appends every run to `cron_job_search.log` next to the scripts and does not rotate it. Trim it yourself or point `logrotate` at it (use `copytruncate`, since the wrapper reopens the file by name on each run).
+The wrapper appends every run to `cron_job_search.log` next to the scripts. When the log passes 5 MB, the wrapper keeps its newest half at the start of the next run. Set `JOB_SEARCH_LOG_MAX_BYTES` in `.env` to change the limit, or to `0` to turn trimming off (for example, to manage the file with `logrotate` instead).
 
 ### Run the Tests
 
@@ -549,7 +549,7 @@ The tests load `tests/fixtures/search_config.json` (a made-up search) through `t
 
 | File | Purpose |
 | :--- | :--- |
-| [`run_job_search.sh`](run_job_search.sh) | Shell wrapper that runs `.venv`'s Python when present, with a concurrency lock (`flock`, or a `mkdir` lock on macOS) and `.env` loading; appends each run to `cron_job_search.log` (not rotated). |
+| [`run_job_search.sh`](run_job_search.sh) | Shell wrapper that runs `.venv`'s Python when present, with a concurrency lock (`flock`, or a `mkdir` lock on macOS) and `.env` loading; appends each run to `cron_job_search.log`, trimmed to its newest half past 5 MB. |
 | [`run_pipeline.py`](run_pipeline.py) | End-to-end orchestrator, source-health monitor, pre-LLM blocklist filter, and notifier. |
 | [`pipeline_config.py`](pipeline_config.py) | Central loader for `config.json`, path resolution (relative `paths` entries resolve from the repo directory), shared JSON read/atomic-write helpers, and regex compilation helpers. |
 | [`blocklist.py`](blocklist.py) | Shared dedup state: `company\|title` role keys plus the URL and role blocklists used by every stage. |
