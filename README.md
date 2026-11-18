@@ -3,7 +3,7 @@
 
 Finds job postings that fit you and sends the best ones to Notion, Obsidian, a text file or a web page, with an optional phone notification.
 
-Each run pulls postings from about 1.4 million company job boards (through [job-board-aggregator](https://github.com/Riley-Dorrington/job-board-aggregator)), LinkedIn, Indeed, Remote OK, Jobicy and Hacker News's monthly "Who is hiring?" thread. It drops the ones that break your location, title, pay and experience rules, fetches the full description for the rest, scores them against your skills, and has an AI command-line tool (agy, Claude Code or Codex) grade the best of them against a profile you write.
+Each run pulls postings from about 1.4 million company job boards (through [job-board-aggregator](https://github.com/Riley-Dorrington/job-board-aggregator)), LinkedIn, Indeed, Remote OK, Jobicy, Himalayas, We Work Remotely and Hacker News's monthly "Who is hiring?" thread. It drops the ones that break your location, title, pay and experience rules, fetches the full description for the rest, scores them against your skills, and has an AI command-line tool (agy, Claude Code or Codex) grade the best of them against a profile you write.
 
 > **Credit:** the ATS listings, come from Riley Dorrington's [job-board-aggregator](https://github.com/Riley-Dorrington/job-board-aggregator) (MIT). It indexes 1M+ active postings from 20,000+ companies' Greenhouse, Lever, Ashby, Workday and other boards, refreshed daily by GitHub Actions and published to [job-board-data](https://github.com/Riley-Dorrington/job-board-data). If this pipeline helps you, give that project a star.
 
@@ -66,7 +66,7 @@ More in [`docs/`](docs):
 ┌────────────────────────────────────────────────────────────────────────────┐
 │ 1. Fetch & filter (sources/: filter.py, linkedin_indeed.py, job_boards.py) │
 │    • Streams gzipped ATS chunks (~1.4M rows), LinkedIn, Indeed, Remote OK, │
-│      Jobicy, and HN Who's Hiring.                                          │
+│      Jobicy, Himalayas, We Work Remotely, and HN Who's Hiring.             │
 │    • Applies fast pre-filters (recency, company/recruiter exclusions,      │
 │      location/remote eligibility, title matching, salary floor).           │
 │    • Re-points aggregator reposts (LinkedIn/Indeed) to the company's own   │

@@ -1,8 +1,10 @@
-"""Job-board sources: salary parsing (it feeds the pay floor) and the Hacker News "Who is hiring?" parser."""
+"""Job-board sources: salary parsing (it feeds the pay floor), the Hacker News "Who is hiring?" parser,
+and the Himalayas and We Work Remotely fetchers."""
 import _fixture_config  # noqa: F401  (must come before any pipeline import)
 
 import unittest
 from datetime import datetime, timedelta, timezone
+from email.utils import format_datetime
 from unittest.mock import patch
 
 import job_search_pipeline.sources.job_boards as jb
@@ -94,6 +96,96 @@ class HackerNewsTests(unittest.TestCase):
     def test_stale_thread_is_ignored(self):
         post = comment(1, "Acme | Frontend Engineer | Remote (US)<p>React.")
         self.assertEqual(self.fetch([post], thread_age_days=jb.HN_THREAD_MAX_AGE_DAYS + 1), {})
+
+
+def hima(title, days_ago=0, **extra):
+    item = {"title": title, "companyName": "Acme", "employmentType": "Full Time",
+            "locationRestrictions": ["United States"], "currency": "USD", "minSalary": None, "maxSalary": None,
+            "salaryPeriod": "annual", "description": "<p>React and TypeScript.</p>",
+            "pubDate": int((datetime.now(timezone.utc) - timedelta(days=days_ago)).timestamp()),
+            "guid": f"https://himalayas.app/companies/acme/jobs/{title.lower().replace(' ', '-')}"}
+    item.update(extra)
+    return item
+
+
+class HimalayasTests(unittest.TestCase):
+    """Only the HTTP call is faked; location, recency, salary and title filters run for real."""
+
+    def fetch(self, pages, terms=("Frontend Engineer",)):
+        calls = []
+
+        def fake_get_json(url, timeout=30):
+            calls.append(url)
+            page = int(url.rsplit("page=", 1)[1])
+            return {"jobs": pages[page - 1] if page <= len(pages) else []}
+        with patch.object(jb, "_get_json", fake_get_json), patch.object(jb, "HIMALAYAS_PAUSE_SECONDS", 0):
+            return jb.fetch_himalayas(list(terms)), calls
+
+    def test_eligible_hits_are_kept_with_salary(self):
+        jobs, _ = self.fetch([[
+            hima("Senior Frontend Engineer", minSalary=150000, maxSalary=190000),
+            hima("Frontend Engineer", salaryPeriod="hourly", minSalary=80, maxSalary=100,
+                 locationRestrictions=[]),
+        ]])
+        by_title = {j["title"]: j for j in jobs}
+        self.assertEqual(by_title["Senior Frontend Engineer"]["salary"], {"min": 150000, "max": 190000})
+        self.assertEqual(by_title["Frontend Engineer"]["salary"], {"min": 166400, "max": 208000})
+        self.assertEqual(by_title["Frontend Engineer"]["location"], "Remote")
+        self.assertEqual(by_title["Senior Frontend Engineer"]["ats"], "Himalayas")
+        self.assertIn("React and TypeScript.", by_title["Senior Frontend Engineer"]["description_full"])
+
+    def test_ineligible_hits_are_dropped(self):
+        jobs, _ = self.fetch([[
+            hima("Frontend Engineer", days_ago=30),
+            hima("Frontend Engineer II", employmentType="Contractor"),
+            hima("Senior Frontend Engineer", locationRestrictions=["Germany"]),
+            hima("Account Executive"),
+        ]])
+        self.assertEqual(jobs, [])
+
+    def test_paging_stops_once_postings_are_older_than_the_lookback(self):
+        fresh = [hima(f"Frontend Engineer {i}") for i in range(20)]
+        stale = [hima(f"Senior Frontend Engineer {i}", days_ago=30) for i in range(20)]
+        _, calls = self.fetch([fresh, fresh, stale, fresh])
+        self.assertEqual(len(calls), 3)
+
+    def test_a_posting_found_by_two_terms_is_kept_once(self):
+        jobs, calls = self.fetch([[hima("Senior Frontend Engineer")]], terms=("Frontend Engineer", "Frontend"))
+        self.assertEqual((len(jobs), len(calls)), (1, 2))
+
+
+def wwr_item(title, region="USA Only", days_ago=0, job_type="Full-Time"):
+    when = format_datetime(datetime.now(timezone.utc) - timedelta(days=days_ago))
+    slug = title.lower().replace(" ", "-").replace(":", "")
+    return (f"<item><title>{title}</title><region>{region}</region><country></country><type>{job_type}</type>"
+            f"<description>&lt;p&gt;React.&lt;/p&gt;</description><pubDate>{when}</pubDate>"
+            f"<link>https://weworkremotely.com/remote-jobs/{slug}</link></item>")
+
+
+class WeWorkRemotelyTests(unittest.TestCase):
+    def fetch(self, items):
+        rss = f"<rss><channel>{''.join(items)}</channel></rss>"
+        with patch.object(jb, "_get_text", lambda url, timeout=30: rss), \
+                patch.object(jb, "WWR_FEEDS", ["https://example.test/a.rss", "https://example.test/b.rss"]):
+            return {j["company"]: j for j in jb.fetch_wwr()}
+
+    def test_us_eligible_full_time_posts_are_kept_once(self):
+        jobs = self.fetch([wwr_item("Acme: Senior Frontend Engineer"),
+                           wwr_item("Hooli: Frontend Engineer", region="Anywhere in the World"),
+                           wwr_item("Initech: Frontend Engineer", region="North America Only")])
+        self.assertEqual(set(jobs), {"Acme", "Hooli", "Initech"})  # each feed served the same items: no dupes
+        acme = jobs["Acme"]
+        self.assertEqual((acme["title"], acme["location"], acme["ats"]),
+                         ("Senior Frontend Engineer", "Remote - USA Only", "We Work Remotely"))
+        self.assertEqual(acme["description_full"].strip(), "React.")
+
+    def test_other_regions_stale_and_contract_posts_are_dropped(self):
+        jobs = self.fetch([wwr_item("Globex: Frontend Engineer", region="Asia Only"),
+                           wwr_item("Umbrella: Frontend Engineer", region="Europe Only"),
+                           wwr_item("Old Co: Frontend Engineer", days_ago=30),
+                           wwr_item("Gig Co: Frontend Engineer", job_type="Contract"),
+                           wwr_item("No company separator")])
+        self.assertEqual(jobs, {})
 
 
 if __name__ == "__main__":

@@ -353,10 +353,10 @@ def fetch_jobspy(stats):
 
 
 def fetch_boards(stats):
-    """Remote OK / Jobicy / HN rows; fetch_board_jobs records per-board errors in stats itself."""
+    """Remote OK / Jobicy / Himalayas / WWR / HN rows; fetch_board_jobs records per-board errors in stats itself."""
     try:
         from job_search_pipeline.sources.job_boards import fetch_board_jobs
-        print("Fetching public job boards (Remote OK, Jobicy, HN Who's Hiring)...")
+        print("Fetching public job boards (Remote OK, Jobicy, Himalayas, We Work Remotely, HN Who's Hiring)...")
         return fetch_board_jobs(stats=stats)
     except Exception as e:
         print(f"Notice: job board fetch skipped or encountered an error: {e}")

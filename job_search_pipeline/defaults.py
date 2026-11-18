@@ -93,6 +93,14 @@ DEFAULTS = {
         "remoteok_url": "https://remoteok.com/api",
         "jobicy_enabled": True,
         "jobicy_url": "https://jobicy.com/api/v2/remote-jobs?count=100&geo=usa&industry=engineering",
+        "himalayas_enabled": True,
+        "himalayas_search_url": "https://himalayas.app/jobs/api/search",
+        "himalayas_max_pages": 5,
+        "wwr_enabled": True,
+        "wwr_feeds": [
+            "https://weworkremotely.com/categories/remote-front-end-programming-jobs.rss",
+            "https://weworkremotely.com/categories/remote-full-stack-programming-jobs.rss",
+        ],
         "hn_enabled": True,
         "hn_search_url": "https://hn.algolia.com/api/v1/search_by_date?tags=story,author_whoishiring&query=who%20is%20hiring&hitsPerPage=5",
         "hn_item_url": "https://hn.algolia.com/api/v1/items/{}",
@@ -211,6 +219,7 @@ DEFAULTS = {
     "url_normalization": {
         "aggregator_hosts": [
             "indeed.com", "linkedin.com", "news.ycombinator.com", "remoteok.com", "remotive.com", "jobicy.com",
+            "himalayas.app", "weworkremotely.com",
         ],
         "extra_tracking_params": [],
     },

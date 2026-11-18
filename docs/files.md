@@ -48,7 +48,7 @@ Your own files sit next to these, ignored by git: `config.json`, `candidate_prof
 | [`urls.py`](../job_search_pipeline/urls.py) | Canonical URL normalizer (strips tracking parameters, redundant `gh_jid`, and fragments). |
 | [`sources/filter.py`](../job_search_pipeline/sources/filter.py) | Stage 1 async downloader for the GitHub ATS chunk feed, the location/title/salary filters, and orchestrator for the other sources. |
 | [`sources/linkedin_indeed.py`](../job_search_pipeline/sources/linkedin_indeed.py) | Stage 1 LinkedIn & Indeed scraper (`python-jobspy`) with detail caching and remote evidence checks. |
-| [`sources/job_boards.py`](../job_search_pipeline/sources/job_boards.py) | Stage 1 connector for Remote OK, Jobicy, and Hacker News "Who is hiring?". |
+| [`sources/job_boards.py`](../job_search_pipeline/sources/job_boards.py) | Stage 1 connector for Remote OK, Jobicy, Himalayas, We Work Remotely, and Hacker News "Who is hiring?". |
 | [`scrape.py`](../job_search_pipeline/scrape.py) | Stage 2 async JD enricher supporting Ashby, Lever, Greenhouse, BambooHR, Workday CXS, and HTML fallback. |
 | [`evaluate.py`](../job_search_pipeline/evaluate.py) | Stage 3 deterministic evaluator, JD logistics/onsite blocker, context-aware requirement parser, and scorer. |
 | [`review.py`](../job_search_pipeline/review.py) | Stage 4 LLM reviewer with SHA-256 caching, verbatim quote verification, and deterministic score calculation. |
