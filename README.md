@@ -148,25 +148,6 @@ git pull origin main
 
 Your settings live in `config.json` and your background in `candidate_profile.md`. Git ignores both, so pulling never touches them. New settings arrive in the tracked template `config.example.json`; after a pull, `git diff HEAD@{1} -- config.example.json` shows what was added so you can copy the keys you want into your own file. Any key you leave out keeps its built-in default.
 
-<details>
-<summary>Upgrading from an earlier version? (one-time steps)</summary>
-
-If you're upgrading from before the `job_search_pipeline/` package: the code moved from loose scripts at the root into the `job_search_pipeline/` folder. `run_job_search.sh`, cron lines that call it, your `config.json`, `candidate_profile.md`, `.env` and `data/` all keep working unchanged. If you ran a script directly, use the new command: `python3 run_pipeline.py` is now `python3 -m job_search_pipeline`, and `python3 check_setup.py` is `python3 -m job_search_pipeline --check`.
-
-If you're upgrading from a version where `config.json` and `candidate_profile.md` were tracked: that pull removes both files from the repository, so git refuses to run it while your edited copies are in the way. Set your copies aside, pull, and put them back:
-
-```bash
-mkdir -p ~/job-pipeline-backup
-cp config.json candidate_profile.md ~/job-pipeline-backup/   # keep your settings and profile
-git checkout -- config.json candidate_profile.md             # restore the tracked versions so the pull can remove them
-git pull origin main
-cp ~/job-pipeline-backup/config.json ~/job-pipeline-backup/candidate_profile.md .   # yours again, now ignored by git
-```
-
-If you never edited either file, just pull, then create your copies as described under [Your config and profile](#your-config-and-profile).
-
-</details>
-
 ### Install options
 
 The Quickstart's `pip install -r requirements.txt` inside `.venv` is all a run needs; `run_job_search.sh` uses `.venv`'s Python automatically when it exists, even from cron. Two extras:
