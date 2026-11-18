@@ -13,7 +13,7 @@ dynamic = ["dependencies", "optional-dependencies"]
 
 [project.scripts]
 # Optional: `pip install -e .` adds this command; `python3 -m job_search_pipeline` works without installing
-job-search = "job_search_pipeline.pipeline:main"
+job-search = "job_search_pipeline.__main__:main"
 
 [tool.setuptools.dynamic]
 dependencies = { file = ["requirements.txt"] }

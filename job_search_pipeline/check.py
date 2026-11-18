@@ -11,6 +11,8 @@ import os
 import sys
 from urllib.parse import urlparse
 
+from job_search_pipeline.env import effective_env, read_env_file  # noqa: F401  (read_env_file: tests)
+
 ROOT_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
 # pip package -> import name, for every runtime dependency in requirements.txt
@@ -33,9 +35,6 @@ PLACEHOLDER_KEYS = [
     ("skills_and_scoring", "core_strengths"), ("skills_and_scoring", "focus_keywords"),
 ]
 
-# The cron wrapper loads these before running; read them here too so a direct run checks the same values
-ENV_FILES = [os.path.expanduser("~/.config/notion/job-search.env"), os.path.join(ROOT_DIR, ".env")]
-
 OK, WARN, FAIL, OFF = "ok", "warn", "fail", "off"
 _MARKS = {OK: "✓", WARN: "!", FAIL: "✗", OFF: "-"}
 
@@ -50,33 +49,6 @@ class Report:
 
     def count(self, status):
         return sum(1 for s, _, _ in self.results if s == status)
-
-
-def read_env_file(path):
-    """KEY=VALUE pairs from a shell-style env file (comments, `export` and quotes allowed)."""
-    values = {}
-    try:
-        with open(path, encoding="utf-8") as f:
-            for line in f:
-                line = line.strip()
-                if not line or line.startswith("#") or "=" not in line:
-                    continue
-                key, _, value = line.removeprefix("export ").partition("=")
-                value = value.strip()
-                if len(value) >= 2 and value[0] == value[-1] and value[0] in "\"'":
-                    value = value[1:-1]
-                values[key.strip()] = value
-    except OSError:
-        pass
-    return values
-
-
-def effective_env(environ=None, env_files=None):
-    """The environment a run through run_job_search.sh would see: the process env, then the env files."""
-    env = dict(os.environ if environ is None else environ)
-    for path in ENV_FILES if env_files is None else env_files:
-        env.update(read_env_file(path))
-    return env
 
 
 def config_key_issues(cfg, template):
