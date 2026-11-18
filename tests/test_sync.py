@@ -8,8 +8,9 @@ from unittest.mock import patch
 
 import job_search_pipeline.blocklist as blocklist
 import job_search_pipeline.pipeline as run_pipeline
+import job_search_pipeline.review as review
 import job_search_pipeline.outputs.notion as sync
-from job_search_pipeline.config import atomic_write_json
+from job_search_pipeline.config import atomic_write_json, load_json
 
 
 class _Res:
@@ -104,10 +105,15 @@ class SummaryLabelTests(_Base):
         self.assertIn("Held (AI review failed): 1", text)
         self.assertNotIn("Qualified", text)
 
-    def test_run_history_line(self):
-        with patch.object(sync, "_save_run_history") as save:
-            sync.record_run({"top_matches": self.MATCHES, "total_evaluated": 100}, [], 80)
-        self.assertIn("4 open matches (1 at 80%+), 0 synced", save.call_args.args[0][-1]["summary"])
+    def test_run_history_is_saved_and_trimmed(self):
+        old = [{"time": f"2026-01-01 00:{i:02d}", "summary": f"run {i}"} for i in range(sync.RUN_HISTORY_KEEP)]
+        atomic_write_json(sync.RUN_HISTORY_PATH, old)
+        previous = sync.record_run({"top_matches": self.MATCHES, "total_evaluated": 100}, [], 80)
+        self.assertEqual(previous, old)
+        saved = load_json(sync.RUN_HISTORY_PATH, default=[])
+        self.assertEqual(len(saved), sync.RUN_HISTORY_KEEP)
+        self.assertEqual(saved[0], old[1])  # the oldest run is dropped
+        self.assertIn("4 open matches (1 at 80%+), 0 synced", saved[-1]["summary"])
 
     def notify(self, matches, synced=()):
         with patch.object(run_pipeline, "send_notification") as send:
@@ -129,16 +135,18 @@ class SummaryLabelTests(_Base):
 
     def test_skipped_ai_review_is_flagged_in_the_notification(self):
         results = {"top_matches": [match(1, 85)]}
-        with patch.object(run_pipeline, "review_matches",
-                          side_effect=lambda m, *a, stats, **k: (stats.update(skipped="AI review skipped: no CLI"), (m, []))[1]):
+        # The real review, with no claude CLI installed
+        with patch.object(review, "PROVIDER", "anthropic"), patch.object(review, "_LLM_CFG", {}), \
+                patch("job_search_pipeline.review.shutil.which", return_value=None):
             run_pipeline.ai_review(results, 55)
-        self.assertEqual(results["ai_review_skipped"], "AI review skipped: no CLI")
+        self.assertIn("claude CLI", results["ai_review_skipped"])
         self.assertNotIn("ai_spend", results)
+        self.assertEqual(results["top_matches"], [match(1, 85)])  # keyword results pass through untouched
         with patch.object(run_pipeline, "send_notification") as send:
             run_pipeline.notify_results(results, [], [], None, True, min_score=80)
         title, body = send.call_args.args[:2]
         self.assertTrue(title.endswith("(AI review skipped)"))
-        self.assertIn("⚠️ AI review skipped: no CLI", body)
+        self.assertIn("⚠️ " + results["ai_review_skipped"], body)
         self.assertEqual(send.call_args.kwargs["priority"], run_pipeline.PRIORITY_HIGH)
 
     def test_failed_review_gets_a_visible_reason(self):
