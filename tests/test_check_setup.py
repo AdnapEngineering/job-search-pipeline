@@ -62,7 +62,13 @@ class EnvFileTest(unittest.TestCase):
         self.assertEqual(cs.read_env_file(path),
                          {"NOTION_TOKEN": "ntn_abc", "NOTIFY_URL": "https://ntfy.sh/t", "BARE": "1"})
 
-    def test_later_files_win_like_the_cron_wrapper(self):
+    def test_env_file_variable_is_read_before_dot_env(self):
+        from job_search_pipeline.env import ROOT_DIR, env_files
+        dot_env = os.path.join(ROOT_DIR, ".env")
+        self.assertEqual(env_files({}), [dot_env])
+        self.assertEqual(env_files({"JOB_SEARCH_ENV_FILE": "/etc/job.env"}), ["/etc/job.env", dot_env])
+
+    def test_later_files_win(self):
         global_env = self._write("global.env", "NOTION_TOKEN=global\nNOTION_DATABASE_ID=db1\n")
         local_env = self._write(".env", "NOTION_TOKEN=local\n")
         env = cs.effective_env({"NOTION_TOKEN": "process", "HOME": "/h"}, [global_env, local_env])
