@@ -63,7 +63,7 @@ REVIEW_VERSION = str(_LLM_CFG["review_version"])
 COMPONENTS = _LLM_CFG["components"] or DEFAULTS["llm_review"]["components"]
 MAX_TOTAL = sum(COMPONENTS.values())
 BLOCKER_CAP = int(_LLM_CFG["blocker_cap"])
-# Highest Match % for a role graded level 0 (under- or over-leveled for the candidate); 100 = no cap
+# Highest Match % for a role graded level 0 (under- or over-leveled for the candidate); 100 turns it off
 LEVEL_MISMATCH_CAP = int(_LLM_CFG["level_mismatch_cap"])
 # Highest Match % per core_work grade ({"0": 30, "1": 65}), so off-center work cannot reach APPLY on
 # requirement and domain overlap alone; grades not listed are uncapped

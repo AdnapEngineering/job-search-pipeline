@@ -460,8 +460,11 @@
       "level": 2
     },
     "blocker_cap": 30,
-    "level_mismatch_cap": 100,
-    "core_work_caps": {},
+    "level_mismatch_cap": 65,
+    "core_work_caps": {
+      "0": 30,
+      "1": 65
+    },
     "apply_min_score": null,
     "stretch_min_score": 50,
     "hide_third_party": false,
