@@ -53,7 +53,7 @@ class StructuredRejectionTests(unittest.TestCase):
         result, rejection = ev.evaluate_job_traced(job(), trace, parts)
         self.assertIsNone(rejection)
         self.assertTrue(all(step["passed"] for step in trace))
-        self.assertEqual(trace[-1]["rule"], "secondary_floor")
+        self.assertEqual(trace[-1]["rule"], "jd_logistics")
         self.assertEqual(min(100, sum(p for _, p in parts)), result["score"])
         self.assertEqual(ev.evaluate_single_job(job()), result)
 
@@ -74,6 +74,24 @@ class StructuredRejectionTests(unittest.TestCase):
         self.assertEqual(len(funnel["seniority"]["examples"]), ev.DROP_EXAMPLES)
         self.assertIn('"staff"', funnel["seniority"]["examples"][0]["detail"])
         self.assertEqual(len(result["top_matches"]), 1)
+
+    def test_onsite_wording_is_a_gate_and_fills_location_filtered(self):
+        onsite = job(title="Frontend Developer", desc="This role requires you to be on-site in Boston." + FILLER)
+        trace = []
+        result, rejection = ev.evaluate_job_traced(onsite, trace)
+        self.assertIsNone(result)
+        self.assertEqual(rejection["rejected_by"], "jd_logistics")
+        self.assertEqual(trace[-1], {"rule": "jd_logistics", "passed": False, "detail": rejection["detail"]})
+        self.assertGreater(rejection["score"], 0)
+        with tempfile.TemporaryDirectory() as tmp:
+            path = os.path.join(tmp, "enriched.json")
+            with open(path, "w") as f:
+                json.dump([onsite, job()], f)
+            out = ev.evaluate_jobs(path)
+        self.assertEqual([e["phrase"] for e in out["location_filtered"]], [rejection["detail"]])
+        self.assertEqual(out["location_filtered"][0]["score"], rejection["score"])
+        self.assertEqual({d["rule"]: d["count"] for d in out["dropped_by_rule"]}, {"jd_logistics": 1})
+        self.assertEqual(len(out["top_matches"]), 1)
 
 
 class PrefilterReasonTests(unittest.TestCase):
@@ -149,7 +167,7 @@ class ExplainTests(unittest.TestCase):
         posting = job()
         code, text = self.run_explain([posting], posting["url"] + "?utm_source=x")
         self.assertIn("Score breakdown", text)
-        self.assertIn("✓ nothing rules it out", text)
+        self.assertIn("✓ jd_logistics", text)
         self.assertIn("Result: Secondary match at 55%; goes to the AI review", text)
 
     def test_unseen_posting_is_scraped_with_overrides(self):

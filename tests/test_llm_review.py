@@ -43,12 +43,9 @@ def completed(stdout, returncode=0):
 
 
 class ProviderTests(unittest.TestCase):
-    def setUp(self):
-        self.jd_by_url = {review.normalize_url(JOB["url"]): JD}
 
     def review_one(self, provider):
-        return review._review_one("test-cli", "test-model", "test profile", JOB,
-                                  self.jd_by_url, provider=provider)
+        return review._review_one("test-cli", "test-model", "test profile", JOB, JD, provider=provider)
 
     @patch("job_search_pipeline.review.subprocess.run")
     def test_claude_cli_and_shared_scoring(self, run):
@@ -195,8 +192,8 @@ class ProviderTests(unittest.TestCase):
             executable.chmod(0o700)
             for provider in ("anthropic", "openai"):
                 with self.subTest(provider=provider):
-                    result = review._review_one(str(executable), "test-model", "test profile", JOB,
-                                                self.jd_by_url, provider=provider)
+                    result = review._review_one(str(executable), "test-model", "test profile", JOB, JD,
+                                                provider=provider)
                     self.assertEqual((result["score"], result["verdict"]), (100, "apply"))
 
     @patch("job_search_pipeline.review.subprocess.run")

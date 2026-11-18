@@ -826,31 +826,36 @@ DROP_RULES = {
     "off_center_role_check": "Adjacent role (skills_and_scoring.off_center_role_check)",
     "max_senior_role_years": "Senior-level years over experience.max_senior_role_years",
     "secondary_floor": "Score under skills_and_scoring.secondary_floor",
+    "jd_logistics": "Onsite / hybrid / residency wording in the JD (location.*)",
 }
 
 
 class _Rejected(Exception):
-    def __init__(self, rule, detail):
+    def __init__(self, rule, detail, score=None):
         super().__init__(rule)
-        self.rule, self.detail = rule, detail
+        self.rule, self.detail, self.score = rule, detail, score
 
 
 def evaluate_job_traced(job, trace=None, breakdown=None):
     """(result, rejection). result is what evaluate_single_job returns; when it is None, rejection is
-    {"rejected_by": a DROP_RULES key, "detail": what matched}. With a `trace` list, every gate checked is
-    appended as {"rule", "passed", "detail"}; with a `breakdown` list, the score's parts as (label, points)."""
-    def gate(rule, detail):
+    {"rejected_by": a DROP_RULES key, "detail": what matched}, plus "score" for a gate checked after scoring.
+    With a `trace` list, every gate checked is appended as {"rule", "passed", "detail"}; with a `breakdown`
+    list, the score's parts as (label, points)."""
+    def gate(rule, detail, score=None):
         if isinstance(detail, tuple):  # a gate that names a narrower rule than the one it is listed under
             rule, detail = detail
         if trace is not None:
             trace.append({"rule": rule, "passed": not detail, "detail": detail or ""})
         if detail:
-            raise _Rejected(rule, detail)
+            raise _Rejected(rule, detail, score)
 
     try:
         return _evaluate(job, gate, breakdown), None
     except _Rejected as r:
-        return None, {"rejected_by": r.rule, "detail": r.detail}
+        rejection = {"rejected_by": r.rule, "detail": r.detail}
+        if r.score is not None:
+            rejection["score"] = r.score
+        return None, rejection
 
 
 def evaluate_single_job(job):
@@ -920,6 +925,9 @@ def _evaluate(job, gate, breakdown):
     match_pct = min(100, score)
     gate("secondary_floor", f"score {match_pct}% < {SECONDARY_FLOOR}%" if match_pct < SECONDARY_FLOOR else '')
     category = "Strong" if match_pct >= STRONG_FLOOR else "Secondary"
+
+    # 5. Onsite, hybrid or residency wording in the JD (checked last: it reads the most text)
+    gate("jd_logistics", jd_logistics_block(job), score=match_pct)
 
     unique_reasons = list(dict.fromkeys(reasons))
     reason_str = ", ".join(unique_reasons) if unique_reasons else f"Matches skills: {', '.join(matched_strengths[:3])}"
@@ -1025,18 +1033,15 @@ def evaluate_jobs(input_path, output_path=None):
         res, rejection = evaluate_job_traced(j)
         if not res:
             record_drop(drops, j, rejection)
-            continue
-        if res["category"] != "Manual Review":
-            blocked_by = jd_logistics_block(j)
-            if blocked_by:
+            if rejection["rejected_by"] == "jd_logistics":
                 location_filtered.append({
                     "company": str(j.get("company") or "Unknown").strip().title(),
                     "title": j.get("title") or "Unknown Role",
-                    "score": res["score"],
+                    "score": rejection["score"],
                     "url": j.get("url", "#"),
-                    "phrase": blocked_by,
+                    "phrase": rejection["detail"],
                 })
-                continue
+            continue
 
         company = str(j.get("company") or "").strip()
         if company.lower() in _MISSING_COMPANY_VALUES:
@@ -1083,7 +1088,8 @@ def evaluate_jobs(input_path, output_path=None):
         atomic_write_json(output_path, result)
         print(f"Evaluated {len(jobs)} jobs. Top matches: {len(evaluated_matches)}, Manual reviews: {len(manual_reviews)}, "
               f"dropped for onsite/hybrid/ineligible location wording: {len(location_filtered)}, "
-              f"dropped by deterministic rules: {sum(d['count'] for d in drops.values())}.")
+              f"dropped by other deterministic rules: "
+              f"{sum(d['count'] for rule, d in drops.items() if rule != 'jd_logistics')}.")
 
     return result
 
