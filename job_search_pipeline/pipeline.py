@@ -102,7 +102,7 @@ def prefilter_drops(path=SOURCE_STATS_PATH):
 
 
 def send_notification(title: str, message: str, priority: int = PRIORITY_DEFAULT, click: str = ""):
-    notify_url = os.getenv("NOTIFY_URL") or _NOTIF_CFG.get("notify_url") or CFG.get("notify_url")
+    notify_url = os.getenv("NOTIFY_URL") or _NOTIF_CFG["notify_url"]
     if not notify_url:
         return
 

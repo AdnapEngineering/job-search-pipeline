@@ -37,19 +37,6 @@ Create it first if you have not already (`cp config.example.json config.json`, o
 
 <sup>4</sup> `apply_min_score` is the Match % at which the verdict reads APPLY; leave it out to follow `skills_and_scoring.min_sync_score`, so APPLY always means "will be synced". `level_mismatch_cap` caps a role graded level 0 (under- or over-leveled), so strong skill overlap cannot lift a junior or executive role to APPLY; it defaults to 65, and 100 turns it off. `core_work_caps` does the same per core_work grade, so mostly-backend or off-target work cannot reach APPLY on requirement and domain overlap alone; it defaults to `{"0": 30, "1": 65}`, and `{}` turns it off. `hide_third_party: true` drops postings flagged as coming from a staffing agency, recruiter or aggregator, as if skipped; the default `false` only labels them. Tune `repost_similarity` too; see [AI review spend and caps](#ai-review-spend-and-caps).
 
-<details>
-<summary>Legacy key names that are still read</summary>
-
-Configs written before some lists were merged keep working; these keys are read and added to their current equivalents, and `--check` does not flag them:
-
-| Legacy key | Added to |
-| :--- | :--- |
-| `location.foreign_exclude_patterns`, `jd_non_allowed_locations`, `jd_foreign_places`, `jd_foreign_terms`, `foreign_countries` | `location.foreign_places` / `foreign_cities` |
-| `titles.bad_role_patterns`, `soft_bad_role_patterns` | `titles.exclude_role_patterns`, `soft_exclude_role_patterns` |
-| top-level `notify_url`, `notion_token`, `summary_block_id` | `notifications.notify_url`, `notion.notion_token`, `notion.summary_block_id` |
-
-</details>
-
 ### Location rules
 
 - Set `home_states` (e.g. `["CO"]`) and `home_timezones` (any of `eastern`, `central`, `mountain`, `pacific`) to drop remote roles restricted to other states or zones ("Remote - TX", "must reside in MA, IN, or TX", "must be located in the Eastern time zone") before the LLM review. Both rules are off while the lists are empty.

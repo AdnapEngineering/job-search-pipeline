@@ -30,22 +30,13 @@ CHUNK_CONCURRENCY = int(_SOURCES_CFG["chunk_concurrency"])
 LOOKBACK_DAYS = int(_SOURCES_CFG["lookback_days"])
 MIN_SALARY = float(_COMP_CFG["min_salary"])
 
-# Places outside the home country (see location.foreign_places in defaults.py), plus pre-merge legacy keys
-def _legacy_terms(*keys):
-    """Entries of pre-merge location keys, with the \\b anchors the old regex lists used stripped."""
-    out = []
-    for key in keys:
-        out.extend(re.sub(r'\\b', '', t) for t in (_LOC_CFG.get(key) or []))
-    return out
-
-
 def _unique(items):
     return list(dict.fromkeys(i for i in items if i))
 
 
-FOREIGN_PLACES = _unique(_LOC_CFG["foreign_places"] + _legacy_terms(
-    "foreign_exclude_patterns", "jd_non_allowed_locations", "jd_foreign_places", "foreign_countries"))
-FOREIGN_CITIES = _unique(_LOC_CFG["foreign_cities"] + _legacy_terms("jd_foreign_terms"))
+# Places outside the home country: see location.foreign_places / foreign_cities in defaults.py
+FOREIGN_PLACES = _unique(_LOC_CFG["foreign_places"])
+FOREIGN_CITIES = _unique(_LOC_CFG["foreign_cities"])
 FOREIGN_RE = compile_alternation(FOREIGN_PLACES, word_bounded=True) or re.compile(r'(?!x)x')
 FOREIGN_CITY_RE = compile_alternation(FOREIGN_CITIES, word_bounded=True) or re.compile(r'(?!x)x')
 US_PATTERN = re.compile(_LOC_CFG["allowed_country_pattern"])
@@ -64,13 +55,10 @@ STRONG_TARGET_RE = (
     else re.compile(r"(?!x)x")
 )
 # Title words that reject a role. soft_exclude_role_patterns reject it too, unless the title is a strong target;
-# they need not also be listed in exclude_role_patterns. The bad_role / soft_bad_role word lists are their
-# pre-merge names and are still read.
-_SOFT_ROLE_EXCLUDES = set(_unique((_TITLES_CFG.get("soft_exclude_role_patterns") or [])
-                                  + [rf'\b{w}\b' for w in (_TITLES_CFG.get("soft_bad_role_patterns") or [])]))
+# they need not also be listed in exclude_role_patterns.
+_SOFT_ROLE_EXCLUDES = set(_unique(_TITLES_CFG["soft_exclude_role_patterns"] or []))
 _EXCLUDE_ROLE_PATTERNS = compile_regex_list(_unique(
-    (_TITLES_CFG.get("exclude_role_patterns") or [])
-    + [rf'\b{w}\b' for w in (_TITLES_CFG.get("bad_role_patterns") or [])] + sorted(_SOFT_ROLE_EXCLUDES)))
+    (_TITLES_CFG["exclude_role_patterns"] or []) + sorted(_SOFT_ROLE_EXCLUDES)))
 
 _TARGET_PATTERNS = compile_regex_list(_TITLES_CFG["target_patterns"])
 # One combined pass to cheaply skip non-target titles before the full title rules run

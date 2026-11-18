@@ -72,18 +72,6 @@ class TitleTests(unittest.TestCase):
         self.assertTrue(ff.is_valid_title("Frontend Security Engineer"))
         self.assertFalse(ff.is_valid_title("Senior Frontend DevOps Engineer"))  # a hard exclusion ignores strong titles
 
-    def test_pre_merge_title_keys_are_still_read(self):
-        import importlib
-        legacy = {"bad_role_patterns": ["wizard"], "soft_bad_role_patterns": ["sorcerer"]}
-        self.addCleanup(importlib.reload, ff)
-        with unittest.mock.patch.dict(ff._TITLES_CFG, legacy):
-            importlib.reload(ff)
-        self.assertFalse(ff.is_valid_title("Frontend Wizard Engineer"))
-        self.assertFalse(ff.is_valid_title("Sorcerer Engineer"))
-        self.assertTrue(ff.is_valid_title("Frontend Sorcerer Engineer"))
-
-
-class LogisticsTests(unittest.TestCase):
     def test_jd_work_arrangement_wording(self):
         cases = [
             ("This role requires you to be onsite. Remote and/or hybrid work will not be considered", True),
@@ -148,15 +136,6 @@ class LogisticsTests(unittest.TestCase):
         self.assertIsNotNone(reloaded.foreign_remote_match("This role is remote within the United States."))
         self.assertIsNone(reloaded.foreign_remote_match("Open to candidates based in Manitoba."))
         self.assertTrue(logistics_with(reloaded, "Location: Seattle, WA"))
-
-    def test_pre_merge_location_keys_are_still_read(self):
-        legacy = {"foreign_exclude_patterns": [r"\bnarnia\b"], "jd_non_allowed_locations": ["gondor"],
-                  "jd_foreign_places": ["mordor"], "foreign_countries": ["oz"], "jd_foreign_terms": ["emerald city"]}
-        reloaded = self.reload_with_location(legacy)
-        for place in ("narnia", "gondor", "mordor", "oz", "canada"):  # merged with the defaults
-            with self.subTest(place=place):
-                self.assertTrue(reloaded._location_rejected({"remote": True}, "developer", f"remote ({place})"))
-        self.assertIn("emerald city", ff.FOREIGN_CITIES)
 
     def test_foreign_country_in_feed_location_or_title(self):
         def rejected(loc, title="senior full stack engineer"):

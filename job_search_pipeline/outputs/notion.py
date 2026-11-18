@@ -45,7 +45,7 @@ _session.mount("https://", requests.adapters.HTTPAdapter(
 def get_notion_token() -> str:
     """Bearer token from the environment (NOTION_TOKEN / NOTION_API_KEY) or config.json."""
     token = (os.environ.get("NOTION_TOKEN") or os.environ.get("NOTION_API_KEY")
-             or _NOTION_CFG.get("notion_token") or CFG.get("notion_token"))
+             or _NOTION_CFG.get("notion_token"))
     if not token:
         raise RuntimeError(f"Missing NOTION_TOKEN in environment or at {CONFIG_PATH}")
     return token if token.startswith("Bearer ") else f"Bearer {token}"
@@ -343,7 +343,7 @@ def log_run_summary_to_notion(eval_results, synced_urls, min_score=65, database_
     # Read config.json fresh rather than CFG: _remember_summary_block rewrites it between runs
     cfg = load_json(CONFIG_PATH, default={}) or {}
     notion_cfg = cfg.get("notion") or {}
-    summary_block_id = notion_cfg.get("summary_block_id") or cfg.get("summary_block_id")
+    summary_block_id = notion_cfg.get("summary_block_id")
 
     previous_runs = record_run(eval_results, synced_urls, min_score) if history is None else history
     rich_text = _build_summary_rich_text(eval_results, synced_urls, min_score=min_score, history=previous_runs)
@@ -351,8 +351,7 @@ def log_run_summary_to_notion(eval_results, synced_urls, min_score=65, database_
     if summary_block_id and _update_summary_block(summary_block_id, rich_text, headers):
         return summary_block_id
 
-    parent_page_id = (notion_cfg.get("summary_page_id") or cfg.get("summary_page_id")
-                      or _database_parent_page(database_id, headers))
+    parent_page_id = notion_cfg.get("summary_page_id") or _database_parent_page(database_id, headers)
     if not parent_page_id:
         print("[Notion Log] Unable to determine parent page for run summary.", file=sys.stderr)
         return None
