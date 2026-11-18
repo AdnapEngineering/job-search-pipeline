@@ -434,12 +434,10 @@ def _cli_response(executable, provider, model, prompt, timeout=None):
     return response, usage
 
 
-def _review_one(executable, model, profile, job, jd_by_url, salary_by_url=None, provider="agy", on_usage=None):
+def _review_one(executable, model, profile, job, jd, salary=None, provider="agy", on_usage=None):
     """Run one provider review; return the parsed verdict or None on a provider failure.
     on_usage(usage) is called for every reply the CLI completed, parseable or not, since each one was paid for."""
-    key = normalize_url(job.get("url", ""))
-    jd = jd_by_url.get(key) or ""
-    salary = (salary_by_url or {}).get(key)
+    jd = jd or ""
     if len(jd) < 200:
         return None
     prompt = PROMPT.format(profile=profile, company=job.get("company") or "Unknown",
@@ -620,6 +618,15 @@ class Budget:
                 self.usd_estimated = True
             self.usd += usd
 
+    def totals(self):
+        """This pass's usage, spend and caps, plus the day's running totals, as summary fields."""
+        return {
+            "input_tokens": self.input, "cached_tokens": self.cached, "output_tokens": self.output,
+            "tokens": self.tokens, "usd": round(self.usd, 4), "usd_estimated": self.usd_estimated,
+            "usd_unknown": self.usd_unknown, "stopped_by": self.stopped_by, "caps": self.caps(),
+            "today_usd": round(self.today_usd + self.usd, 4), "today_tokens": self.today_tokens + self.tokens,
+        }
+
 
 def _write_spend(stats, path=None):
     """Append this pass to the spend ledger, dropping entries older than SPEND_KEEP_DAYS."""
@@ -648,106 +655,96 @@ def spend_line(stats):
     return text + "."
 
 
-def review_matches(matches, enriched_path, min_score=55, stats=None):
-    """Review every match scoring >= min_score, best keyword score first. Returns (kept, skipped).
+def _url_key(job):
+    return normalize_url(job.get("url", ""))
 
-    A match that was due a review and did not get one (timeout, CLI failure, unparseable reply, JD too
-    short, or a budget cap reached) is kept with review_failed=True: it is shown but not synced or
-    exported, and is retried next run. Pass a dict as `stats` to receive this pass's usage and spend."""
-    executable = _provider_config(PROVIDER)
-    if not executable or not os.path.exists(PROFILE_PATH):
-        if executable:
-            print(f"[AI review] {PROFILE_PATH} not found; skipping AI review. Copy candidate_profile.example.md "
-                  "to that path and fill it in to enable it.", file=sys.stderr)
-        if stats is not None:
-            stats["skipped"] = skip_message(PROVIDER)
-        return matches, []
 
-    model = DEFAULT_MODEL
-    profile = _profile_text()
-    phash = _profile_hash(profile, model, PROVIDER)
-
-    cache = load_json(CACHE_PATH, default={})
-    if not isinstance(cache, dict):
-        cache = {}
-    due = sorted((j for j in matches if j.get("score", 0) >= min_score),
-                 key=lambda j: j.get("score", 0), reverse=True)
+def _split_cached(due, cache, phash):
+    """({url key: rescored result} for jobs with a current-profile cached review, [jobs without one])."""
     results, misses = {}, []
     for job in due:
-        key = normalize_url(job.get("url", ""))
+        key = _url_key(job)
         hit = cache.get(key)
         if isinstance(hit, dict) and hit.get("profile") == phash:
             results[key] = _rescored(hit["result"])
         else:
             misses.append(job)
-    cache_hits = len(results)
+    return results, misses
 
+
+def _load_review_inputs(jobs, enriched_path):
+    """({url key: JD text for the prompt}, {url key: salary}) for `jobs`, read from the enriched file."""
     jd_by_url, salary_by_url = {}, {}
-    if misses:
-        miss_keys = {normalize_url(j.get("url", "")) for j in misses}
-        enriched = [j for j in (load_json(enriched_path, default=[]) or [])
-                    if normalize_url(j.get("url", "")) in miss_keys]
-        jd_by_url = {normalize_url(j.get("url", "")): jd_for_review(j.get("description_full") or j.get("description_ai"),
-                                                                    j.get("description_ai"))
-                     for j in enriched}
-        salary_by_url = {normalize_url(j.get("url", "")): j.get("salary") for j in enriched if j.get("salary")}
+    if not jobs:
+        return jd_by_url, salary_by_url
+    keys = {_url_key(j) for j in jobs}
+    for j in load_json(enriched_path, default=[]) or []:
+        key = _url_key(j)
+        if key not in keys:
+            continue
+        jd_by_url[key] = jd_for_review(j.get("description_full") or j.get("description_ai"), j.get("description_ai"))
+        if j.get("salary"):
+            salary_by_url[key] = j["salary"]
+    return jd_by_url, salary_by_url
 
-    # A repost under a new URL reuses the review already paid for
-    todo, repost_hits = [], 0
+
+def _reuse_reposts(misses, jd_by_url, cache, phash, results):
+    """Copy the paid-for review of a repost under a new URL into `results` and `cache`; return the jobs left."""
+    todo = []
     for job in misses:
-        key = normalize_url(job.get("url", ""))
+        key = _url_key(job)
         jd = jd_by_url.get(key) or ""
         source = _find_repost(job, jd, cache, phash) if len(jd) >= 200 else None
         if source:
             results[key] = _rescored(cache[source]["result"])
             cache[key] = dict(cache[source], repost_of=source)
-            repost_hits += 1
         else:
             todo.append(job)
+    return todo
 
-    today = datetime.now().strftime("%Y-%m-%d")
-    budget = Budget(*spent_on(today, load_spend()))
-    print(f"[AI review] {cache_hits} cached, {repost_hits} reposts of cached reviews, "
-          f"{len(todo)} to review with {model} via {PROVIDER}."
-          + (f" Caps: {', '.join(f'{v:g} {k}' for k, v in budget.caps().items())}." if budget.caps() else ""))
 
+def _run_reviews(todo, executable, model, profile, jd_by_url, salary_by_url, budget):
+    """Review `todo` in parallel within the budget: ({url key: result} for the reviews that succeeded,
+    {url keys deferred because a cap was reached})."""
     deferred = set()
-    if todo:
-        profile_chars = len(profile) + len(PROMPT)
+    prompt_chars = len(profile) + len(PROMPT)
 
-        def run_one(job):
-            key = normalize_url(job.get("url", ""))
-            reservation = budget.reserve(profile_chars + len(jd_by_url.get(key) or ""))
-            if reservation is None:
-                deferred.add(key)
-                return None
-            try:
-                return _review_one(executable, model, profile, job, jd_by_url, salary_by_url, PROVIDER,
-                                   on_usage=budget.record)
-            finally:
-                budget.release(reservation)
+    def run_one(job):
+        key = _url_key(job)
+        jd = jd_by_url.get(key) or ""
+        reservation = budget.reserve(prompt_chars + len(jd))
+        if reservation is None:
+            deferred.add(key)
+            return None
+        try:
+            return _review_one(executable, model, profile, job, jd, salary_by_url.get(key), PROVIDER,
+                               on_usage=budget.record)
+        finally:
+            budget.release(reservation)
 
-        with ThreadPoolExecutor(max_workers=WORKERS) as pool:
-            outs = list(pool.map(run_one, todo))
-        for job, out in zip(todo, outs, strict=True):
-            if out:
-                key = normalize_url(job.get("url", ""))
-                jd = jd_by_url.get(key) or ""
-                results[key] = out
-                cache[key] = {"profile": phash, "result": out, "role": role_key(job.get("company"), job.get("title")),
-                              "jd": _jd_hash(jd), "sig": jd_signature(jd)}
-    # Entries reviewed under another profile, prompt, model or provider can never be read again
+    with ThreadPoolExecutor(max_workers=WORKERS) as pool:
+        outs = list(pool.map(run_one, todo))
+    return {_url_key(job): out for job, out in zip(todo, outs, strict=True) if out}, deferred
+
+
+def _save_cache(cache, phash, changed):
+    """Drop entries from another profile, prompt, model or provider (they can never be read again), and
+    write the cache when anything changed."""
     stale = [key for key, hit in cache.items() if not isinstance(hit, dict) or hit.get("profile") != phash]
-    if todo or stale or repost_hits:
-        for key in stale:
-            del cache[key]
-        atomic_write_json(CACHE_PATH, cache, indent=1)
-        if stale:
-            print(f"[AI review] pruned {len(stale)} cached review(s) from an older profile or prompt.")
+    if not (changed or stale):
+        return
+    for key in stale:
+        del cache[key]
+    atomic_write_json(CACHE_PATH, cache, indent=1)
+    if stale:
+        print(f"[AI review] pruned {len(stale)} cached review(s) from an older profile or prompt.")
 
+
+def _apply_results(matches, results, deferred, min_score):
+    """(kept, skipped, failed count, hidden count): each match with its review applied, or held back."""
     kept, skipped, failed, hidden = [], [], 0, 0
     for job in matches:
-        key = normalize_url(job.get("url", ""))
+        key = _url_key(job)
         out = results.get(key)
         if out:
             job = dict(job, verdict=out["verdict"], ai_reason=out["reason"], blockers=out["blockers"],
@@ -764,16 +761,60 @@ def review_matches(matches, enriched_path, min_score=55, stats=None):
         (skipped if out and (out["verdict"] == "skip" or hide) else kept).append(job)
     # Match % moves in 8-point steps, so the keyword score orders the many ties within a step
     kept.sort(key=lambda j: (j.get("score", 0), j.get("keyword_score", 0)), reverse=True)
+    return kept, skipped, failed, hidden
 
-    reviewed = sum(1 for j in todo if normalize_url(j.get("url", "")) in results)
+
+def review_matches(matches, enriched_path, min_score=55, stats=None):
+    """Review every match scoring >= min_score, best keyword score first. Returns (kept, skipped).
+
+    A match that was due a review and did not get one (timeout, CLI failure, unparseable reply, JD too
+    short, or a budget cap reached) is kept with review_failed=True: it is shown but not synced or
+    exported, and is retried next run. Pass a dict as `stats` to receive this pass's usage and spend."""
+    executable = _provider_config(PROVIDER)
+    if not executable or not os.path.exists(PROFILE_PATH):
+        if executable:
+            print(f"[AI review] {PROFILE_PATH} not found; skipping AI review. Copy candidate_profile.example.md "
+                  "to that path and fill it in to enable it.", file=sys.stderr)
+        if stats is not None:
+            stats["skipped"] = skip_message(PROVIDER)
+        return matches, []
+
+    model, profile = DEFAULT_MODEL, _profile_text()
+    phash = _profile_hash(profile, model, PROVIDER)
+    cache = load_json(CACHE_PATH, default={})
+    if not isinstance(cache, dict):
+        cache = {}
+    due = sorted((j for j in matches if j.get("score", 0) >= min_score),
+                 key=lambda j: j.get("score", 0), reverse=True)
+
+    results, misses = _split_cached(due, cache, phash)
+    cache_hits = len(results)
+    jd_by_url, salary_by_url = _load_review_inputs(misses, enriched_path)
+    todo = _reuse_reposts(misses, jd_by_url, cache, phash, results)
+    repost_hits = len(misses) - len(todo)
+
+    today = datetime.now().strftime("%Y-%m-%d")
+    budget = Budget(*spent_on(today, load_spend()))
+    print(f"[AI review] {cache_hits} cached, {repost_hits} reposts of cached reviews, "
+          f"{len(todo)} to review with {model} via {PROVIDER}."
+          + (f" Caps: {', '.join(f'{v:g} {k}' for k, v in budget.caps().items())}." if budget.caps() else ""))
+
+    fresh, deferred = (_run_reviews(todo, executable, model, profile, jd_by_url, salary_by_url, budget)
+                       if todo else ({}, set()))
+    for job in todo:
+        key = _url_key(job)
+        if key in fresh:
+            jd = jd_by_url.get(key) or ""
+            cache[key] = {"profile": phash, "result": fresh[key], "role": role_key(job.get("company"), job.get("title")),
+                          "jd": _jd_hash(jd), "sig": jd_signature(jd)}
+    results.update(fresh)
+    _save_cache(cache, phash, changed=bool(todo or repost_hits))
+
+    kept, skipped, failed, hidden = _apply_results(matches, results, deferred, min_score)
     summary = {
         "time": datetime.now().strftime("%Y-%m-%d %H:%M"), "date": today, "provider": PROVIDER, "model": model,
-        "reviewed": reviewed, "failed": failed, "deferred": len(deferred), "cache_hits": cache_hits,
-        "repost_hits": repost_hits, "input_tokens": budget.input, "cached_tokens": budget.cached,
-        "output_tokens": budget.output, "tokens": budget.tokens, "usd": round(budget.usd, 4),
-        "usd_estimated": budget.usd_estimated, "usd_unknown": budget.usd_unknown, "stopped_by": budget.stopped_by,
-        "caps": budget.caps(), "today_usd": round(budget.today_usd + budget.usd, 4),
-        "today_tokens": budget.today_tokens + budget.tokens,
+        "reviewed": len(fresh), "failed": failed, "deferred": len(deferred), "cache_hits": cache_hits,
+        "repost_hits": repost_hits, **budget.totals(),
     }
     if due:
         _write_spend(summary)
