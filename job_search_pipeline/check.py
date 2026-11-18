@@ -19,14 +19,8 @@ ROOT_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 DEPENDENCIES = {"requests": "requests", "beautifulsoup4": "bs4", "aiohttp": "aiohttp", "pandas": "pandas",
                 "python-jobspy": "jobspy"}
 
-# Keys the pipeline still reads although the template no longer lists them
-LEGACY_KEYS = {
-    "": {"notify_url", "notion_token", "summary_block_id"},
-    "notion": {"notion_token"},
-    "titles": {"bad_role_patterns", "soft_bad_role_patterns"},
-    "location": {"foreign_exclude_patterns", "jd_non_allowed_locations", "jd_foreign_places", "jd_foreign_terms",
-                 "foreign_countries"},
-}
+# Keys the pipeline reads although the template leaves them out (a secret belongs in .env)
+UNLISTED_KEYS = {"notion": {"notion_token"}}
 
 # Career-specific settings that should not keep the template's placeholder value
 PLACEHOLDER_KEYS = [
@@ -57,7 +51,7 @@ def config_key_issues(cfg, template):
     sections = [("", cfg, template)]
     sections += [(k, v, template.get(k)) for k, v in cfg.items() if isinstance(v, dict) and isinstance(template.get(k), dict)]
     for section, values, known in sections:
-        allowed = set(known) | LEGACY_KEYS.get(section, set())
+        allowed = set(known) | UNLISTED_KEYS.get(section, set())
         for key in values:
             if key in allowed:
                 continue
@@ -163,7 +157,7 @@ def check_ai_review(report, cfg, has_profile):
 def check_notion(report, cfg, env):
     notion = cfg.get("notion") or {}
     db_id = env.get("NOTION_DATABASE_ID") or notion.get("database_id") or ""
-    token = env.get("NOTION_TOKEN") or env.get("NOTION_API_KEY") or notion.get("notion_token") or cfg.get("notion_token")
+    token = env.get("NOTION_TOKEN") or env.get("NOTION_API_KEY") or notion.get("notion_token")
     if not db_id and not token:
         report.add(OFF, "Notion", "off (no NOTION_TOKEN or database id)")
         return
@@ -249,7 +243,7 @@ def check_outputs(report, cfg, env, config):
         outputs.append("text export")
     if outputs:
         report.add(OK, "Outputs", ", ".join(outputs) + " (plus Notion and Obsidian, when on)")
-    notify = env.get("NOTIFY_URL") or (cfg.get("notifications") or {}).get("notify_url") or cfg.get("notify_url")
+    notify = env.get("NOTIFY_URL") or cfg["notifications"]["notify_url"]
     if notify:
         report.add(OK, "Notifications", f"set ({urlparse(notify).netloc or 'custom URL'})")
     else:

@@ -25,9 +25,8 @@ class ConfigKeyIssuesTest(unittest.TestCase):
         self.assertIn("unknown key sourcs (did you mean sources?)", issues[0])
         self.assertIn("unknown key location.home_state (did you mean location.home_states?)", issues[1])
 
-    def test_legacy_keys_still_read_are_not_flagged(self):
-        cfg = {"notify_url": "https://ntfy.sh/x", "location": {"foreign_countries": ["oz"]}}
-        self.assertEqual(cs.config_key_issues(cfg, TEMPLATE), [])
+    def test_notion_token_is_allowed_though_the_template_leaves_it_out(self):
+        self.assertEqual(cs.config_key_issues({"notion": {"notion_token": "ntn_x"}}, TEMPLATE), [])
 
     def test_free_form_values_below_the_second_level_are_not_checked(self):
         template = {"skills_and_scoring": {"focus_keywords": {"example": 10}}}
