@@ -5,10 +5,12 @@ import asyncio
 import contextlib
 import io
 import json
+import logging
 import unittest
 from unittest.mock import patch
 
 import aiohttp
+import pandas as pd
 
 import job_search_pipeline.sources.filter as ff
 import job_search_pipeline.sources.linkedin_indeed as fi
@@ -82,6 +84,27 @@ class ExclusionGateTests(unittest.TestCase):
     def test_two_required_excluded_skills_still_drop_it(self):
         desc = "Requirements: production experience with Rust and with Golang services. React."
         self.assertEqual(fi.score_job("Frontend Engineer", desc), (0, []))
+
+
+class LinkedInRateLimitTests(unittest.TestCase):
+    def test_a_429_stops_the_remaining_linkedin_queries(self):
+        calls = []
+
+        def fake_scrape(**kwargs):
+            calls.append(kwargs["search_term"])
+            if len(calls) == 2:
+                logging.getLogger("JobSpy:LinkedIn").error("LinkedIn: too many 429 error responses")
+            return pd.DataFrame()
+
+        terms = ["A", "B", "C", "D"]
+        searches = [("linkedin", "United States", " remote", 10), ("linkedin", "Portland, OR", "", 10)]
+        with patch.object(fi, "scrape_jobs", fake_scrape), patch.object(fi, "SEARCHES", searches), \
+                patch.object(fi, "LINKEDIN_PAUSE_SECONDS", 0), \
+                patch.object(fi, "_install_linkedin_details_cache", lambda: (lambda: 0)), \
+                contextlib.redirect_stderr(io.StringIO()):
+            _, stats = fi._scrape_site("linkedin", 72, terms)
+        self.assertEqual(calls, ["A remote", "B remote"])
+        self.assertEqual((stats["rate_limited"], stats["skipped_queries"]), (1, 6))
 
 
 class FeedOutageTests(unittest.TestCase):

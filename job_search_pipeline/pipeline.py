@@ -76,6 +76,8 @@ def source_health(path=SOURCE_STATS_PATH):
         part = f"{label} {s.get('kept', 0)}"
         if s.get("rate_limited"):
             part += f" ({s['rate_limited']} rate-limited)"
+        if s.get("skipped_queries"):
+            warnings.append(f"{label} rate-limited: skipped {s['skipped_queries']} remaining queries")
         parts.append(part)
         if s.get("error"):
             warnings.append(f"{label} fetch failed: {s['error']}")

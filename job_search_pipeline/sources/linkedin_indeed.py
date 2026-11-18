@@ -295,37 +295,46 @@ def _scrape_site(site, lookback_hours, terms):
     counter = _ErrorCounter()
     logger.addHandler(counter)
     finish_cache = _install_linkedin_details_cache() if site == "linkedin" else (lambda: 0)
-    jobs, raw, failed, counts = [], 0, 0, {}
+    jobs, raw, failed, skipped, counts = [], 0, 0, 0, {}
+    queries = [(loc, sfx, n, term) for s, loc, sfx, n in SEARCHES if s == site for term in terms]
     try:
-        for location, suffix, wanted in [(loc, sfx, n) for s, loc, sfx, n in SEARCHES if s == site]:
-            for term in terms:
-                try:
-                    df = scrape_jobs(
-                        site_name=[site],
-                        search_term=term + suffix,
-                        location=location,
-                        results_wanted=wanted,
-                        hours_old=lookback_hours,
-                        country_indeed=COUNTRY_INDEED,
-                        linkedin_fetch_description=True,
-                        enforce_annual_salary=True,
-                    )
-                except Exception as e:
-                    failed += 1
-                    print(f"Error querying {site} for {term + suffix} ({location}): {e}", file=sys.stderr)
-                    continue
+        for i, (location, suffix, wanted, term) in enumerate(queries):
+            try:
+                df = scrape_jobs(
+                    site_name=[site],
+                    search_term=term + suffix,
+                    location=location,
+                    results_wanted=wanted,
+                    hours_old=lookback_hours,
+                    country_indeed=COUNTRY_INDEED,
+                    linkedin_fetch_description=True,
+                    enforce_annual_salary=True,
+                )
+            except Exception as e:
+                failed += 1
+                print(f"Error querying {site} for {term + suffix} ({location}): {e}", file=sys.stderr)
+                df = None
+            if df is not None:
                 raw += len(df)
                 for _, row in df.iterrows():
                     job = _row_to_job(row, counts)
                     if job:
                         jobs.append(job)
-                if site == "linkedin":
-                    time.sleep(LINKEDIN_PAUSE_SECONDS)
+            if site == "linkedin" and counter.rate_limited:
+                # A 429 block lasts well past this run, and every later query would spend ~2 minutes in
+                # jobspy's retries before coming back empty, so stop asking.
+                skipped = len(queries) - i - 1
+                if skipped:
+                    print(f"  linkedin: rate-limited (429); skipping the remaining {skipped} queries this run",
+                          file=sys.stderr)
+                break
+            if site == "linkedin":
+                time.sleep(LINKEDIN_PAUSE_SECONDS)
     finally:
         logger.removeHandler(counter)
         cache_hits = finish_cache()
     return jobs, {"raw": raw, "kept": len(jobs), "failed_queries": failed,
-                  "onsite_dropped": counts.get("onsite_dropped", 0), "errors": counter.count, "rate_limited": counter.rate_limited, "cached_details": cache_hits,
+                  "onsite_dropped": counts.get("onsite_dropped", 0), "errors": counter.count, "rate_limited": counter.rate_limited, "skipped_queries": skipped, "cached_details": cache_hits,
                   "dropped": counts.get("dropped", {})}
 
 
@@ -348,7 +357,8 @@ def fetch_indeed_jobs(lookback_hours=LOOKBACK_DAYS * 24, stats=None, terms=None)
                  if site_stats.get('onsite_dropped') else "")
               + (f", {site_stats['cached_details']} job pages from cache" if site_stats['cached_details'] else "")
               + (f", {site_stats['rate_limited']} rate-limited (429)" if site_stats['rate_limited'] else "")
-              + (f", {site_stats['failed_queries']} failed queries" if site_stats['failed_queries'] else ""))
+              + (f", {site_stats['failed_queries']} failed queries" if site_stats['failed_queries'] else "")
+              + (f", {site_stats['skipped_queries']} queries skipped" if site_stats.get('skipped_queries') else ""))
 
     print(f"Scraped and filtered {len(scraped_jobs)} relevant Indeed/LinkedIn postings.")
     return scraped_jobs
