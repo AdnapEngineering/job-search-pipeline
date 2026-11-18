@@ -13,7 +13,7 @@ import aiohttp
 from job_search_pipeline.blocklist import is_blocked, load_blocklist, load_role_blocklist
 from job_search_pipeline.config import CFG, get_path, load_json
 from job_search_pipeline.evaluate import (DROP_RULES, SECONDARY_FLOOR, STRONG_FLOOR, evaluate_job_traced,
-                                          jd_logistics_block, score_breakdown)
+                                          score_breakdown)
 from job_search_pipeline.sources.filter import (is_recent, is_valid_company, is_valid_location, is_valid_salary,
                                                 title_reject_reason)
 from job_search_pipeline.urls import normalize_url
@@ -155,12 +155,6 @@ def explain(url, title=None, company=None, location=None, rescrape=False, out=pr
             + f" → {tier} (Strong ≥ {STRONG_FLOOR}, Secondary ≥ {SECONDARY_FLOOR})")
 
     if not result:
-        return 0
-
-    out("\nLocation wording (onsite / hybrid / residency in the JD)")
-    phrase = jd_logistics_block(job)
-    out(f"  {FAIL} dropped before AI review: \"{phrase}\"" if phrase else f"  {PASS} nothing rules it out")
-    if phrase:
         return 0
 
     blocked = is_blocked(job, load_blocklist(), load_role_blocklist())
