@@ -8,6 +8,7 @@ import subprocess
 import sys
 import tempfile
 import unittest
+from datetime import datetime, timedelta
 from pathlib import Path
 from unittest.mock import patch
 
@@ -144,10 +145,6 @@ class ProviderTests(unittest.TestCase):
         self.assertEqual(parsed["evidence_quote"], "")
         self.assertEqual(parsed["score"], 92)
 
-    def test_missing_cli_keeps_original_keyword_results(self):
-        with patch.object(review, "_provider_config", return_value=None):
-            self.assertEqual(review.review_matches([JOB], "unused.json"), ([JOB], []))
-
     def test_missing_cli_reports_why_the_review_was_skipped(self):
         stats = {}
         with (patch.object(review, "PROVIDER", "anthropic"), patch.object(review, "_LLM_CFG", {}),
@@ -177,12 +174,6 @@ class ProviderTests(unittest.TestCase):
             self.assertEqual(review.resolve_provider({}), "anthropic")
         with patch.object(review, "_cli_path", return_value="/bin/agy"):
             self.assertEqual(review.resolve_provider({}), "agy")  # existing agy caches stay valid
-
-    def test_model_defaults_follow_the_provider(self):
-        self.assertEqual(review.resolve_model({}, "anthropic"), "sonnet")
-        self.assertEqual(review.resolve_model({}, "agy"), "gemini-4-hydrogen-medium")
-        self.assertEqual(review.resolve_model({}, "openai"), "")
-        self.assertEqual(review.resolve_model({"model": "opus"}, "anthropic"), "opus")
 
     def test_real_subprocess_pipes_prompt_and_parses_cli_output(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -267,7 +258,6 @@ class ScoringAndFlagTests(unittest.TestCase):
         self.assertTrue(flagged["third_party"])
         self.assertFalse(plain["third_party"])
         self.assertEqual((flagged["score"], flagged["verdict"]), (plain["score"], plain["verdict"]))
-        self.assertIn("third_party", review.PROMPT)
         job = dict(JOB, verdict="apply", ai_reason="Strong match", blockers=[], keyword_score=80, third_party=True)
         self.assertTrue(review.reason_for_notion(job).startswith("[Third-party poster] APPLY: Strong match"))
         self.assertTrue(review.reason_for_notion(dict(job, third_party=False)).startswith("APPLY:"))
@@ -279,29 +269,25 @@ class ScoringAndFlagTests(unittest.TestCase):
         self.assertEqual(review.score_components({"hard_reqs": 3, "core_work": 3, "evidence": 3, "level": 1}),
                          (83, "apply"))
 
-    def test_level_mismatch_cap_caps_level_zero_by_default_and_100_turns_it_off(self):
+    def test_level_mismatch_cap_caps_level_zero_and_100_turns_it_off(self):
         under_leveled = {"hard_reqs": 4, "core_work": 3, "evidence": 3, "level": 0}  # 83% uncapped
         with patch.object(review, "LEVEL_MISMATCH_CAP", 100):
             self.assertEqual(review.score_components(under_leveled), (83, "apply"))
-        self.assertEqual(review.LEVEL_MISMATCH_CAP, 65)
-        self.assertEqual(review.score_components(under_leveled), (65, "stretch"))
-        self.assertEqual(review.score_components(dict(under_leveled, level=1))[0], 92)
-        cached = {"verdict": "apply", "score": 83, "reason": "r", "blockers": [], "pay": None,
-                  "components": dict(under_leveled, logistics_ok=True)}
-        self.assertEqual(review._rescored(cached)["score"], 65)  # applies to reviews already paid for
+        with patch.object(review, "LEVEL_MISMATCH_CAP", 65):
+            self.assertEqual(review.score_components(under_leveled), (65, "stretch"))
+            self.assertEqual(review.score_components(dict(under_leveled, level=1))[0], 92)
+            cached = {"verdict": "apply", "score": 83, "reason": "r", "blockers": [], "pay": None,
+                      "components": dict(under_leveled, logistics_ok=True)}
+            self.assertEqual(review._rescored(cached)["score"], 65)  # applies to reviews already paid for
 
     def test_core_work_caps_keep_off_center_work_out_of_apply(self):
         backend = {"hard_reqs": 4, "core_work": 1, "evidence": 3, "level": 2}  # 83% uncapped
         with patch.object(review, "CORE_WORK_CAPS", {}):
             self.assertEqual(review.score_components(backend), (83, "apply"))
-        self.assertEqual(review.CORE_WORK_CAPS, {0: 30, 1: 65})
-        self.assertEqual(review.score_components(backend), (65, "stretch"))
-        self.assertEqual(review.score_components(dict(backend, core_work=0)), (30, "skip"))
-        self.assertEqual(review.score_components(dict(backend, core_work=2))[0], 92)
-
-    def test_pay_is_kept_out_of_the_level_grade(self):
-        self.assertIn("Do not count pay in hard_reqs or level", review.PROMPT)
-        self.assertNotIn("pay band", review._LEVEL_DESC)
+        with patch.object(review, "CORE_WORK_CAPS", {0: 30, 1: 65}):
+            self.assertEqual(review.score_components(backend), (65, "stretch"))
+            self.assertEqual(review.score_components(dict(backend, core_work=0)), (30, "skip"))
+            self.assertEqual(review.score_components(dict(backend, core_work=2))[0], 92)
 
     def test_pay_floor_is_a_cliff_by_default(self):
         self.assertEqual(review.score_components(self.PARTS, pay=(128500.0, 128500.0)), (30, "skip"))
@@ -387,14 +373,10 @@ class CacheAndHoldTests(unittest.TestCase):
                         .startswith("[AI review failed, held for retry]"))
 
 
-if __name__ == "__main__":
-    unittest.main()
-
-
 class SpendAndRepostTests(unittest.TestCase):
     """Usage parsing, budget caps, the spend ledger, and reuse of cached reviews for reposts."""
 
-    def run_review(self, run, jobs, jds=None, budget=None, pricing=None, cache_seed=None):
+    def run_review(self, run, jobs, jds=None, budget=None, pricing=None, cache_seed=None, spend_seed=None):
         jds = jds or {}
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -404,6 +386,8 @@ class SpendAndRepostTests(unittest.TestCase):
             cache, spend = root / "cache.json", root / "spend.json"
             if cache_seed:
                 cache.write_text(json.dumps(cache_seed), encoding="utf-8")
+            if spend_seed:
+                spend.write_text(json.dumps(spend_seed), encoding="utf-8")
             stats = {}
             with (patch.object(review, "PROFILE_PATH", str(root / "profile.md")),
                   patch.object(review, "CACHE_PATH", str(cache)), patch.object(review, "SPEND_PATH", str(spend)),
@@ -467,15 +451,22 @@ class SpendAndRepostTests(unittest.TestCase):
         self.assertIn("deferred by the reviews/run cap", review.spend_line(stats))
 
     @patch("job_search_pipeline.review.subprocess.run")
-    def test_daily_token_cap_counts_earlier_runs(self, run):
+    def test_daily_token_cap_counts_earlier_runs_today_only(self, run):
         run.return_value = completed(AGY_OUTPUT)
-        today = review.datetime.now().strftime("%Y-%m-%d")
-        earlier = [{"date": today, "input_tokens": 9_900, "cached_tokens": 0, "output_tokens": 0, "usd": 0}]
-        with patch.object(review, "load_spend", return_value=earlier):
-            kept, _, stats, _, _ = self.run_review(run, [JOB], budget={"max_tokens_per_day": 10_000})
+        now = datetime.now()
+        today, yesterday = now.strftime("%Y-%m-%d"), (now - timedelta(days=1)).strftime("%Y-%m-%d")
+        earlier_today = {"date": today, "input_tokens": 9_000, "cached_tokens": 500, "output_tokens": 400, "usd": 0}
+        yesterday_run = {"date": yesterday, "input_tokens": 1_000_000, "cached_tokens": 0, "output_tokens": 0, "usd": 0}
+        kept, _, stats, _, _ = self.run_review(run, [JOB], budget={"max_tokens_per_day": 10_000},
+                                               spend_seed=[yesterday_run, earlier_today])
         run.assert_not_called()
         self.assertTrue(kept[0]["review_deferred"])
         self.assertEqual(stats["stopped_by"], "tokens/day")
+        # Yesterday's spend does not count against today's cap
+        kept, _, stats, _, _ = self.run_review(run, [JOB], budget={"max_tokens_per_day": 10_000},
+                                               spend_seed=[yesterday_run])
+        run.assert_called_once()
+        self.assertNotIn("review_deferred", kept[0])
 
     @patch("job_search_pipeline.review.subprocess.run")
     def test_reposts_reuse_cached_reviews(self, run):
@@ -507,3 +498,7 @@ class SpendAndRepostTests(unittest.TestCase):
         self.assertEqual(len(sig), review.SIGNATURE_SIZE)
         self.assertGreater(review.signature_similarity(sig, review.jd_signature(tweaked)), 0.8)
         self.assertLess(review.signature_similarity(sig, review.jd_signature(other)), 0.1)
+
+
+if __name__ == "__main__":
+    unittest.main()

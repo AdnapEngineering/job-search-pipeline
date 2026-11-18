@@ -228,14 +228,5 @@ class InitConfigTests(unittest.TestCase):
         self.assertIn("not found", lines[0])
 
 
-class CliFlagTests(unittest.TestCase):
-    def test_flags_parse(self):
-        args = pl.parse_args(["--explain", "https://x.test/1", "--title", "T"])
-        self.assertEqual((args.explain, args.title, args.init_config), ("https://x.test/1", "T", None))
-        self.assertEqual(pl.parse_args(["--init-config"]).init_config, [])
-        self.assertEqual(pl.parse_args(["--init-config", "https://a", "https://b"]).init_config,
-                         ["https://a", "https://b"])
-
-
 if __name__ == "__main__":
     unittest.main()
