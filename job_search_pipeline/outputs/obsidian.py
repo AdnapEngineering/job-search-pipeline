@@ -13,13 +13,13 @@ from job_search_pipeline.blocklist import record_exported, select_new_matches
 from job_search_pipeline.config import CFG
 from job_search_pipeline.evaluate import skip_reason
 
-_OBSIDIAN_CFG = CFG.get("obsidian") or {}
+_OBSIDIAN_CFG = CFG["obsidian"]
 
-OBSIDIAN_ENABLED = bool(_OBSIDIAN_CFG.get("enabled", False))
+OBSIDIAN_ENABLED = bool(_OBSIDIAN_CFG["enabled"])
 VAULT_PATH = os.path.expanduser(os.environ.get("OBSIDIAN_VAULT") or _OBSIDIAN_CFG.get("vault_path") or "")
-FOLDER = _OBSIDIAN_CFG.get("folder") or "Job Prospects"
-SUMMARY_NOTE = _OBSIDIAN_CFG.get("summary_note") or "Job Search Run Summary"
-TAG = _OBSIDIAN_CFG.get("tag") or "job-prospect"
+FOLDER = _OBSIDIAN_CFG["folder"]
+SUMMARY_NOTE = _OBSIDIAN_CFG["summary_note"]
+TAG = _OBSIDIAN_CFG["tag"]
 MAX_NAME_LEN = 120
 
 # Characters Obsidian (or Windows/macOS sync) does not allow in note names, plus link syntax

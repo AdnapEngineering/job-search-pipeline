@@ -24,13 +24,13 @@ cd job-search-pipeline
 python3 -m venv .venv && source .venv/bin/activate
 pip install -r requirements.txt
 
-cp config.starter.json config.json   # then edit it (see below)
+cp config.example.json config.json   # then edit it (see below), or draft it with --init-config
 python3 -m job_search_pipeline --check   # flags typos and settings still at their placeholders
 python3 -m job_search_pipeline --no-notion --no-llm-review --no-notify
 xdg-open data/digest.html            # macOS: open data/digest.html
 ```
 
-[`config.starter.json`](config.starter.json) holds only the settings you have to change. Replace its placeholders with:
+In your copy, replace the placeholders in the settings you have to change:
 
 - `sources.search_terms` / `searches`: the job titles to search LinkedIn and Indeed for, and where (your city, or `Remote`).
 - `location`: your metro area's name and cities, and `home_states` / `home_timezones` if remote roles must match them.
@@ -38,7 +38,7 @@ xdg-open data/digest.html            # macOS: open data/digest.html
 - `skills_and_scoring`: your skills (`core_strengths`), weighted domain terms (`focus_keywords`) and skills that rule a job out (`hard_exclude_skills`).
 - `compensation.min_salary` / `experience.max_min_yoe`: the pay floor and the most years of experience a posting may ask for.
 
-Every other setting keeps its built-in default; [`config.example.json`](config.example.json) lists them all with what they do (see [Configuration](#configuration)). Next steps: write [`candidate_profile.md`](#candidate_profilemd) and [choose an LLM provider](#ai-reviewer) for the AI review, add [Notion](#notion) or [Obsidian](#obsidian) and [ntfy](#environment-variables), and [schedule it with cron](#cron).
+Every other setting in the template shows its built-in default (from [`job_search_pipeline/defaults.py`](job_search_pipeline/defaults.py)), so you can delete the ones you leave alone; see [Configuration](#configuration). Next steps: write [`candidate_profile.md`](#candidate_profilemd) and [choose an LLM provider](#ai-reviewer) for the AI review, add [Notion](#notion) or [Obsidian](#obsidian) and [ntfy](#environment-variables), and [schedule it with cron](#cron).
 
 ---
 
@@ -140,7 +140,7 @@ A posting gets two scores. Stage 3 computes a **keyword score** from the JD text
 | | `core_strengths`: 5 each (`core_strength_points`, or a skill's own weight in `core_strength_weights`), up to `core_strengths_cap` (40) |  |
 | | `focus_keywords`: their weights, up to `domain_score_cap` (30); synonyms listed together in `focus_keyword_groups` count once, at the group's highest weight |  |
 | **Subtract** | `soft_skill_penalty` (5) for each excluded skill listed as optional, up to `soft_skill_penalty_cap` (15); each `penalized_keywords` weight (not when the term is only offered beside an accepted skill, as in "React, Vue or Angular"); each matching `hard_ask_penalties` entry; `top_yoe_penalty` (10) when the JD asks `max_min_yoe`+ years | `pay_midpoint_penalty` (10) when the pay band's midpoint is under `min_salary` (unless its top reaches `pay_midpoint_max_cap`); an evidence grade of 3 without a verbatim quote from the JD counts as 2 |
-| **Cap** | 100 | `blocker_cap` (30) when hard_reqs is 0 or logistics fail; `level_mismatch_cap` when level is 0; `core_work_caps` per core_work grade (template: 30 at 0, 65 at 1); the pay-floor cap when the band tops out under `min_salary` (see [`compensation`](#configuration)) |
+| **Cap** | 100 | `blocker_cap` (30) when hard_reqs is 0 or logistics fail; `level_mismatch_cap` when level is 0; `core_work_caps` per core_work grade (none by default; e.g. `{"0": 30, "1": 65}`); the pay-floor cap when the band tops out under `min_salary` (see [`compensation`](#configuration)) |
 | **Then** | ≥ `strong_floor` (75): Strong; ≥ `secondary_floor` (55): Secondary; below: dropped. Matches ≥ `--review-min-score` (55) go to the AI review | ≥ `apply_min_score` (follows `min_sync_score`, 80): **APPLY**; ≥ `stretch_min_score` (50): **STRETCH**; below: **SKIP** (listed as filtered by AI review). APPLY is what gets synced at the default `--min-score`. Equal Match % sort by keyword score |
 
 For example, a posting whose title matches a primary role group, that names 6 of your core strengths (5 points each) and one 15-point focus keyword, and that asks for `max_min_yoe`+ years scores 20 + 20 + 30 + 15 − 10 = **75** (Strong), so it goes to review. The reviewer grades hard_reqs 3, core_work 3, evidence 3 (with a verified quote) and level 2: 11/12 = **92%**, APPLY, synced. Had its pay midpoint been under your floor, it would be 82%: still APPLY. Had the reviewer graded hard_reqs 0, it would be capped at 30%: SKIP.
@@ -192,7 +192,7 @@ pip install -r requirements-dev.txt   # ruff, for development (see Tests)
 ### Your config and profile
 
 ```bash
-cp config.starter.json config.json         # just the settings you must change; or copy config.example.json for all of them
+cp config.example.json config.json         # or draft it with --init-config (below)
 cp candidate_profile.example.md candidate_profile.md
 ```
 
@@ -207,7 +207,7 @@ python3 -m job_search_pipeline --init-config                       # from candid
 python3 -m job_search_pipeline --init-config URL1 URL2 URL3        # also learn from sample postings
 ```
 
-It fills in `sources.search_terms`, the title patterns, `core_strengths` and their weights, `focus_keywords`, `hard_exclude_skills`, `max_min_yoe`, the AI review's `calibration_examples` and, when the profile says where you live, the location settings, on top of `config.starter.json`. Each field is type-checked and every regex compiled before anything is written; invalid ones are dropped and listed. The draft goes to `config.draft.json` (ignored by git), never over your `config.json`: review it, copy it over or merge in the parts you want, and run `--check`, which flags anything still at a placeholder (`sources.searches` always needs your city). It makes one call to the [configured provider](#ai-reviewer), with up to 10 minutes to answer. Until `config.json` exists the pipeline runs on the template's placeholder values and prints a reminder. Until `candidate_profile.md` exists the AI review is skipped (the placeholder profile is never sent to the LLM) and matches are output on their keyword scores.
+It fills in `sources.search_terms`, the title patterns, `core_strengths` and their weights, `focus_keywords`, `hard_exclude_skills`, `max_min_yoe`, the AI review's `calibration_examples` and, when the profile says where you live, the location settings, on top of the template's career settings. Each field is type-checked and every regex compiled before anything is written; invalid ones are dropped and listed. The draft goes to `config.draft.json` (ignored by git), never over your `config.json`: review it, copy it over or merge in the parts you want, and run `--check`, which flags anything still at a placeholder (`sources.searches` always needs your city). It makes one call to the [configured provider](#ai-reviewer), with up to 10 minutes to answer. Until `config.json` exists a search run stops and says how to create it. Until `candidate_profile.md` exists the AI review is skipped (the placeholder profile is never sent to the LLM) and matches are output on their keyword scores.
 
 ### Environment variables
 
@@ -280,7 +280,7 @@ Create it from the template first if you have not already (`cp candidate_profile
 - The levels you're aiming for, and anything that rules a job out.
 
 ### config.json
-Create it first if you have not already: `cp config.starter.json config.json` gives you only the career-specific settings, while `cp config.example.json config.json` copies every setting. The template [`config.example.json`](config.example.json) lists every setting: built-in defaults for the general ones, placeholders for the career-specific ones. In your copy, delete any setting you leave at its default; a missing key uses the built-in default, so only what you change needs to be there, and later default improvements reach you.
+Create it first if you have not already (`cp config.example.json config.json`, or `--init-config`). The template [`config.example.json`](config.example.json) lists every setting: the built-in default for the general ones, a placeholder or example for the career-specific ones (`PERSONAL_KEYS` in [`defaults.py`](job_search_pipeline/defaults.py), which holds every default; a test keeps the two in step). Your file is laid over the defaults, so delete any setting you leave at its default: only what you change needs to be there, and later default improvements reach you. Inside a section a setting's value replaces the default whole (a list is not appended to).
 
 | Section | What to set |
 | :--- | :--- |
@@ -305,7 +305,7 @@ Create it first if you have not already: `cp config.starter.json config.json` gi
 
 <sup>3</sup> `primary_role_groups` give their `points` (default +20); `primary_role_patterns` boost LinkedIn/Indeed titles by 20. `exclude_role_patterns` reject a title outright; `soft_exclude_role_patterns` reject it unless it also matches `strong_target_patterns`, so there's no need to repeat them in both.
 
-<sup>4</sup> `apply_min_score` is the Match % at which the verdict reads APPLY; leave it out to follow `skills_and_scoring.min_sync_score`, so APPLY always means "will be synced". `level_mismatch_cap` caps a role graded level 0 (under- or over-leveled), so strong skill overlap cannot lift a junior or executive role to APPLY; the template sets 65, and leaving it out means no cap. `core_work_caps` does the same per core_work grade, so mostly-backend or off-target work cannot reach APPLY on requirement and domain overlap alone; the template caps grade 0 at 30 and grade 1 at 65, and leaving it out means no cap. `hide_third_party: true` drops postings flagged as coming from a staffing agency, recruiter or aggregator, as if skipped; the default `false` only labels them. Tune `repost_similarity` too; see [AI review spend and caps](#ai-review-spend-and-caps).
+<sup>4</sup> `apply_min_score` is the Match % at which the verdict reads APPLY; leave it out to follow `skills_and_scoring.min_sync_score`, so APPLY always means "will be synced". `level_mismatch_cap` caps a role graded level 0 (under- or over-leveled), so strong skill overlap cannot lift a junior or executive role to APPLY; the default 100 means no cap (65 is a reasonable setting). `core_work_caps` does the same per core_work grade, so mostly-backend or off-target work cannot reach APPLY on requirement and domain overlap alone; none are capped by default (`{"0": 30, "1": 65}` is a reasonable setting). `hide_third_party: true` drops postings flagged as coming from a staffing agency, recruiter or aggregator, as if skipped; the default `false` only labels them. Tune `repost_similarity` too; see [AI review spend and caps](#ai-review-spend-and-caps).
 
 <details>
 <summary>Legacy key names that are still read</summary>
@@ -330,9 +330,9 @@ Configs written before some lists were merged keep working; these keys are read 
 #### Where the config is read from
 
 - The pipeline reads `config.json` from the repository directory. It is your own copy of the tracked template `config.example.json` and is ignored by git. Set `JOB_PIPELINE_CONFIG=/path/to/other.json` to use a different file (e.g. one per career).
-- If `config.json` does not exist yet, the template `config.example.json` is read instead and a reminder is printed to stderr. The template itself is never written to.
-- If a file named by `JOB_PIPELINE_CONFIG` is missing, every setting falls back to its built-in default. If a config file is not valid JSON, the run stops with the file, line and column of the error. `python3 -m job_search_pipeline --check` also catches unknown keys, such as typos, which would otherwise be ignored.
-- The Notion logger only writes `summary_block_id` back when `config.json` parsed cleanly, so a typo in the file is never overwritten. If `config.json` does not exist yet, it is created as a copy of the template with the block id added.
+- If `config.json` does not exist yet, a search run stops and says how to create it; the template is never read as your config.
+- If a file named by `JOB_PIPELINE_CONFIG` is missing, a search run stops the same way. If a config file is not valid JSON, the run stops with the file, line and column of the error. `python3 -m job_search_pipeline --check` also catches unknown keys, such as typos, which would otherwise be ignored.
+- The Notion logger only writes `summary_block_id` back when `config.json` parsed cleanly, so a typo in the file is never overwritten.
 
 ### AI reviewer
 
@@ -808,8 +808,7 @@ job-search-pipeline/
 ├── tests/
 ├── docs/                     README images
 ├── run_job_search.sh         cron wrapper
-├── config.starter.json       copy to config.json to start
-├── config.example.json       every setting, with defaults
+├── config.example.json       every setting, with defaults; copy to config.json to start
 ├── candidate_profile.example.md
 ├── pyproject.toml            package metadata, ruff settings
 └── requirements.txt          runtime dependencies (requirements-dev.txt: ruff)
@@ -822,7 +821,6 @@ Your own files sit next to these, ignored by git: `config.json`, `candidate_prof
 | File | Purpose |
 | :--- | :--- |
 | [`run_job_search.sh`](run_job_search.sh) | Shell wrapper that runs `.venv`'s Python when present, with a concurrency lock (`flock`, or a `mkdir` lock on macOS) and `.env` loading; appends each run to `cron_job_search.log`, trimmed to its newest half past 5 MB. |
-| [`config.starter.json`](config.starter.json) | Minimal starting config: only the career-specific settings, as placeholders (`cp config.starter.json config.json`). |
 | [`config.example.json`](config.example.json) | Tracked template for the career-agnostic configuration (sources, locations, pay, titles, skills, LLM rubric). |
 | `config.json` | Your own copy of the template, ignored by git; this is the file the pipeline reads and the one you edit. |
 | `config.draft.json` | Written by `--init-config` for you to review, ignored by git; the pipeline never reads it. |
@@ -841,7 +839,8 @@ Your own files sit next to these, ignored by git: `config.json`, `candidate_prof
 | [`explain.py`](job_search_pipeline/explain.py) | `--explain URL`: traces one posting through the Stage 1 filters, the Stage 3 rules and the score breakdown. |
 | [`init_config.py`](job_search_pipeline/init_config.py) | `--init-config`: drafts the career-specific settings from `candidate_profile.md` with the AI reviewer's CLI and validates them into `config.draft.json`. |
 | [`check.py`](job_search_pipeline/check.py) | Setup check (`--check`): dependencies, config typos and placeholders, profile, AI reviewer CLI, Notion database properties, Obsidian vault, outputs. |
-| [`config.py`](job_search_pipeline/config.py) | Central loader for `config.json`, path resolution (relative `paths` entries resolve from the repository root), shared JSON read/atomic-write helpers, and regex compilation helpers. |
+| [`defaults.py`](job_search_pipeline/defaults.py) | The built-in default of every setting, which `config.json` is laid over, and `PERSONAL_KEYS`, the career-specific settings whose template value is a placeholder. |
+| [`config.py`](job_search_pipeline/config.py) | Central loader for `config.json` (laid over `defaults.py`), path resolution (relative `paths` entries resolve from the repository root), shared JSON read/atomic-write helpers, and regex compilation helpers. |
 | [`blocklist.py`](job_search_pipeline/blocklist.py) | Shared dedup state: `company\|title` role keys plus the URL and role blocklists used by every stage. |
 | [`urls.py`](job_search_pipeline/urls.py) | Canonical URL normalizer (strips tracking parameters, redundant `gh_jid`, and fragments). |
 | [`sources/filter.py`](job_search_pipeline/sources/filter.py) | Stage 1 async downloader for the GitHub ATS chunk feed, the location/title/salary filters, and orchestrator for the other sources. |

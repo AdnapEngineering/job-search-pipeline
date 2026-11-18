@@ -4,7 +4,7 @@ from urllib.parse import parse_qsl, urlencode, urlparse, urlunparse
 
 from job_search_pipeline.config import CFG
 
-_URL_CFG = CFG.get("url_normalization") or {}
+_URL_CFG = CFG["url_normalization"]
 
 DEFAULT_TRACKING_PARAMS = {
     'utm_source', 'utm_medium', 'utm_campaign', 'utm_term', 'utm_content',
@@ -14,12 +14,7 @@ DEFAULT_TRACKING_PARAMS = {
 
 TRACKING_PARAMS = DEFAULT_TRACKING_PARAMS | set(_URL_CFG.get("extra_tracking_params") or [])
 
-DEFAULT_AGGREGATOR_HOSTS = (
-    'indeed.com', 'linkedin.com', 'news.ycombinator.com',
-    'remoteok.com', 'remotive.com', 'jobicy.com'
-)
-
-AGGREGATOR_HOSTS = tuple(_URL_CFG.get("aggregator_hosts") or DEFAULT_AGGREGATOR_HOSTS)
+AGGREGATOR_HOSTS = tuple(_URL_CFG["aggregator_hosts"])
 
 # A path ending in a numeric or uuid/hash job ID makes a gh_jid query param redundant tracking
 _TRAILING_JOB_ID_RE = re.compile(r'/(?:\d+|[0-9a-fA-F-]{8,})$')

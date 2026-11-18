@@ -13,12 +13,12 @@ from datetime import datetime, timedelta, timezone
 from job_search_pipeline.config import CFG, atomic_write_json, get_path, load_json
 from job_search_pipeline.urls import normalize_url
 
-_DIGEST_CFG = CFG.get("html_digest") or {}
-HTML_DIGEST_ENABLED = bool(_DIGEST_CFG.get("enabled", True))
-HTML_DIGEST_PATH = get_path("html_digest", "data/digest.html")
-DIGEST_STORE_PATH = get_path("digest_store", "data/digest_matches.json")
+_DIGEST_CFG = CFG["html_digest"]
+HTML_DIGEST_ENABLED = bool(_DIGEST_CFG["enabled"])
+HTML_DIGEST_PATH = get_path("html_digest")
+DIGEST_STORE_PATH = get_path("digest_store")
 HTML_DIGEST_URL = str(_DIGEST_CFG.get("url") or "")
-KEEP_DAYS = int(_DIGEST_CFG.get("keep_days", 30))
+KEEP_DAYS = int(_DIGEST_CFG["keep_days"])
 ROW_LIMIT = 200
 
 _MATCH_FIELDS = ("company", "title", "location", "posted", "score", "keyword_score", "verdict", "blockers",
@@ -107,7 +107,7 @@ def _json_for_script(data):
 
 
 def render_html(data):
-    title = html.escape(str(_DIGEST_CFG.get("title") or "Job Matches"))
+    title = html.escape(str(_DIGEST_CFG["title"]))
     return (_TEMPLATE.replace("__TITLE__", title)
             .replace("__DATA__", _json_for_script(data)))
 

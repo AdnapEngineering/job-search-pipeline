@@ -1,7 +1,7 @@
 """`--init-config [SAMPLE_URL ...]`: draft a tailored config from candidate_profile.md with the AI reviewer's CLI.
 
 The LLM fills in the career-specific settings (search terms, title patterns, skills, domain terms, excluded
-skills, calibration examples) on top of config.starter.json. Its answer is checked (types, regexes) before it
+skills, calibration examples) on top of the career settings from config.example.json. Its answer is checked (types, regexes) before it
 is written, and the draft goes to config.draft.json, never over an existing config.json unless asked.
 """
 import json
@@ -15,12 +15,22 @@ from job_search_pipeline.config import ROOT_DIR, load_json
 from job_search_pipeline.review import (CLI_NAMES, DEFAULT_MODEL, PROFILE_PATH, PROVIDER, _cli_path, _cli_response,
                                         priced_usd)
 
-STARTER_PATH = os.path.join(ROOT_DIR, "config.starter.json")
 EXAMPLE_PATH = os.path.join(ROOT_DIR, "config.example.json")
 DEFAULT_OUTPUT = os.path.join(ROOT_DIR, "config.draft.json")
 TIMEOUT_SECONDS = 600
 SAMPLE_JD_CHARS = 3500
 MAX_SAMPLES = 3
+
+# Template settings the draft starts from: what every search must set; everything else keeps its default
+STARTER_KEYS = {
+    "sources": ["search_terms", "searches"],
+    "location": ["local_display_name", "local_metro_patterns", "jd_local_metro_pattern", "home_states",
+                 "home_timezones"],
+    "titles": ["target_patterns", "strong_target_patterns", "primary_role_groups", "exclude_seniority_patterns"],
+    "skills_and_scoring": ["core_strengths", "detect_stack_keywords", "focus_keywords", "hard_exclude_skills"],
+    "compensation": ["min_salary"],
+    "experience": ["max_min_yoe"],
+}
 
 # Settings the LLM may fill: (section, key) -> expected shape. Anything else in its reply is ignored.
 STR_LIST, REGEX_LIST, INT_MAP, GROUPS, ROLE_GROUPS, INT, STR = (
@@ -222,6 +232,12 @@ def build_draft(reply, template):
     return draft, filled, problems
 
 
+def starter_config(example):
+    """The STARTER_KEYS settings of the template, as the base of a new draft."""
+    return {section: {k: example[section][k] for k in keys if k in example.get(section, {})}
+            for section, keys in STARTER_KEYS.items()}
+
+
 def remaining_placeholders(draft, templates):
     """Career-specific settings the draft still holds at a template's placeholder value."""
     left = []
@@ -250,7 +266,7 @@ def init_config(sample_urls=(), output=None, force=False, out=print):
         out(f"The {CLI_NAMES[PROVIDER]} CLI for llm_review.provider {PROVIDER!r} was not found. Install it or set "
             "llm_review.provider; `python3 -m job_search_pipeline --check` shows what is missing.")
         return 1
-    template = load_json(STARTER_PATH, default={}) or {}
+    template = starter_config(load_json(EXAMPLE_PATH, default={}) or {})
 
     out(f"Drafting a config from {os.path.basename(PROFILE_PATH)} with {PROVIDER}"
         + (f" ({DEFAULT_MODEL})" if DEFAULT_MODEL else "") + "...")
@@ -278,7 +294,7 @@ def init_config(sample_urls=(), output=None, force=False, out=print):
     out(f"  Filled in: {', '.join(filled) or 'nothing'}")
     for p in problems:
         out(f"  ! {p}")
-    left = remaining_placeholders(draft, [template, load_json(EXAMPLE_PATH, default={}) or {}])
+    left = remaining_placeholders(draft, [template])
     if left:
         out(f"  Still at placeholder values, edit these by hand: {', '.join(left)}")
     if usage:

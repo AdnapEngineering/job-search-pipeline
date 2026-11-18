@@ -9,8 +9,8 @@ import re
 from job_search_pipeline.config import CFG, atomic_write_json, get_path, load_json
 from job_search_pipeline.urls import normalize_url, normalize_url_list
 
-BLOCKLIST_PATH = get_path("blocklist", "data/blocklist.json")
-ROLE_BLOCKLIST_PATH = get_path("role_blocklist", "data/blocklist_roles.json")
+BLOCKLIST_PATH = get_path("blocklist")
+ROLE_BLOCKLIST_PATH = get_path("role_blocklist")
 
 _COMPANY_SUFFIX_RE = re.compile(r'(technologies|technology|corporation|software|corp|inc|llc|labs|group|hq|ai)$')
 _COMPANY_PAREN_RE = re.compile(r'^(.*?)\s*\(([^)]+)\)\s*$')
@@ -21,7 +21,7 @@ _SENIOR_ABBREV_RE = re.compile(r'\bsr\b\.?')
 _NON_ALNUM_RE = re.compile(r'[^a-z0-9]')
 _COMPANY_ALIASES = {
     k.lower(): v.lower()
-    for k, v in ((CFG.get("companies") or {}).get("company_aliases") or {}).items()
+    for k, v in (CFG["companies"]["company_aliases"] or {}).items()
 }
 
 

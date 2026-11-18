@@ -18,22 +18,19 @@ from job_search_pipeline.sources.filter import (
 )
 from job_search_pipeline.config import CFG
 
-_SOURCES_CFG = CFG.get("sources") or {}
-_TITLES_CFG = CFG.get("titles") or {}
-_LOC_CFG = CFG.get("location") or {}
+_SOURCES_CFG = CFG["sources"]
+_TITLES_CFG = CFG["titles"]
+_LOC_CFG = CFG["location"]
 
-REMOTEOK_URL = _SOURCES_CFG.get("remoteok_url", "https://remoteok.com/api")
-JOBICY_URL = _SOURCES_CFG.get("jobicy_url", "https://jobicy.com/api/v2/remote-jobs?count=100&geo=usa&industry=engineering")
-HN_SEARCH_URL = _SOURCES_CFG.get(
-    "hn_search_url",
-    "https://hn.algolia.com/api/v1/search_by_date?tags=story,author_whoishiring&query=who%20is%20hiring&hitsPerPage=5"
-)
-HN_ITEM_URL = _SOURCES_CFG.get("hn_item_url", "https://hn.algolia.com/api/v1/items/{}")
+REMOTEOK_URL = _SOURCES_CFG["remoteok_url"]
+JOBICY_URL = _SOURCES_CFG["jobicy_url"]
+HN_SEARCH_URL = _SOURCES_CFG["hn_search_url"]
+HN_ITEM_URL = _SOURCES_CFG["hn_item_url"]
 
-HN_THREAD_MAX_AGE_DAYS = int(_SOURCES_CFG.get("hn_thread_max_age_days", 40))
+HN_THREAD_MAX_AGE_DAYS = int(_SOURCES_CFG["hn_thread_max_age_days"])
 
 _US_ELIGIBLE_RE = re.compile(
-    _LOC_CFG.get("global_eligible_pattern", r'\b(worldwide|anywhere|global|north america|northern america|americas)\b'),
+    _LOC_CFG["global_eligible_pattern"],
     re.I
 )
 
@@ -45,10 +42,7 @@ _SALARY_RE = re.compile(
 _HOURLY_RE = re.compile(r'/\s*(hr|hour)\b|per\s+hour|hourly', re.I)
 
 _HN_ROLE_RE = re.compile(
-    _TITLES_CFG.get(
-        "hn_role_pattern",
-        r'\b((?:senior |sr\.? )?(?:frontend|front-end|front end|full[- ]?stack|product|software|web) (?:engineer|developer))\b'
-    ),
+    _TITLES_CFG["hn_role_pattern"],
     re.I,
 )
 _HN_NO_REMOTE_RE = re.compile(r'\b(no remote|not remote|remote not|part(?:ial|ially)? remote)\b')
@@ -57,7 +51,7 @@ _HN_MAX_TITLE_LEN = 80
 _HN_US_RE = re.compile(r'\b(US|USA|U\.S\.A?\.?|[Uu]nited [Ss]tates)(?![a-z])')
 _HN_NON_FULLTIME_RE = re.compile(r'\b(part[- ]time|contract|freelance)\b')
 _HN_FULLTIME_RE = re.compile(r'\bfull[- ]?time\b')
-_LOCAL_DISPLAY_NAME = _LOC_CFG.get("local_display_name", "Local Metro")
+_LOCAL_DISPLAY_NAME = _LOC_CFG["local_display_name"]
 
 
 def _get_json(url, timeout=30):
@@ -271,11 +265,11 @@ def fetch_board_jobs(stats=None):
     """All board postings that pass the filters. Per-board counts (or the error) go into stats."""
     all_jobs = []
     boards = []
-    if _SOURCES_CFG.get("remoteok_enabled", True):
+    if _SOURCES_CFG["remoteok_enabled"]:
         boards.append(("remoteok", "Remote OK", fetch_remoteok))
-    if _SOURCES_CFG.get("jobicy_enabled", True):
+    if _SOURCES_CFG["jobicy_enabled"]:
         boards.append(("jobicy", "Jobicy", fetch_jobicy))
-    if _SOURCES_CFG.get("hn_enabled", True):
+    if _SOURCES_CFG["hn_enabled"]:
         boards.append(("hn", "HN Who's Hiring", fetch_hn_whos_hiring))
 
     for key, name, fn in boards:
