@@ -13,7 +13,7 @@ from job_search_pipeline.blocklist import is_blocked, load_blocklist, load_role_
 from job_search_pipeline.evaluate import evaluate_jobs, generate_markdown
 from job_search_pipeline.outputs.html_digest import HTML_DIGEST_ENABLED, HTML_DIGEST_PATH, HTML_DIGEST_URL, write_digest
 from job_search_pipeline.review import PROVIDER, reason_for_notion, review_matches, spend_line
-from job_search_pipeline.config import CFG, ROOT_DIR, get_path, load_json
+from job_search_pipeline.config import CFG, CONFIG_PATH, ROOT_DIR, get_path, load_json
 from job_search_pipeline.outputs.notion import (DEFAULT_DB_ID, log_run_summary_to_notion, match_tally, record_run,
                                                 sync_jobs_to_notion)
 from job_search_pipeline.outputs.obsidian import (OBSIDIAN_ENABLED, VAULT_PATH, log_run_summary_to_obsidian,
@@ -21,16 +21,16 @@ from job_search_pipeline.outputs.obsidian import (OBSIDIAN_ENABLED, VAULT_PATH, 
 from job_search_pipeline.outputs.text_export import TEXT_EXPORT_ENABLED, TEXT_EXPORT_PATH, export_jobs_to_text
 from job_search_pipeline.sources.filter import PREFILTER_RULES
 
-FILTERED_JOBS = get_path("filtered_jobs", "data/filtered_jobs.json")
-ENRICHED_JOBS = get_path("enriched_jobs", "data/enriched_jobs.json")
-EVALUATED_JOBS = get_path("evaluated_jobs", "data/evaluated_jobs.json")
-SOURCE_STATS_PATH = get_path("source_stats", "data/source_stats.json")
+FILTERED_JOBS = get_path("filtered_jobs")
+ENRICHED_JOBS = get_path("enriched_jobs")
+EVALUATED_JOBS = get_path("evaluated_jobs")
+SOURCE_STATS_PATH = get_path("source_stats")
 
-_SOURCES_CFG = CFG.get("sources") or {}
-_SKILLS_CFG = CFG.get("skills_and_scoring") or {}
-_NOTIF_CFG = CFG.get("notifications") or {}
+_SOURCES_CFG = CFG["sources"]
+_SKILLS_CFG = CFG["skills_and_scoring"]
+_NOTIF_CFG = CFG["notifications"]
 
-FEED_STALE_HOURS = int(_SOURCES_CFG.get("feed_stale_hours", 36))
+FEED_STALE_HOURS = int(_SOURCES_CFG["feed_stale_hours"])
 _SOURCE_LABELS = [
     ("linkedin", "LinkedIn"),
     ("indeed", "Indeed"),
@@ -152,8 +152,8 @@ def run_stage_script(args, step_name, cmd):
 
 
 def parse_args(argv=None):
-    default_min_score = int(_SKILLS_CFG.get("min_sync_score", 80))
-    default_review_score = int(_SKILLS_CFG.get("min_review_score", 55))
+    default_min_score = int(_SKILLS_CFG["min_sync_score"])
+    default_review_score = int(_SKILLS_CFG["min_review_score"])
 
     parser = argparse.ArgumentParser(prog="python3 -m job_search_pipeline",
                                      description="End-to-End Automated Job Search Pipeline")
@@ -443,6 +443,10 @@ def main():
     if args.init_config is not None:
         from job_search_pipeline.init_config import init_config
         sys.exit(init_config(args.init_config, output=args.init_output, force=args.force))
+    if not os.path.exists(CONFIG_PATH):
+        sys.exit(f"No config found at {CONFIG_PATH}. Draft one from candidate_profile.md with "
+                 "`python3 -m job_search_pipeline --init-config`, or `cp config.example.json config.json` and edit "
+                 "it; then run `python3 -m job_search_pipeline --check`.")
     try:
         run(args)
     except Exception as e:

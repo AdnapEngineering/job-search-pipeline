@@ -23,19 +23,20 @@ from bs4 import BeautifulSoup
 
 from job_search_pipeline.blocklist import role_key
 from job_search_pipeline.config import CFG, atomic_write_json, get_path, load_json
+from job_search_pipeline.defaults import DEFAULTS
 from job_search_pipeline.urls import normalize_url
 
-_LLM_CFG = CFG.get("llm_review") or {}
-_COMP_CFG = CFG.get("compensation") or {}
+_LLM_CFG = CFG["llm_review"]
+_COMP_CFG = CFG["compensation"]
 _BUDGET_CFG = _LLM_CFG.get("budget") or {}
 _PRICING_CFG = _LLM_CFG.get("pricing") or {}
 
-PROFILE_PATH = get_path("candidate_profile", "candidate_profile.md")
-CACHE_PATH = get_path("review_cache", "data/review_cache.json")
-SPEND_PATH = get_path("llm_spend", "data/llm_spend.json")
+PROFILE_PATH = get_path("candidate_profile")
+CACHE_PATH = get_path("review_cache")
+SPEND_PATH = get_path("llm_spend")
 SPEND_KEEP_DAYS = 90
 # A cached review is reused for a repost (new URL, same company and title) when the JD texts are this similar
-REPOST_SIMILARITY = float(_LLM_CFG.get("repost_similarity", 0.8))
+REPOST_SIMILARITY = float(_LLM_CFG["repost_similarity"])
 SIGNATURE_SIZE = 64
 SHINGLE_WORDS = 5
 # Output tokens assumed for a review before any has finished, when checking it against a cap
@@ -49,60 +50,45 @@ PROVIDERS = ("agy", "anthropic", "openai")
 CLI_NAMES = {"agy": "agy", "anthropic": "claude", "openai": "codex"}
 # Model used when llm_review.model is unset; "" lets Codex use the model from its own config
 PROVIDER_MODELS = {"agy": "gemini-4-hydrogen-medium", "anthropic": "sonnet", "openai": ""}
-TIMEOUT_SECONDS = int(_LLM_CFG.get("timeout_seconds", 180))
-WORKERS = int(_LLM_CFG.get("workers", 3))
-JD_CHARS = int(_LLM_CFG.get("jd_chars", 9000))
-JD_HEAD_CHARS = int(_LLM_CFG.get("jd_head_chars", 2500))
+TIMEOUT_SECONDS = int(_LLM_CFG["timeout_seconds"])
+WORKERS = int(_LLM_CFG["workers"])
+JD_CHARS = int(_LLM_CFG["jd_chars"])
+JD_HEAD_CHARS = int(_LLM_CFG["jd_head_chars"])
 VERDICTS = ("apply", "stretch", "skip")
 THIRD_PARTY_LABEL = "[Third-party poster]"
 REVIEW_FAILED_LABEL = "[AI review failed, held for retry]"
 REVIEW_DEFERRED_LABEL = "[AI review deferred: budget cap reached, held for next run]"
-REVIEW_VERSION = str(_LLM_CFG.get("review_version", "1"))
+REVIEW_VERSION = str(_LLM_CFG["review_version"])
 
-COMPONENTS = _LLM_CFG.get("components") or {"hard_reqs": 4, "core_work": 3, "evidence": 3, "level": 2}
+COMPONENTS = _LLM_CFG["components"] or DEFAULTS["llm_review"]["components"]
 MAX_TOTAL = sum(COMPONENTS.values())
-BLOCKER_CAP = int(_LLM_CFG.get("blocker_cap", 30))
-# Highest Match % for a role graded level 0 (under- or over-leveled for the candidate); 100 = no cap
-LEVEL_MISMATCH_CAP = int(_LLM_CFG.get("level_mismatch_cap", 100))
+BLOCKER_CAP = int(_LLM_CFG["blocker_cap"])
+# Highest Match % for a role graded level 0 (under- or over-leveled for the candidate); 100 turns it off
+LEVEL_MISMATCH_CAP = int(_LLM_CFG["level_mismatch_cap"])
 # Highest Match % per core_work grade ({"0": 30, "1": 65}), so off-center work cannot reach APPLY on
 # requirement and domain overlap alone; grades not listed are uncapped
 CORE_WORK_CAPS = {int(k): int(v) for k, v in (_LLM_CFG.get("core_work_caps") or {}).items()}
 # "apply" means "will be synced": unless set explicitly, the verdict line follows the sync threshold
-APPLY_MIN = int(_LLM_CFG.get("apply_min_score") or (CFG.get("skills_and_scoring") or {}).get("min_sync_score") or 80)
-STRETCH_MIN = int(_LLM_CFG.get("stretch_min_score", 50))
+APPLY_MIN = int(_LLM_CFG.get("apply_min_score") or CFG["skills_and_scoring"]["min_sync_score"])
+STRETCH_MIN = int(_LLM_CFG["stretch_min_score"])
 # With hide_third_party, postings the reviewer flags as agency/recruiter/aggregator are dropped like a skip verdict
-HIDE_THIRD_PARTY = bool(_LLM_CFG.get("hide_third_party", False))
+HIDE_THIRD_PARTY = bool(_LLM_CFG["hide_third_party"])
 
-MIN_SALARY = float(_COMP_CFG.get("min_salary", 0))
-PAY_MIDPOINT_MAX_CAP = float(_COMP_CFG.get("pay_midpoint_max_cap", 0))
-PAY_MIDPOINT_PENALTY = int(_COMP_CFG.get("pay_midpoint_penalty", 10))
+MIN_SALARY = float(_COMP_CFG["min_salary"])
+PAY_MIDPOINT_MAX_CAP = float(_COMP_CFG["pay_midpoint_max_cap"])
+PAY_MIDPOINT_PENALTY = int(_COMP_CFG["pay_midpoint_penalty"])
 # With pay_floor_taper_from set (below min_salary), a band topping out between the two is capped on a
 # straight line from BLOCKER_CAP (at taper_from) to 100 (at min_salary) instead of dropping to the cap at once
-PAY_FLOOR_TAPER_FROM = float(_COMP_CFG.get("pay_floor_taper_from", 0))
-QUOTE_MATCH_RATIO = float(_LLM_CFG.get("quote_match_ratio", 0.85))
+PAY_FLOOR_TAPER_FROM = float(_COMP_CFG["pay_floor_taper_from"])
+QUOTE_MATCH_RATIO = float(_LLM_CFG["quote_match_ratio"])
 HOURS_PER_YEAR = 2080
 
-_RUBRIC = _LLM_CFG.get("rubric_descriptions") or {}
-_HARD_REQS_DESC = _RUBRIC.get(
-    "hard_reqs",
-    "4 = every hard requirement met; 3 = met, with only soft gaps; 2 = one bounded hard gap (one named tool/skill or years 1 over); "
-    "1 = several hard gaps; 0 = a clear blocker (years far over, a required specialty/credential the candidate lacks)."
-)
-_CORE_WORK_DESC = _RUBRIC.get(
-    "core_work",
-    "3 = directly matches the candidate's primary target role and day-to-day responsibilities; "
-    "2 = balanced/adjacent role in the candidate's core domain; 1 = peripheral overlap; 0 = off-target specialty."
-)
-_EVIDENCE_DESC = _RUBRIC.get(
-    "evidence",
-    "3 = the posting itself asks for work that mirrors a specific accomplishment in the candidate profile; "
-    "2 = strong skill and domain overlap; 1 = partial overlap; 0 = little overlap. Grade only what the posting says, not what the company is known for."
-)
-_LEVEL_DESC = _RUBRIC.get(
-    "level",
-    "2 = matches the candidate's target seniority/level range; 1 = slight stretch in seniority; "
-    "0 = under-leveled (entry/junior when not targeted) or over-leveled (executive/principal/director when not targeted)."
-)
+# A partial rubric_descriptions keeps the built-in text for the components it leaves out
+_RUBRIC = {**DEFAULTS["llm_review"]["rubric_descriptions"], **(_LLM_CFG["rubric_descriptions"] or {})}
+_HARD_REQS_DESC = _RUBRIC["hard_reqs"]
+_CORE_WORK_DESC = _RUBRIC["core_work"]
+_EVIDENCE_DESC = _RUBRIC["evidence"]
+_LEVEL_DESC = _RUBRIC["level"]
 _CALIBRATION_LIST = _LLM_CFG.get("calibration_examples") or []
 _CALIBRATION_BLOCK = (
     "\nCalibration (final Match % in brackets):\n" + "\n".join(f"- {c}" for c in _CALIBRATION_LIST) + "\n"

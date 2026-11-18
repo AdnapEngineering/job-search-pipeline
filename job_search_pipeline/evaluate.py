@@ -20,10 +20,10 @@ from job_search_pipeline.sources.filter import (
 from job_search_pipeline.config import CFG, atomic_write_json, compile_alternation, get_path, term_regex
 from job_search_pipeline.urls import is_aggregator_url
 
-_SKILLS_CFG = CFG.get("skills_and_scoring") or {}
-_TITLES_CFG = CFG.get("titles") or {}
-_EXP_CFG = CFG.get("experience") or {}
-_LOC_CFG = CFG.get("location") or {}
+_SKILLS_CFG = CFG["skills_and_scoring"]
+_TITLES_CFG = CFG["titles"]
+_EXP_CFG = CFG["experience"]
+_LOC_CFG = CFG["location"]
 
 CORE_STRENGTHS = [s.lower() for s in (_SKILLS_CFG.get("core_strengths") or [])]
 HARD_EXCLUDE_SKILLS = [s.lower() for s in (_SKILLS_CFG.get("hard_exclude_skills") or [])]
@@ -82,16 +82,14 @@ def _mentions(term, stack, text):
 
 
 _SENIOR_PATTERN = compile_alternation(
-    _TITLES_CFG.get("exclude_seniority_patterns", [
-        "staff", "principal", "director", "manager", "managing", "vp", "head", "architect", r"lead(?![- ]gen)"
-    ]),
+    _TITLES_CFG["exclude_seniority_patterns"],
     word_bounded=True
 )
 
-_JD_LOCAL_METRO_PATTERN = _LOC_CFG.get("jd_local_metro_pattern", "")
+_JD_LOCAL_METRO_PATTERN = _LOC_CFG["jd_local_metro_pattern"]
 _JD_LOCAL_METRO_RE = re.compile(_JD_LOCAL_METRO_PATTERN, re.I) if _JD_LOCAL_METRO_PATTERN else None
 
-_US_TOKEN = _LOC_CFG.get("country_token_pattern", r'(?:US|USA|U\.S\.A?\.?|United States|continental U\.?S\.?)')
+_US_TOKEN = _LOC_CFG["country_token_pattern"]
 JD_US_REMOTE_RE = re.compile(
     r'(?i:remote(?:ly)?)[^.\n]{0,50}\b' + _US_TOKEN + r'\b'
     r'|\b' + _US_TOKEN + r'\b[- ,(\]]{0,3}(?i:(?:based[- ])?remote)'
@@ -357,9 +355,9 @@ _PRIMARY_ROLE_GROUPS = [
 ]
 
 _FAILED_SCRAPE_PATTERN = re.compile(r'^(no description extracted|error\b)', re.I)
-GENERIC_TITLE_BODY_SIGNALS = int(_TITLES_CFG.get("generic_body_signal_min", 2))
+GENERIC_TITLE_BODY_SIGNALS = int(_TITLES_CFG["generic_body_signal_min"])
 _GENERIC_ROLE_PATTERN = compile_alternation(
-    _TITLES_CFG.get("generic_role_patterns", []),
+    _TITLES_CFG["generic_role_patterns"],
     word_bounded=True
 )
 _GENERIC_REQUIRED_SKILLS = [s.lower() for s in (_TITLES_CFG.get("generic_role_required_skills") or [])]
@@ -367,7 +365,7 @@ _GENERIC_BODY_SIGNAL_RES = [
     re.compile(p, re.I) for p in (_TITLES_CFG.get("generic_body_signal_patterns") or []) if p
 ]
 
-_REJECT_CLEARANCE = bool(_EXP_CFG.get("reject_clearance", True))
+_REJECT_CLEARANCE = bool(_EXP_CFG["reject_clearance"])
 _AVOID_KEYWORDS_PATTERN = re.compile(
     r'\b(public trust|security clearance|clearance required|active clearance|ts/sci|polygraph'
     r'|(?:top )?secret clearance|(?:dod|government|federal) clearance'
@@ -394,7 +392,7 @@ def _requires_clearance(text):
     return bool(_clearance_hit(text))
 
 
-_REJECT_FOREIGN_LANG = bool(_EXP_CFG.get("reject_foreign_language_req", True))
+_REJECT_FOREIGN_LANG = bool(_EXP_CFG["reject_foreign_language_req"])
 _LANGS = r'(?:spanish|portuguese|french|german|polish|italian|dutch|mandarin|cantonese|japanese|korean|hebrew|arabic)'
 _LANGUAGE_REQ_RE = re.compile(
     r'\b' + _LANGS + r'\b[^.\n]{0,40}\b(?:required|native|fluent|fluency|conversational|proficien)'
@@ -411,7 +409,7 @@ for rule in (_SKILLS_CFG.get("specialty_reject_rules") or []):
     })
 
 _SENIOR_ROLE_YOE_RE = re.compile(r'\b(\d{1,2})\s*\+?\s*(?:years|yrs)\b[^.\n]{0,25}\b(?:senior|lead|staff)[- ]level\b')
-MAX_SENIOR_ROLE_YEARS = int(_EXP_CFG.get("max_senior_role_years", 99))
+MAX_SENIOR_ROLE_YEARS = int(_EXP_CFG["max_senior_role_years"])
 
 _ALT_LANG_RE = re.compile(r'\b(or|and/or)\b|/')
 _ACCEPTED_ALT_SKILLS = _SKILLS_CFG.get("accepted_alternative_skills") or CORE_STRENGTHS
@@ -427,8 +425,8 @@ _SOFT_SECTION_RE = re.compile(
 _REQ_SECTION_RE = re.compile(
     r'(?:required|must[- ]have|minimum|basic qualifications|what you(?:\x27ll|\u2019ll| will) need)[^\n]{0,40}\n'
 )
-SOFT_SKILL_PENALTY = int(_SKILLS_CFG.get("soft_skill_penalty", 5))
-SOFT_SKILL_PENALTY_CAP = int(_SKILLS_CFG.get("soft_skill_penalty_cap", 15))
+SOFT_SKILL_PENALTY = int(_SKILLS_CFG["soft_skill_penalty"])
+SOFT_SKILL_PENALTY_CAP = int(_SKILLS_CFG["soft_skill_penalty_cap"])
 
 
 def _in_soft_section(desc, pos):
@@ -458,10 +456,7 @@ _NUM = r'(\d{1,2}|one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve
 _YEARS = (_NUM + r'\s*(?:\+|plus|or more)?\s*(?:(?:-|–|—|to)\s*\d{1,2}\s*\+?\s*)?(?:years|yrs)\b')
 _YOE_AFTER_RE = re.compile(r'\b' + _YEARS + r'(?!\s+ago)(?=[^.;\n]{0,60}experience)')
 _YOE_BEFORE_RE = re.compile(r'(?:experience[^.\n]{0,25}?|at least\s+|minimum(?: of)?\s+)' + r'\b' + _YEARS)
-_YOE_FIELD_TERMS = _EXP_CFG.get(
-    "yoe_field_terms_pattern",
-    r'(?:front[- ]?end|full[- ]?stack|back[- ]?end|software|web|professional|engineering|development|programming)'
-)
+_YOE_FIELD_TERMS = _EXP_CFG["yoe_field_terms_pattern"]
 _YOE_IN_FIELD_RE = re.compile(
     r'\b' + _NUM + r'\s*(?:\+|plus)\s*(?:years|yrs)\s+(?:in|of|as an?|building|writing)\s+(?:[\w/-]+\s+){0,2}?'
     + _YOE_FIELD_TERMS
@@ -471,22 +466,22 @@ _WORD_NUMBERS = {
     'nine': 9, 'ten': 10, 'eleven': 11, 'twelve': 12, 'fifteen': 15
 }
 
-MAX_MIN_YOE = int(_EXP_CFG.get("max_min_yoe", 99))
-MAX_MIN_SECONDARY_YOE = int(_EXP_CFG.get("max_min_secondary_yoe", 99))
-TOP_YOE_PENALTY = int(_EXP_CFG.get("top_yoe_penalty", 10))
+MAX_MIN_YOE = int(_EXP_CFG["max_min_yoe"])
+MAX_MIN_SECONDARY_YOE = int(_EXP_CFG["max_min_secondary_yoe"])
+TOP_YOE_PENALTY = int(_EXP_CFG["top_yoe_penalty"])
 
-BASE_SCORE = int(_SKILLS_CFG.get("base_score", 20))
-CORE_STRENGTH_POINTS = int(_SKILLS_CFG.get("core_strength_points", 5))
+BASE_SCORE = int(_SKILLS_CFG["base_score"])
+CORE_STRENGTH_POINTS = int(_SKILLS_CFG["core_strength_points"])
 # Per-skill overrides of core_strength_points, so the primary stack outweighs peripheral skills
 CORE_STRENGTH_WEIGHTS = {k.lower(): int(v) for k, v in (_SKILLS_CFG.get("core_strength_weights") or {}).items()}
-CORE_STRENGTHS_CAP = int(_SKILLS_CFG.get("core_strengths_cap", 40))
-DOMAIN_SCORE_CAP = int(_SKILLS_CFG.get("domain_score_cap", 30))
-STRONG_FLOOR = int(_SKILLS_CFG.get("strong_floor", 75))
-SECONDARY_FLOOR = int(_SKILLS_CFG.get("secondary_floor", 55))
+CORE_STRENGTHS_CAP = int(_SKILLS_CFG["core_strengths_cap"])
+DOMAIN_SCORE_CAP = int(_SKILLS_CFG["domain_score_cap"])
+STRONG_FLOOR = int(_SKILLS_CFG["strong_floor"])
+SECONDARY_FLOOR = int(_SKILLS_CFG["secondary_floor"])
 
-_SECONDARY_YOE_CTX = _EXP_CFG.get("secondary_yoe_context_pattern", "")
+_SECONDARY_YOE_CTX = _EXP_CFG["secondary_yoe_context_pattern"]
 _SECONDARY_YOE_CONTEXT_RE = re.compile(_SECONDARY_YOE_CTX, re.I) if _SECONDARY_YOE_CTX else None
-_PRIMARY_YOE_CTX = _EXP_CFG.get("primary_yoe_context_pattern", "")
+_PRIMARY_YOE_CTX = _EXP_CFG["primary_yoe_context_pattern"]
 _PRIMARY_YOE_CONTEXT_RE = re.compile(_PRIMARY_YOE_CTX, re.I) if _PRIMARY_YOE_CTX else None
 
 _DEGREE_EQUIV_RE = re.compile(r'degree[^\n]{0,45}\b(?:or|equivalent)\b')
@@ -1193,6 +1188,6 @@ def skip_reason(job):
 
 
 if __name__ == "__main__":
-    in_file = sys.argv[1] if len(sys.argv) > 1 else get_path("enriched_jobs", "data/enriched_jobs.json")
-    out_file = sys.argv[2] if len(sys.argv) > 2 else get_path("evaluated_jobs", "data/evaluated_jobs.json")
+    in_file = sys.argv[1] if len(sys.argv) > 1 else get_path("enriched_jobs")
+    out_file = sys.argv[2] if len(sys.argv) > 2 else get_path("evaluated_jobs")
     evaluate_jobs(in_file, out_file)

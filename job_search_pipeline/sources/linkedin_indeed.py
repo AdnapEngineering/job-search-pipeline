@@ -25,13 +25,13 @@ from job_search_pipeline.config import (
 )
 from job_search_pipeline.urls import is_aggregator_url, normalize_url
 
-_TITLES_CFG = CFG.get("titles") or {}
-_SKILLS_CFG = CFG.get("skills_and_scoring") or {}
-_SOURCES_CFG = CFG.get("sources") or {}
+_TITLES_CFG = CFG["titles"]
+_SKILLS_CFG = CFG["skills_and_scoring"]
+_SOURCES_CFG = CFG["sources"]
 
-_EXCLUDE_TECH_PATTERNS = compile_regex_list(_TITLES_CFG.get("exclude_tech_patterns", []))
+_EXCLUDE_TECH_PATTERNS = compile_regex_list(_TITLES_CFG["exclude_tech_patterns"])
 _EXCLUDE_SENIORITY = compile_alternation(
-    _TITLES_CFG.get("exclude_seniority_patterns", ["staff", "principal", "director", "manager", "intern", "lead", "architect", "contract", "entry level"]),
+    _TITLES_CFG["exclude_seniority_patterns"],
     word_bounded=True
 )
 
@@ -55,15 +55,12 @@ _PRIMARY_ROLE_TERMS = [t.lower() for t in (_TITLES_CFG.get("primary_role_pattern
 _CORE_STRENGTH_RES = {s: term_regex(s) for s in _CORE_STRENGTHS}
 _FOCUS_AREA_RES = {f: term_regex(f, allow_suffix=True) for f in _FOCUS_AREAS}
 
-SEARCH_TERMS = _SOURCES_CFG.get("search_terms") or ["Software Engineer"]
-SEARCHES = [tuple(s) for s in (_SOURCES_CFG.get("searches") or [
-    ["linkedin", "United States", " remote", 40],
-    ["indeed", "Remote", "", 40],
-])]
-LINKEDIN_PAUSE_SECONDS = int(_SOURCES_CFG.get("linkedin_pause_seconds", 3))
-COUNTRY_INDEED = _SOURCES_CFG.get("country_indeed", "USA")
+SEARCH_TERMS = _SOURCES_CFG["search_terms"]
+SEARCHES = [tuple(s) for s in _SOURCES_CFG["searches"]]
+LINKEDIN_PAUSE_SECONDS = int(_SOURCES_CFG["linkedin_pause_seconds"])
+COUNTRY_INDEED = _SOURCES_CFG["country_indeed"]
 
-LI_DETAILS_CACHE_PATH = get_path("linkedin_details_cache", "data/linkedin_details_cache.json")
+LI_DETAILS_CACHE_PATH = get_path("linkedin_details_cache")
 LI_DETAILS_CACHE_DAYS = LOOKBACK_DAYS + 1
 
 

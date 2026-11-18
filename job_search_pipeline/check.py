@@ -127,27 +127,25 @@ def check_config(report):
     except SystemExit as e:  # a malformed config.json stops the run with this message
         report.add(FAIL, "Config", str(e.code))
         return None, None
-    path, source = config.CONFIG_PATH, config.config_source()
+    path = config.CONFIG_PATH
     template = config.load_json(config.EXAMPLE_CONFIG_PATH, default={}) or {}
     cfg = config.CFG
-    if source != path:
-        report.add(WARN, "Config", f"no {os.path.basename(path)} yet, so the template's placeholder search is used; "
-                                   "run `cp config.starter.json config.json` and edit it")
-        return config, cfg
     if not os.path.exists(path):
-        report.add(WARN, "Config", f"{path} (JOB_PIPELINE_CONFIG) does not exist; every setting uses its default")
+        report.add(FAIL, "Config", f"no {os.path.relpath(path, ROOT_DIR) if path.startswith(ROOT_DIR) else path} yet; "
+                                   "draft one with --init-config, or `cp config.example.json config.json` and edit it")
         return config, cfg
     report.add(OK, "Config", os.path.relpath(path, ROOT_DIR) if path.startswith(ROOT_DIR) else path)
-    for issue in config_key_issues(cfg, template):
+    raw = config.load_json(path, default={}) or {}
+    for issue in config_key_issues(raw, template):
         report.add(WARN, "Config", issue)
-    placeholders = placeholder_issues(cfg, template)
+    placeholders = placeholder_issues(raw, template)
     if placeholders:
         report.add(WARN, "Config", f"still the template's placeholder value: {', '.join(placeholders)}")
     return config, cfg
 
 
 def check_profile(report, config):
-    path = config.get_path("candidate_profile", "candidate_profile.md")
+    path = config.get_path("candidate_profile")
     example = os.path.join(ROOT_DIR, "candidate_profile.example.md")
     if not os.path.exists(path):
         report.add(WARN, "Profile", f"{os.path.basename(path)} not found, so the AI review is skipped; "
@@ -263,7 +261,7 @@ def check_obsidian(report, cfg, env):
 
 
 def check_outputs(report, cfg, env, config):
-    data_dir = os.path.dirname(config.get_path("filtered_jobs", "data/filtered_jobs.json"))
+    data_dir = os.path.dirname(config.get_path("filtered_jobs"))
     probe = data_dir
     while not os.path.exists(probe):
         probe = os.path.dirname(probe)
@@ -272,10 +270,10 @@ def check_outputs(report, cfg, env, config):
     else:
         report.add(FAIL, "Data folder", f"{data_dir} is not writable")
     outputs = []
-    if (cfg.get("html_digest") or {}).get("enabled", True):
-        outputs.append("HTML digest (" + config.get_path("html_digest", "data/digest.html")
+    if cfg["html_digest"]["enabled"]:
+        outputs.append("HTML digest (" + config.get_path("html_digest")
                        .removeprefix(ROOT_DIR + os.sep) + ")")
-    if (cfg.get("text_export") or {}).get("enabled", False):
+    if cfg["text_export"]["enabled"]:
         outputs.append("text export")
     if outputs:
         report.add(OK, "Outputs", ", ".join(outputs) + " (plus Notion and Obsidian, when on)")

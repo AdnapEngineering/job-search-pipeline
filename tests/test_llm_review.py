@@ -279,23 +279,25 @@ class ScoringAndFlagTests(unittest.TestCase):
         self.assertEqual(review.score_components({"hard_reqs": 3, "core_work": 3, "evidence": 3, "level": 1}),
                          (83, "apply"))
 
-    def test_level_mismatch_cap_is_off_by_default_and_caps_level_zero_when_set(self):
+    def test_level_mismatch_cap_caps_level_zero_by_default_and_100_turns_it_off(self):
         under_leveled = {"hard_reqs": 4, "core_work": 3, "evidence": 3, "level": 0}  # 83% uncapped
-        self.assertEqual(review.score_components(under_leveled), (83, "apply"))
-        with patch.object(review, "LEVEL_MISMATCH_CAP", 65):
-            self.assertEqual(review.score_components(under_leveled), (65, "stretch"))
-            self.assertEqual(review.score_components(dict(under_leveled, level=1))[0], 92)
-            cached = {"verdict": "apply", "score": 83, "reason": "r", "blockers": [], "pay": None,
-                      "components": dict(under_leveled, logistics_ok=True)}
-            self.assertEqual(review._rescored(cached)["score"], 65)  # applies to reviews already paid for
+        with patch.object(review, "LEVEL_MISMATCH_CAP", 100):
+            self.assertEqual(review.score_components(under_leveled), (83, "apply"))
+        self.assertEqual(review.LEVEL_MISMATCH_CAP, 65)
+        self.assertEqual(review.score_components(under_leveled), (65, "stretch"))
+        self.assertEqual(review.score_components(dict(under_leveled, level=1))[0], 92)
+        cached = {"verdict": "apply", "score": 83, "reason": "r", "blockers": [], "pay": None,
+                  "components": dict(under_leveled, logistics_ok=True)}
+        self.assertEqual(review._rescored(cached)["score"], 65)  # applies to reviews already paid for
 
     def test_core_work_caps_keep_off_center_work_out_of_apply(self):
         backend = {"hard_reqs": 4, "core_work": 1, "evidence": 3, "level": 2}  # 83% uncapped
-        self.assertEqual(review.score_components(backend), (83, "apply"))
-        with patch.object(review, "CORE_WORK_CAPS", {0: 30, 1: 65}):
-            self.assertEqual(review.score_components(backend), (65, "stretch"))
-            self.assertEqual(review.score_components(dict(backend, core_work=0)), (30, "skip"))
-            self.assertEqual(review.score_components(dict(backend, core_work=2))[0], 92)
+        with patch.object(review, "CORE_WORK_CAPS", {}):
+            self.assertEqual(review.score_components(backend), (83, "apply"))
+        self.assertEqual(review.CORE_WORK_CAPS, {0: 30, 1: 65})
+        self.assertEqual(review.score_components(backend), (65, "stretch"))
+        self.assertEqual(review.score_components(dict(backend, core_work=0)), (30, "skip"))
+        self.assertEqual(review.score_components(dict(backend, core_work=2))[0], 92)
 
     def test_pay_is_kept_out_of_the_level_grade(self):
         self.assertIn("Do not count pay in hard_reqs or level", review.PROMPT)

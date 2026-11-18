@@ -17,10 +17,10 @@ from bs4 import BeautifulSoup
 
 from job_search_pipeline.config import CFG, atomic_write_json, get_path, load_json
 
-_SKILLS_CFG = CFG.get("skills_and_scoring") or {}
-_SCRAPER_CFG = CFG.get("scraper") or {}
+_SKILLS_CFG = CFG["skills_and_scoring"]
+_SCRAPER_CFG = CFG["scraper"]
 
-SCRAPE_CONCURRENCY = int(_SCRAPER_CFG.get("concurrency", 15))
+SCRAPE_CONCURRENCY = int(_SCRAPER_CFG["concurrency"])
 DETECT_STACK_KEYWORDS = (
     _SKILLS_CFG.get("detect_stack_keywords")
     or _SKILLS_CFG.get("core_strengths")
@@ -358,8 +358,8 @@ def _load_enriched(output_file):
 
 
 async def main():
-    input_file = sys.argv[1] if len(sys.argv) > 1 else get_path("filtered_jobs", "data/filtered_jobs.json")
-    output_file = sys.argv[2] if len(sys.argv) > 2 else get_path("enriched_jobs", "data/enriched_jobs.json")
+    input_file = sys.argv[1] if len(sys.argv) > 1 else get_path("filtered_jobs")
+    output_file = sys.argv[2] if len(sys.argv) > 2 else get_path("enriched_jobs")
 
     with open(input_file, encoding='utf-8') as f:
         jobs = json.load(f)

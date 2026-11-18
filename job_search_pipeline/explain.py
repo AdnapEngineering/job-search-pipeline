@@ -18,9 +18,9 @@ from job_search_pipeline.sources.filter import (is_recent, is_valid_company, is_
                                                 title_reject_reason)
 from job_search_pipeline.urls import normalize_url
 
-ENRICHED_JOBS = get_path("enriched_jobs", "data/enriched_jobs.json")
-FILTERED_JOBS = get_path("filtered_jobs", "data/filtered_jobs.json")
-REVIEW_MIN_SCORE = int((CFG.get("skills_and_scoring") or {}).get("min_review_score", 55))
+ENRICHED_JOBS = get_path("enriched_jobs")
+FILTERED_JOBS = get_path("filtered_jobs")
+REVIEW_MIN_SCORE = int(CFG["skills_and_scoring"]["min_review_score"])
 
 # ATS hosts whose first path segment is the company's board slug
 _SLUG_HOSTS = re.compile(r'(?:^|\.)(?:greenhouse\.io|lever\.co|ashbyhq\.com|workable\.com|bamboohr\.com|'

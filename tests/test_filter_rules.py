@@ -12,6 +12,7 @@ import unittest.mock
 import job_search_pipeline.evaluate as ev
 import job_search_pipeline.sources.filter as ff
 from job_search_pipeline.blocklist import canon_company, role_key
+from job_search_pipeline.defaults import DEFAULTS
 
 
 def logistics(desc, loc="Remote? (unverified)", ats="Linkedin", remote=False, title="Software Engineer"):
@@ -133,7 +134,7 @@ class LogisticsTests(unittest.TestCase):
             importlib.reload(ff)
             importlib.reload(ev)
         self.addCleanup(restore)
-        with unittest.mock.patch.dict(ff._LOC_CFG, location, clear=True):
+        with unittest.mock.patch.dict(ff._LOC_CFG, {**DEFAULTS["location"], **location}, clear=True):
             importlib.reload(ff)
             return importlib.reload(ev)
 

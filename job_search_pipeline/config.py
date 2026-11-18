@@ -5,16 +5,19 @@ locations, company filters, search queries, and LLM rubric text) are loaded
 from `config.json` so the pipeline can be adapted to any career without
 editing Python source files.
 
-`config.json` is your own, untracked copy of the tracked template `config.example.json`
-(`cp config.example.json config.json`). Until that copy exists the template is read instead.
+`config.json` is your own, untracked file (draft it with `--init-config`, or copy `config.example.json`).
+It is laid over the built-in defaults in `defaults.py`, so it only needs the settings you change.
 """
 import contextlib
+import copy
 import json
 import os
 import re
 import sys
 import tempfile
 from typing import Any
+
+from job_search_pipeline.defaults import DEFAULTS
 
 # The repository root, one level above this package: config.json, candidate_profile.md, .env and data/ live there
 ROOT_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -50,45 +53,46 @@ def atomic_write_json(path: str, data: Any, indent: int = 2) -> None:
         raise
 
 
-def config_source(path: str = CONFIG_PATH) -> str:
-    """The file settings are read from: `path`, or the tracked template while the default
-    `config.json` has not been created yet. Writes always go to `path`, never to the template."""
-    if path == DEFAULT_CONFIG_PATH and not os.path.exists(path) and os.path.exists(EXAMPLE_CONFIG_PATH):
-        return EXAMPLE_CONFIG_PATH
-    return path
+def merge_defaults(cfg: dict) -> dict:
+    """`cfg` laid over DEFAULTS: a section's keys override the default ones; anything else replaces whole."""
+    merged = copy.deepcopy(DEFAULTS)
+    for key, value in cfg.items():
+        if isinstance(value, dict) and isinstance(merged.get(key), dict):
+            merged[key].update(copy.deepcopy(value))
+        else:
+            merged[key] = copy.deepcopy(value)
+    return merged
 
 
 def load_config(path: str = CONFIG_PATH) -> dict:
-    """The pipeline config; an empty dict (all defaults) when the file is missing.
+    """The pipeline config laid over DEFAULTS; just the defaults when the file is missing.
 
     A file that exists but cannot be read or parsed stops the run (SystemExit) instead of silently
     running the built-in defaults in place of the user's search."""
-    source = config_source(path)
-    if source != path:
-        print(f"No {os.path.basename(path)} found; using the template {os.path.basename(source)}. "
-              f"Run `cp {os.path.basename(source)} {os.path.basename(path)}` and edit the copy.", file=sys.stderr)
     try:
-        with open(source, encoding="utf-8") as f:
+        with open(path, encoding="utf-8") as f:
             cfg = json.load(f)
     except FileNotFoundError:
-        return {}
+        return merge_defaults({})
     except json.JSONDecodeError as e:
-        sys.exit(f"Invalid JSON in {source} at line {e.lineno}, column {e.colno}: {e.msg}. "
+        sys.exit(f"Invalid JSON in {path} at line {e.lineno}, column {e.colno}: {e.msg}. "
                  f"Fix the file and run again.")
     except (OSError, UnicodeDecodeError) as e:
-        sys.exit(f"Could not read {source}: {e}")
+        sys.exit(f"Could not read {path}: {e}")
     if not isinstance(cfg, dict):
-        sys.exit(f"{source} must contain a JSON object ({{...}}), not {type(cfg).__name__}.")
-    return cfg
+        sys.exit(f"{path} must contain a JSON object ({{...}}), not {type(cfg).__name__}.")
+    for section, value in cfg.items():
+        if isinstance(DEFAULTS.get(section), dict) and not isinstance(value, dict):
+            sys.exit(f"{path}: \"{section}\" must be a JSON object ({{...}}), not {type(value).__name__}.")
+    return merge_defaults(cfg)
 
 
 CFG = load_config()
 
 
-def get_path(key: str, default_rel: str) -> str:
-    """Absolute path for `paths.<key>` in config.json (or `default_rel`); relative paths resolve from the script directory."""
-    val = (CFG.get("paths") or {}).get(key) or default_rel
-    return os.path.join(ROOT_DIR, os.path.expanduser(val))
+def get_path(key: str) -> str:
+    """Absolute path for `paths.<key>`; relative paths resolve from the repository root."""
+    return os.path.join(ROOT_DIR, os.path.expanduser(CFG["paths"][key] or DEFAULTS["paths"][key]))
 
 
 def term_regex(term: str, allow_suffix: bool = False) -> re.Pattern:

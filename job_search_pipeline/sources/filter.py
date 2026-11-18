@@ -18,48 +18,19 @@ from job_search_pipeline.blocklist import load_blocklist, role_key
 from job_search_pipeline.config import CFG, atomic_write_json, compile_alternation, compile_regex_list, get_path, load_json
 from job_search_pipeline.urls import is_aggregator_url, normalize_url
 
-_SOURCES_CFG = CFG.get("sources") or {}
-_LOC_CFG = CFG.get("location") or {}
-_TITLES_CFG = CFG.get("titles") or {}
-_COMP_CFG = CFG.get("compensation") or {}
-_COMPANIES_CFG = CFG.get("companies") or {}
+_SOURCES_CFG = CFG["sources"]
+_LOC_CFG = CFG["location"]
+_TITLES_CFG = CFG["titles"]
+_COMP_CFG = CFG["compensation"]
+_COMPANIES_CFG = CFG["companies"]
 
-MANIFEST_URL = _SOURCES_CFG.get(
-    "github_feed_manifest_url",
-    "https://riley-dorrington.github.io/job-board-data/data/chunks/jobs_manifest.json"
-)
-BASE_CHUNK_URL = _SOURCES_CFG.get(
-    "github_feed_base_chunk_url",
-    "https://riley-dorrington.github.io/job-board-data/data/chunks/"
-)
-CHUNK_CONCURRENCY = int(_SOURCES_CFG.get("chunk_concurrency", 20))
-LOOKBACK_DAYS = int(_SOURCES_CFG.get("lookback_days", 3))
-MIN_SALARY = float(_COMP_CFG.get("min_salary", 0))
+MANIFEST_URL = _SOURCES_CFG["github_feed_manifest_url"]
+BASE_CHUNK_URL = _SOURCES_CFG["github_feed_base_chunk_url"]
+CHUNK_CONCURRENCY = int(_SOURCES_CFG["chunk_concurrency"])
+LOOKBACK_DAYS = int(_SOURCES_CFG["lookback_days"])
+MIN_SALARY = float(_COMP_CFG["min_salary"])
 
-# Places outside the candidate's own country: lower-case regex fragments, matched as whole words. The defaults
-# assume a US-based candidate; set location.foreign_places / foreign_cities in config.json for another country.
-# foreign_places (countries, regions, provinces) rule out a feed location or title, JD residency wording
-# ("remote within Canada") and a JD "Location:" line. foreign_cities only rule out a JD "Location:" line, since a
-# city name alone can be a home-country town (Dublin, OH; Paris, TX).
-DEFAULT_FOREIGN_PLACES = [
-    'canada', 'poland', 'brazil', 'costa rica', 'france', 'italy', 'netherlands', 'spain', 'lithuania', 'uk',
-    'emea', 'latam', 'apac', 'india', 'germany', 'ireland', 'mexico', 'australia', 'montréal', 'montreal', 'europe',
-    'latin america', 'el salvador', 'colombia', 'argentina', 'nz', 'new zealand', 'singapore', 'united kingdom',
-    'romania', 'portugal', 'ontario', 'krakow', 'british columbia', 'bc', 'london', 'gbr', 'scotland', 'england',
-    'türkiye', 'burnaby', 'quebec', 'alberta', 'eu', 'philippines', 'manitoba', 'saskatchewan', 'nova scotia',
-    'newfoundland', 'prince edward island', 'sweden', 'norway', 'denmark', 'finland', 'switzerland', 'austria',
-    'belgium', 'czechia', 'czech republic', 'estonia', 'latvia', 'hungary', 'slovakia', 'slovenia', 'iceland',
-    'luxembourg', 'bulgaria', 'ukraine', 'serbia', 'croatia', 'greece', 'vietnam', 'nigeria', 'israel', 'japan',
-    'south korea', 'egypt', 'pakistan', 'south africa', 'chile', 'peru', 'uruguay', 'guatemala', 'china', 'korea',
-    'turkey',
-]
-DEFAULT_FOREIGN_CITIES = [
-    'bucharest', 'hanoi', 'sofia', 'kyiv', 'manila', 'tel aviv', 'noida', 'bangalore', 'bengaluru', 'hyderabad',
-    'pune', 'chennai', 'warsaw', 'berlin', 'paris', 'amsterdam', 'dublin', 'toronto', 'vancouver,? bc', 'stockholm',
-    'oslo', 'copenhagen', 'helsinki', 'zurich', 'brussels', 'prague', 'budapest', 'winnipeg',
-]
-
-
+# Places outside the home country (see location.foreign_places in defaults.py), plus pre-merge legacy keys
 def _legacy_terms(*keys):
     """Entries of pre-merge location keys, with the \\b anchors the old regex lists used stripped."""
     out = []
@@ -72,21 +43,21 @@ def _unique(items):
     return list(dict.fromkeys(i for i in items if i))
 
 
-FOREIGN_PLACES = _unique((_LOC_CFG.get("foreign_places") or DEFAULT_FOREIGN_PLACES) + _legacy_terms(
+FOREIGN_PLACES = _unique(_LOC_CFG["foreign_places"] + _legacy_terms(
     "foreign_exclude_patterns", "jd_non_allowed_locations", "jd_foreign_places", "foreign_countries"))
-FOREIGN_CITIES = _unique((_LOC_CFG.get("foreign_cities") or DEFAULT_FOREIGN_CITIES) + _legacy_terms("jd_foreign_terms"))
+FOREIGN_CITIES = _unique(_LOC_CFG["foreign_cities"] + _legacy_terms("jd_foreign_terms"))
 FOREIGN_RE = compile_alternation(FOREIGN_PLACES, word_bounded=True) or re.compile(r'(?!x)x')
 FOREIGN_CITY_RE = compile_alternation(FOREIGN_CITIES, word_bounded=True) or re.compile(r'(?!x)x')
-US_PATTERN = re.compile(_LOC_CFG.get("allowed_country_pattern", r"\b(us|united states|usa)\b"))
+US_PATTERN = re.compile(_LOC_CFG["allowed_country_pattern"])
 
 
 def names_foreign_place(text):
     """True when lower-case `text` names a foreign place and not the home country."""
     return bool(FOREIGN_RE.search(text)) and not US_PATTERN.search(text)
 
-_EXCLUDE_TECH_PATTERNS = compile_regex_list(_TITLES_CFG.get("exclude_tech_patterns", []))
+_EXCLUDE_TECH_PATTERNS = compile_regex_list(_TITLES_CFG["exclude_tech_patterns"])
 
-_STRONG_TARGET_LIST = _TITLES_CFG.get("strong_target_patterns", [])
+_STRONG_TARGET_LIST = _TITLES_CFG["strong_target_patterns"]
 STRONG_TARGET_RE = (
     compile_alternation(_STRONG_TARGET_LIST, word_bounded=True)
     if _STRONG_TARGET_LIST
@@ -101,7 +72,7 @@ _EXCLUDE_ROLE_PATTERNS = compile_regex_list(_unique(
     (_TITLES_CFG.get("exclude_role_patterns") or [])
     + [rf'\b{w}\b' for w in (_TITLES_CFG.get("bad_role_patterns") or [])] + sorted(_SOFT_ROLE_EXCLUDES)))
 
-_TARGET_PATTERNS = compile_regex_list(_TITLES_CFG.get("target_patterns", [r"\bengineer\b", r"\bdeveloper\b"]))
+_TARGET_PATTERNS = compile_regex_list(_TITLES_CFG["target_patterns"])
 # One combined pass to cheaply skip non-target titles before the full title rules run
 _TARGET_PREFILTER_RE = (
     re.compile('|'.join(p.pattern for p in _TARGET_PATTERNS))
@@ -109,18 +80,18 @@ _TARGET_PREFILTER_RE = (
     else re.compile(r'.')
 )
 
-_COMPANY_EXCLUDE = compile_alternation(_COMPANIES_CFG.get("exclude_companies", []), word_bounded=True)
-_RECRUITER_EXCLUDE = compile_alternation(_COMPANIES_CFG.get("exclude_recruiters", []), word_bounded=True)
-_RECRUITER_ALLOW = compile_alternation(_COMPANIES_CFG.get("allow_recruiters", []), word_bounded=True)
+_COMPANY_EXCLUDE = compile_alternation(_COMPANIES_CFG["exclude_companies"], word_bounded=True)
+_RECRUITER_EXCLUDE = compile_alternation(_COMPANIES_CFG["exclude_recruiters"], word_bounded=True)
+_RECRUITER_ALLOW = compile_alternation(_COMPANIES_CFG["allow_recruiters"], word_bounded=True)
 
-_LOCAL_METRO_RE = compile_alternation(_LOC_CFG.get("local_metro_patterns", []), word_bounded=True)
-_LOCAL_METRO_EXCLUDE_RE = compile_alternation(_LOC_CFG.get("local_metro_exclude_patterns", []), word_bounded=True)
-_LOCAL_STATE_ONLY_PATTERN = _LOC_CFG.get("local_state_only_pattern", "")
+_LOCAL_METRO_RE = compile_alternation(_LOC_CFG["local_metro_patterns"], word_bounded=True)
+_LOCAL_METRO_EXCLUDE_RE = compile_alternation(_LOC_CFG["local_metro_exclude_patterns"], word_bounded=True)
+_LOCAL_STATE_ONLY_PATTERN = _LOC_CFG["local_state_only_pattern"]
 _LOCAL_STATE_ONLY_RE = re.compile(_LOCAL_STATE_ONLY_PATTERN) if _LOCAL_STATE_ONLY_PATTERN else None
-ALLOW_REMOTE = bool(_LOC_CFG.get("allow_remote", True))
+ALLOW_REMOTE = bool(_LOC_CFG["allow_remote"])
 
-SOURCE_STATS_PATH = get_path("source_stats", "data/source_stats.json")
-FILTERED_JOBS_PATH = get_path("filtered_jobs", "data/filtered_jobs.json")
+SOURCE_STATS_PATH = get_path("source_stats")
+FILTERED_JOBS_PATH = get_path("filtered_jobs")
 HTTP_TIMEOUT = aiohttp.ClientTimeout(total=30)
 
 UNSPECIFIED_LOCATIONS = {'', 'not specified', 'unspecified', 'n/a', 'none'}
@@ -433,7 +404,7 @@ def merge_with_existing(fresh_jobs, ats_index, blocked_urls):
 async def main():
     filtered, ats_index, stats = [], {}, {}
 
-    if _SOURCES_CFG.get("github_feed_enabled", True):
+    if _SOURCES_CFG["github_feed_enabled"]:
         try:
             filtered, ats_index = await fetch_github_feed(stats)
         except (aiohttp.ClientError, asyncio.TimeoutError, ValueError, KeyError) as e:
@@ -441,10 +412,10 @@ async def main():
             print(f"GitHub feed fetch failed, continuing with the other sources: {type(e).__name__}: {e}",
                   file=sys.stderr)
             stats["github_feed"] = {"fetched": 0, "kept": 0, "error": f"{type(e).__name__}: {e}"[:120]}
-    if _SOURCES_CFG.get("jobspy_enabled", True):
+    if _SOURCES_CFG["jobspy_enabled"]:
         filtered.extend(fetch_jobspy(stats))
         print(f"Combined total (GitHub + Indeed/LinkedIn): {len(filtered)}")
-    if _SOURCES_CFG.get("job_boards_enabled", True):
+    if _SOURCES_CFG["job_boards_enabled"]:
         filtered.extend(fetch_boards(stats))
         print(f"Combined total (GitHub + Indeed/LinkedIn + boards): {len(filtered)}")
 

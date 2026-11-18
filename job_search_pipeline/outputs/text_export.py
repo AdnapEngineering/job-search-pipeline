@@ -9,8 +9,8 @@ from datetime import datetime
 from job_search_pipeline.blocklist import record_exported, select_new_matches
 from job_search_pipeline.config import CFG, get_path
 
-TEXT_EXPORT_ENABLED = bool((CFG.get("text_export") or {}).get("enabled", False))
-TEXT_EXPORT_PATH = get_path("text_export", "data/job_matches.txt")
+TEXT_EXPORT_ENABLED = bool(CFG["text_export"]["enabled"])
+TEXT_EXPORT_PATH = get_path("text_export")
 
 
 def format_job(job: dict) -> str:
