@@ -9,7 +9,7 @@ The endpoints each source uses, with `curl` commands for looking at their live r
 - Project: [Riley-Dorrington/job-board-aggregator](https://github.com/Riley-Dorrington/job-board-aggregator) (MIT): the multithreaded ETL that scrapes the ATS boards daily. Its output is published to [Riley-Dorrington/job-board-data](https://github.com/Riley-Dorrington/job-board-data), which this pipeline reads.
 - Manifest URL: `https://riley-dorrington.github.io/job-board-data/data/chunks/jobs_manifest.json`
 - Chunk base URL: `https://riley-dorrington.github.io/job-board-data/data/chunks/`
-- Contents: gzipped JSON chunks, updated daily (`jobs_0.json.gz`, `jobs_1.json.gz`, ...) holding about 1.4 million postings scraped directly from company ATS boards (Greenhouse, Lever, Ashby, Workday, BambooHR, iCIMS, SmartRecruiters, etc.). Rows carry title, company, location and link but no description; Stage 2 fetches that.
+- Contents: gzipped JSON chunks, updated daily (`jobs_0.json.gz`, `jobs_1.json.gz`, ...) holding about 1.4 million postings scraped directly from company ATS boards (Workday, iCIMS, Greenhouse, Paylocity, Lever, BambooHR, Ashby and Join). It only covers the companies the aggregator knows about, so some postings on those ATSs are missing, and ATSs outside that list (SmartRecruiters, Workable, JazzHR, UKG, Dover, ...) are not covered at all. Rows carry title, company, location and link but no description; Stage 2 fetches that.
 
 <details>
 <summary><code>curl</code> commands</summary>
@@ -65,6 +65,39 @@ Fetch and inspect the latest Jobicy remote listings:
 curl -sL -A "Mozilla/5.0" \
   "https://jobicy.com/api/v2/remote-jobs?count=5&geo=usa&industry=engineering" \
   | jq '.jobs[] | {companyName, jobTitle, jobGeo, salaryMin, salaryMax, pubDate, url}'
+```
+
+</details>
+
+## Himalayas
+
+- Endpoint: `https://himalayas.app/jobs/api/search` (`sources.himalayas_search_url`)
+- Used in: [`sources/job_boards.py`](../job_search_pipeline/sources/job_boards.py) (`fetch_himalayas()`)
+- One search per `sources.search_terms` entry, limited to US, full-time, newest first. It pages (20 per page, with a 1-second pause) until postings fall outside `lookback_days`, up to `sources.himalayas_max_pages` pages per term. Rows carry the full description and, often, a salary range.
+
+<details>
+<summary><code>curl</code> commands</summary>
+
+```bash
+curl -sL -A "Mozilla/5.0" \
+  "https://himalayas.app/jobs/api/search?q=frontend%20engineer&country=United%20States&employment_type=Full%20Time&sort=recent&page=1" \
+  | jq '.jobs[] | {companyName, title, locationRestrictions, minSalary, maxSalary, pubDate: (.pubDate | todate), guid}'
+```
+
+</details>
+
+## We Work Remotely
+
+- Feeds: the category RSS feeds in `sources.wwr_feeds` (front-end and full-stack programming by default)
+- Used in: [`sources/job_boards.py`](../job_search_pipeline/sources/job_boards.py) (`fetch_wwr()`)
+- Item titles are `Company: Title`. Regions such as "Europe Only" or "Asia Only" are dropped; "USA Only", "North America Only" and "Anywhere in the World" are kept. The feeds carry no salary field.
+
+<details>
+<summary><code>curl</code> commands</summary>
+
+```bash
+curl -sL -A "Mozilla/5.0" "https://weworkremotely.com/categories/remote-front-end-programming-jobs.rss" \
+  | grep -E "<title>|<region>|<pubDate>" | head -20
 ```
 
 </details>

@@ -35,6 +35,8 @@ _SOURCE_LABELS = [
     ("linkedin", "LinkedIn"),
     ("indeed", "Indeed"),
     ("jobicy", "Jobicy"),
+    ("himalayas", "Himalayas"),
+    ("wwr", "WWR"),
     ("hn", "HN"),
     ("remoteok", "Remote OK"),
 ]
