@@ -111,4 +111,6 @@ Caps go in `llm_review.budget`. Every cap defaults to `0`, which means no limit:
 
 Reviews run highest keyword score first. Each one reserves its estimated cost (prompt length, plus the average output of earlier reviews) before it starts, so reviews running in parallel cannot jointly pass a cap. When the next review would pass a cap, the pass stops: the remaining matches are **deferred**, i.e. held like a failed review (`[AI review deferred: budget cap reached, held for next run]`, not synced or exported) and reviewed first on a later run. Real usage can still run over a cap slightly when a reply is longer than estimated.
 
+Since a capped run reviews in keyword-score order, the keyword score decides which matches get a review. Run [`--calibrate`](usage.md#tuning-the-rules-against-past-reviews) after a few runs to check that it ranks the reviewer's verdicts, and to tune the rules against the reviews already cached at no cost.
+
 ---

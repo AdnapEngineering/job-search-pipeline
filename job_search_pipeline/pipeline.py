@@ -166,6 +166,9 @@ def parse_args(argv=None):
                         help="Check the setup (config, profile, AI reviewer, Notion, Obsidian, outputs) and exit without running")
     parser.add_argument("--explain", metavar="URL", default=None,
                         help="Trace one posting through the filters, rules and score breakdown, then exit")
+    parser.add_argument("--calibrate", action="store_true",
+                        help="Check the Stage 3 rules and keyword score against the cached AI reviews (no LLM "
+                             "calls), then exit")
     parser.add_argument("--title", default=None, help="With --explain: the posting's title, for one not seen yet")
     parser.add_argument("--company", default=None, help="With --explain: the company (guessed from the URL otherwise)")
     parser.add_argument("--location", default=None, help="With --explain: the posting's location")
@@ -445,6 +448,9 @@ def main():
         from job_search_pipeline.explain import explain
         sys.exit(explain(args.explain, title=args.title, company=args.company, location=args.location,
                          rescrape=args.rescrape))
+    if args.calibrate:
+        from job_search_pipeline.calibrate import calibrate
+        sys.exit(calibrate())
     if args.init_config is not None:
         from job_search_pipeline.init_config import init_config
         sys.exit(init_config(args.init_config, output=args.init_output, force=args.force))
