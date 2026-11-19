@@ -15,7 +15,7 @@ dependencies = [
     "beautifulsoup4>=4.12.0",
     "pandas>=2.0.0",
     # LinkedIn/Indeed scraping breaks often across jobspy releases; test before raising this bound
-    "python-jobspy>=1.1.0,<1.2",
+    "python-jobspy>=1.4.1,<1.5",
     "requests>=2.31.0",
 ]
 

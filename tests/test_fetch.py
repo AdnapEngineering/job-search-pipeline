@@ -12,6 +12,8 @@ from unittest.mock import patch
 import aiohttp
 import pandas as pd
 
+from jobspy.linkedin import LinkedIn
+
 import job_search_pipeline.sources.filter as ff
 import job_search_pipeline.sources.linkedin_indeed as fi
 import job_search_pipeline.pipeline as run_pipeline
@@ -93,7 +95,7 @@ class LinkedInRateLimitTests(unittest.TestCase):
         def fake_scrape(**kwargs):
             calls.append(kwargs["search_term"])
             if len(calls) == 2:
-                logging.getLogger("JobSpy:LinkedIn").error("LinkedIn: too many 429 error responses")
+                logging.getLogger(LinkedIn.__module__).error("response status code 429 (blocked: use a proxy)")
             return pd.DataFrame()
 
         terms = ["A", "B", "C", "D"]
@@ -144,6 +146,34 @@ class FeedOutageTests(unittest.TestCase):
         _, stats, _ = self.run_main(aiohttp.ClientError("503"))
         health = run_pipeline.source_health(ff.SOURCE_STATS_PATH)
         self.assertTrue(any("GitHub feed fetch failed" in w for w in health["warnings"]))
+
+
+class LinkedInDetailsCacheTests(unittest.TestCase):
+    """The cache wraps a private jobspy method; these fail when a jobspy release renames or reshapes it."""
+
+    def test_cache_round_trips_a_job_page_through_json(self):
+        import tempfile
+        from jobspy.linkedin import LinkedIn
+        from jobspy.model import CompensationInterval, JobType
+        page = {"description": "Build React apps", "job_type": [JobType.FULL_TIME],
+                "interval": CompensationInterval.YEARLY, "min_amount": 150000.0, "max_amount": 180000.0}
+        calls = []
+        method = "_fetch_details" if hasattr(LinkedIn, "_fetch_details") else "_get_job_details"
+        with tempfile.TemporaryDirectory() as tmp, \
+                patch.object(fi, "LI_DETAILS_CACHE_PATH", f"{tmp}/cache.json"), \
+                patch.object(LinkedIn, method, lambda self, job_id: calls.append(job_id) or dict(page)):
+            fake = getattr(LinkedIn, method)
+            finish = fi._install_linkedin_details_cache()
+            self.assertIsNot(getattr(LinkedIn, method), fake, "cache did not wrap jobspy's job-page fetch")
+            getattr(LinkedIn, method)(None, "1")
+            self.assertEqual(finish(), 0)
+            with open(f"{tmp}/cache.json") as f:
+                self.assertEqual(json.load(f)["1"]["details"]["interval"], "YEARLY")
+            finish = fi._install_linkedin_details_cache()
+            cached = getattr(LinkedIn, method)(None, "1")
+            self.assertEqual(finish(), 1)
+        self.assertEqual(calls, ["1"])
+        self.assertEqual(cached, page)
 
 
 if __name__ == "__main__":

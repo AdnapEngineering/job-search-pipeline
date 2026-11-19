@@ -261,7 +261,7 @@ uv run ruff check .
 uv run python -m unittest discover -s tests
 ```
 
-GitHub Actions runs the same lint and tests on Python 3.10 and 3.12 (the version `.python-version` pins for `uv sync`) for every pull request and push to `main`, installing from `uv.lock` ([`.github/workflows/ci.yml`](.github/workflows/ci.yml)). It fails when `pyproject.toml` changed without a matching lockfile, so run `uv lock` after editing dependencies and commit `uv.lock` with them; `uv lock --upgrade-package NAME` moves one dependency to its newest allowed version.
+GitHub Actions runs the same lint and tests on Python 3.10 and 3.13 for every pull request and push to `main`, installing from `uv.lock` ([`.github/workflows/ci.yml`](.github/workflows/ci.yml)). It fails when `pyproject.toml` changed without a matching lockfile, so run `uv lock` after editing dependencies and commit `uv.lock` with them; `uv lock --upgrade-package NAME` moves one dependency to its newest allowed version.
 
 The tests load `tests/fixtures/search_config.json` (a made-up search) through `tests/_fixture_config.py` and write only to a temporary directory, so they pass whatever your own `config.json` says and never touch `data/`.
 
