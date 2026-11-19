@@ -326,7 +326,8 @@
     "allow_recruiters": [],
     "company_aliases": {
       "exampleparentcorp": "examplebrand"
-    }
+    },
+    "max_roles_per_run": 0
   },
   "skills_and_scoring": {
     "base_score": 20,

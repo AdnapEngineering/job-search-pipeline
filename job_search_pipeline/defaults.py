@@ -187,6 +187,7 @@ DEFAULTS = {
         "exclude_recruiters": [],
         "allow_recruiters": [],
         "company_aliases": {},
+        "max_roles_per_run": 0,
     },
     "skills_and_scoring": {
         "base_score": 20,

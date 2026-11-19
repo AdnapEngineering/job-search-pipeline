@@ -7,7 +7,7 @@ from datetime import datetime, timezone
 
 import requests
 
-from job_search_pipeline.blocklist import record_exported, select_new_matches
+from job_search_pipeline.blocklist import also_open_text, record_exported, select_new_matches
 from job_search_pipeline.evaluate import skip_reason
 from job_search_pipeline.config import CFG, CONFIG_PATH, atomic_write_json, get_path, load_json
 
@@ -30,6 +30,7 @@ NOTION_PROPERTIES = {
 OPTIONAL_NOTION_PROPERTIES = {"Originally Posted": "date"}
 REQUEST_TIMEOUT = 15
 SYNC_DELAY_SECONDS = 0.35  # stays under Notion's ~3 requests/second rate limit
+RICH_TEXT_MAX = 2000  # Notion's limit for one rich-text segment
 RUN_HISTORY_KEEP = 10
 RATE_LIMIT_RETRIES = 3
 RATE_LIMIT_MAX_WAIT = 30  # seconds; caps a Retry-After header
@@ -67,12 +68,13 @@ def _build_notion_payload(job: dict, database_id: str) -> dict:
     """Build the Notion page-create payload from a job dict."""
     first_seen = job.get("first_seen")
     date_str = first_seen[:10] if first_seen else datetime.now(timezone.utc).strftime("%Y-%m-%d")
+    why = " ".join(filter(None, [job.get("reason") or "Matches target criteria", also_open_text(job)]))
 
     properties = {
         "Company & Stage": {"title": [{"text": {"content": (job.get("company") or "Unknown").title()}}]},
         "Role Title & Compensation": _rich_text(job.get("title") or "Unknown Role"),
         "Location": _rich_text(job.get("location") or "Remote"),
-        "Why It Matches": _rich_text(job.get("reason") or "Matches target criteria"),
+        "Why It Matches": _rich_text(why[:RICH_TEXT_MAX]),
         "Match %": _rich_text(f"{job.get('score', 0)}%"),
         "Link": {"url": job.get("url", "")},
         "Date Posted": {"date": {"start": date_str}},

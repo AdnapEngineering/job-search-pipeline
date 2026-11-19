@@ -52,6 +52,11 @@ class NoteTests(_Base):
             self.assertIn(line + "\n", note)
         self.assertIn('Strong "React" fit: design systems', note)  # body text is not escaped
 
+    def test_roles_held_back_by_the_company_cap_are_linked_in_the_note(self):
+        job = match(1, also_open=[{"title": "UI Engineer", "score": 83, "url": "https://example.com/jobs/9", "keys": []}])
+        self.assertIn("## Also Open at This Company\n\n- [UI Engineer](https://example.com/jobs/9) (83%)\n",
+                      obsidian.build_note(job))
+
     def test_unsafe_characters_are_removed_from_the_note_name(self):
         name = obsidian.note_name({"company": "a/b: co", "title": 'Engineer [Remote] #1 | "UI"?'})
         self.assertEqual(name, "A B Co - Engineer Remote 1 UI")

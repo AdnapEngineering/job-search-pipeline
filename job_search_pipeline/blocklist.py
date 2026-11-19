@@ -11,6 +11,8 @@ from job_search_pipeline.urls import normalize_url, normalize_url_list
 
 BLOCKLIST_PATH = get_path("blocklist")
 ROLE_BLOCKLIST_PATH = get_path("role_blocklist")
+# Most roles from one company output per run (0 = no limit); see select_new_matches
+MAX_ROLES_PER_RUN = int(CFG["companies"]["max_roles_per_run"] or 0)
 
 _COMPANY_SUFFIX_RE = re.compile(r'(technologies|technology|corporation|software|corp|inc|llc|labs|group|hq|ai)$')
 _COMPANY_PAREN_RE = re.compile(r'^(.*?)\s*\(([^)]+)\)\s*$')
@@ -84,9 +86,20 @@ def job_keys(job: dict) -> set[str]:
     return keys - {""}
 
 
-def select_new_matches(jobs: list[dict], min_score: int, verbose: bool = True) -> list[dict]:
+def company_key(company: str | None) -> str:
+    """The canonical company part of role_key ('' when blank), so a brand's roles group however it is written."""
+    return role_key(company, "x").partition("|")[0]
+
+
+def select_new_matches(jobs: list[dict], min_score: int, verbose: bool = True,
+                       max_per_company: int | None = None) -> list[dict]:
     """Jobs scoring >= min_score that are not blocklisted, keeping only the first of any same-role reposts.
-    Jobs whose AI review failed (review_failed) are held back so they are reviewed before they are output."""
+    Jobs whose AI review failed (review_failed) are held back so they are reviewed before they are output.
+
+    With max_per_company (default companies.max_roles_per_run; 0 = no limit), only that many of one company's
+    roles are kept, the highest scored. The rest ride along on the company's top kept job as `also_open` (a
+    copy of that job is returned; the input is not changed), so outputs name them and record_exported
+    blocklists them with it instead of letting them through one per run."""
     blocked_urls = load_blocklist()
     blocked_roles = load_role_blocklist()
     selected = []
@@ -102,15 +115,49 @@ def select_new_matches(jobs: list[dict], min_score: int, verbose: bool = True) -
             continue
         blocked_roles |= keys
         selected.append(job)
-    return selected
+    cap = MAX_ROLES_PER_RUN if max_per_company is None else max_per_company
+    return _cap_per_company(selected, cap, verbose) if cap > 0 else selected
+
+
+def _cap_per_company(jobs: list[dict], cap: int, verbose: bool) -> list[dict]:
+    """`jobs` (order kept) with at most `cap` per company; the rest become `also_open` on the company's top job."""
+    by_company = {}
+    for job in jobs:
+        key = company_key(job.get("company"))
+        if key:
+            by_company.setdefault(key, []).append(job)
+    held, extras_for = set(), {}
+    for roles in by_company.values():
+        if len(roles) <= cap:
+            continue
+        ranked = sorted(roles, key=lambda j: j.get("score", 0), reverse=True)  # stable: ties keep their order
+        extras = ranked[cap:]
+        held |= {id(j) for j in extras}
+        extras_for[id(ranked[0])] = [{"title": j.get("title") or "Unknown Role", "score": j.get("score", 0),
+                                      "url": j["url"], "keys": sorted(job_keys(j))} for j in extras]
+        if verbose:
+            print(f"Holding back {len(extras)} more role(s) at {ranked[0].get('company')} "
+                  f"(companies.max_roles_per_run = {cap}); they are listed on the kept one.")
+    return [{**job, "also_open": extras_for[id(job)]} if id(job) in extras_for else job
+            for job in jobs if id(job) not in held]
+
+
+def also_open_text(job: dict) -> str:
+    """'Also open at this company: Title (92%); ...' for a job carrying held-back roles, else ''."""
+    extras = job.get("also_open") or []
+    if not extras:
+        return ""
+    return "Also open at this company: " + "; ".join(f"{e['title']} ({e['score']}%)" for e in extras)
 
 
 def record_exported(jobs: list[dict]) -> None:
-    """Blocklist the URLs and role keys of jobs written to Notion or an export, so they are not output again."""
+    """Blocklist the URLs and role keys of jobs written to Notion or an export, so they are not output again.
+    Roles held back by companies.max_roles_per_run (`also_open`) are blocklisted with the job they ride on."""
     if not jobs:
         return
-    append_to_blocklist([j["url"] for j in jobs])
-    append_to_role_blocklist(k for j in jobs for k in job_keys(j))
+    extras = [e for j in jobs for e in j.get("also_open") or []]
+    append_to_blocklist([j["url"] for j in jobs] + [e["url"] for e in extras])
+    append_to_role_blocklist([k for j in jobs for k in job_keys(j)] + [k for e in extras for k in e["keys"]])
 
 
 def is_blocked(job: dict, blocked_urls: set[str], blocked_roles: set[str]) -> bool:

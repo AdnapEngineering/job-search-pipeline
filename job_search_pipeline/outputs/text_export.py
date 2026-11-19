@@ -23,6 +23,7 @@ def format_job(job: dict) -> str:
         ("Link", job.get("url")),
     )
     lines.extend(f"    {label}: {value}" for label, value in details if value)
+    lines.extend(f"    Also open: {e['title']} ({e['score']}%) {e['url']}" for e in job.get("also_open") or [])
     return "\n".join(lines)
 
 
