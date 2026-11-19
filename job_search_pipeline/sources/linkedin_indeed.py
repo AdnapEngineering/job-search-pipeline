@@ -1,6 +1,6 @@
-"""Stage 1 source: LinkedIn and Indeed via python-jobspy.
+"""Stage 1 source: LinkedIn, Indeed and (when sources.searches lists it) Glassdoor via python-jobspy.
 
-Both sites are scraped in parallel threads. LinkedIn job-detail pages are cached on
+The sites are scraped in parallel threads. LinkedIn job-detail pages are cached on
 disk between runs to avoid HTTP 429s, and rows without a verifiable remote/local
 location are kept only when the JD text supports it.
 """
@@ -57,6 +57,10 @@ _FOCUS_AREA_RES = {f: term_regex(f, allow_suffix=True) for f in _FOCUS_AREAS}
 
 SEARCH_TERMS = _SOURCES_CFG["search_terms"]
 SEARCHES = [tuple(s) for s in _SOURCES_CFG["searches"]]
+# jobspy sites this module scrapes; ZipRecruiter and Google Jobs answer 403 / nothing without proxies
+JOBSPY_SITES = ("linkedin", "indeed", "glassdoor")
+# Sites that block bursts: pause between their queries and stop asking after the first block
+THROTTLED_SITES = ("linkedin", "glassdoor")
 LINKEDIN_PAUSE_SECONDS = int(_SOURCES_CFG["linkedin_pause_seconds"])
 COUNTRY_INDEED = _SOURCES_CFG["country_indeed"]
 
@@ -198,7 +202,7 @@ def _install_linkedin_details_cache():
 
 
 class _ErrorCounter(logging.Handler):
-    """Counts jobspy ERROR records (LinkedIn 429s are logged, not raised)."""
+    """Counts jobspy ERROR records (429s and 403 blocks are logged, not raised)."""
     def __init__(self):
         super().__init__(level=logging.ERROR)
         self.count = 0
@@ -206,7 +210,8 @@ class _ErrorCounter(logging.Handler):
 
     def emit(self, record):
         self.count += 1
-        if "429" in record.getMessage():
+        message = record.getMessage()
+        if "429" in message or "blocked" in message:
             self.rate_limited += 1
 
 
@@ -329,15 +334,15 @@ def _scrape_site(site, lookback_hours, terms):
                     job = _row_to_job(row, counts)
                     if job:
                         jobs.append(job)
-            if site == "linkedin" and counter.rate_limited:
-                # A 429 block lasts well past this run, and every later query would spend ~2 minutes in
+            if site in THROTTLED_SITES and counter.rate_limited:
+                # A block lasts well past this run, and every later query would spend ~2 minutes in
                 # jobspy's retries before coming back empty, so stop asking.
                 skipped = len(queries) - i - 1
                 if skipped:
-                    print(f"  linkedin: rate-limited (429); skipping the remaining {skipped} queries this run",
+                    print(f"  {site}: rate-limited or blocked; skipping the remaining {skipped} queries this run",
                           file=sys.stderr)
                 break
-            if site == "linkedin":
+            if site in THROTTLED_SITES:
                 time.sleep(LINKEDIN_PAUSE_SECONDS)
     finally:
         logger.removeHandler(counter)
@@ -347,10 +352,20 @@ def _scrape_site(site, lookback_hours, terms):
                   "dropped": counts.get("dropped", {})}
 
 
+def searched_sites(searches=None):
+    """The jobspy sites sources.searches names, in JOBSPY_SITES order; unknown names are reported and skipped."""
+    named = {s[0] for s in (SEARCHES if searches is None else searches)}
+    for unknown in sorted(named - set(JOBSPY_SITES)):
+        print(f"WARNING: sources.searches names {unknown!r}, which is not one of {', '.join(JOBSPY_SITES)}; "
+              "skipping it", file=sys.stderr)
+    return [site for site in JOBSPY_SITES if site in named]
+
+
 def fetch_indeed_jobs(lookback_hours=LOOKBACK_DAYS * 24, stats=None, terms=None):
     terms = terms or SEARCH_TERMS
-    with ThreadPoolExecutor(max_workers=2) as pool:
-        futures = {site: pool.submit(_scrape_site, site, lookback_hours, terms) for site in ("linkedin", "indeed")}
+    sites = searched_sites()
+    with ThreadPoolExecutor(max_workers=max(1, len(sites))) as pool:
+        futures = {site: pool.submit(_scrape_site, site, lookback_hours, terms) for site in sites}
         results = {site: f.result() for site, f in futures.items()}
 
     scraped_jobs, seen = [], set()

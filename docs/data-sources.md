@@ -125,11 +125,12 @@ curl -sL "https://hn.algolia.com/api/v1/items/<OBJECT_ID>" \
 
 </details>
 
-## LinkedIn and Indeed
+## LinkedIn, Indeed and Glassdoor
 
 - Used in: [`sources/linkedin_indeed.py`](../job_search_pipeline/sources/linkedin_indeed.py)
-- Queries LinkedIn and Indeed in parallel threads via [`python-jobspy`](https://github.com/Bunsly/JobSpy) using the `sources.search_terms` and `sources.searches` arrays in `config.json`.
-- Caches LinkedIn job detail pages in `data/linkedin_details_cache.json` across runs to avoid `HTTP 429` rate limits and extracts `job_url_direct` when an offsite company ATS link is available.
+- Queries each site that `sources.searches` names (`linkedin`, `indeed`, `glassdoor`) in parallel threads via [`python-jobspy`](https://github.com/speedyapply/JobSpy), once per `sources.search_terms` entry. Glassdoor is off until you add a search for it, e.g. `["glassdoor", "United States", " remote", 30]`. jobspy's other sites are not supported: ZipRecruiter and Google Jobs return 403 or nothing without proxies, and the rest are regional boards.
+- Caches LinkedIn job detail pages (description, pay, seniority) in `data/linkedin_details_cache.json` across runs to avoid `HTTP 429` rate limits, and uses `job_url_direct` when a site gives an offsite company ATS link.
+- LinkedIn and Glassdoor queries are spaced `linkedin_pause_seconds` apart, and the first 429 or 403 block from either site skips its remaining queries for the run (a source warning says how many).
 
 ## Job descriptions from ATS APIs
 

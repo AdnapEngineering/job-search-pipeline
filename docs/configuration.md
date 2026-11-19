@@ -15,7 +15,7 @@ Create it first if you have not already (`cp config.example.json config.json`, o
 | Section | What to set |
 | :--- | :--- |
 | `paths` | Where data files (`filtered_jobs`, `enriched_jobs`, `blocklist`, `review_cache`, `llm_spend`, `text_export`, `html_digest`, `digest_store`, ...) and `candidate_profile` live. Relative paths resolve from the repository directory; `~` is expanded. |
-| `sources` | `lookback_days`, LinkedIn/Indeed `search_terms` and `searches` (`[site, location, suffix, count]`), the `*_enabled` switches, the `jobicy_url` industry parameter, `himalayas_max_pages`, and the We Work Remotely `wwr_feeds` RSS list. |
+| `sources` | `lookback_days`, LinkedIn/Indeed/Glassdoor `search_terms` and `searches` (`[site, location, suffix, count]`, site one of `linkedin`, `indeed`, `glassdoor`), the `*_enabled` switches, the `jobicy_url` industry parameter, `himalayas_max_pages`, and the We Work Remotely `wwr_feeds` RSS list. |
 | `location` | `allow_remote`, your metro (`local_metro_patterns`, `local_metro_exclude_patterns`), `home_states` / `home_timezones` for state- or zone-limited remote roles, and the foreign-place lists. See [Location rules](#location-rules). |
 | `compensation` | `min_salary` (annual USD floor; `min_salary: 0` disables pay filtering), `pay_midpoint_max_cap` and `pay_midpoint_penalty`, and `pay_floor_taper_from` to soften the floor's cap.<sup>1</sup> |
 | `experience` | `max_min_yoe` (most years a JD may ask), `max_min_secondary_yoe`, `reject_clearance` with `clearance_ignore_terms` (e.g. `["public trust"]`), and `reject_foreign_language_req`.<sup>2</sup> |

@@ -108,6 +108,39 @@ class LinkedInRateLimitTests(unittest.TestCase):
         self.assertEqual(calls, ["A remote", "B remote"])
         self.assertEqual((stats["rate_limited"], stats["skipped_queries"]), (1, 6))
 
+    def test_a_glassdoor_block_stops_its_remaining_queries(self):
+        calls = []
+
+        def fake_scrape(**kwargs):
+            calls.append(kwargs["search_term"])
+            logging.getLogger("jobspy.glassdoor").error("response status code 403 (blocked: use a proxy)")
+            return pd.DataFrame()
+
+        with patch.object(fi, "scrape_jobs", fake_scrape), \
+                patch.object(fi, "SEARCHES", [("glassdoor", "United States", " remote", 10)]), \
+                patch.object(fi, "LINKEDIN_PAUSE_SECONDS", 0), contextlib.redirect_stderr(io.StringIO()):
+            _, stats = fi._scrape_site("glassdoor", 72, ["A", "B", "C"])
+        self.assertEqual(calls, ["A remote"])
+        self.assertEqual((stats["rate_limited"], stats["skipped_queries"]), (1, 2))
+
+
+class JobspySiteTests(unittest.TestCase):
+    def test_sites_come_from_searches_and_unknown_ones_are_skipped(self):
+        searches = [("indeed", "Remote", "", 10), ("glassdoor", "United States", " remote", 10),
+                    ("zip_recruiter", "United States", "", 10), ("indeed", "Portland, OR", "", 10)]
+        with contextlib.redirect_stderr(io.StringIO()) as err:
+            self.assertEqual(fi.searched_sites(searches), ["indeed", "glassdoor"])
+        self.assertIn("zip_recruiter", err.getvalue())
+
+    def test_glassdoor_rows_are_aggregator_links_and_keep_their_site(self):
+        from job_search_pipeline.urls import is_aggregator_url
+        self.assertTrue(is_aggregator_url("https://www.glassdoor.com/job-listing/j?jl=1010329103280"))
+        row = {"site": "glassdoor", "job_url": "https://www.glassdoor.com/job-listing/j?jl=1", "title": "Frontend Engineer",
+               "company": "Acme", "location": "Remote", "is_remote": True,
+               "description": "Fully remote in the US. Build React and TypeScript apps. " * 5}
+        job = fi._row_to_job(pd.Series(row))
+        self.assertEqual(job["ats"], "Glassdoor")
+
 
 class FeedOutageTests(unittest.TestCase):
     def run_main(self, feed_error):

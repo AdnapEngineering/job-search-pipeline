@@ -220,7 +220,7 @@ DEFAULTS = {
     "url_normalization": {
         "aggregator_hosts": [
             "indeed.com", "linkedin.com", "news.ycombinator.com", "remoteok.com", "remotive.com", "jobicy.com",
-            "himalayas.app", "weworkremotely.com",
+            "himalayas.app", "weworkremotely.com", "glassdoor.com",
         ],
         "extra_tracking_params": [],
     },
