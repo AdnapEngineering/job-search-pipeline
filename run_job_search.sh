@@ -47,6 +47,13 @@ echo "==========================================" | tee -a "$LOG_FILE"
 
 cd "$SCRIPT_DIR"
 
+# With uv installed, bring .venv in line with uv.lock first (a no-op when it already is), so a pull that
+# changes the lock reaches cron on its next run; on failure, run with the environment as it stands
+if command -v uv >/dev/null 2>&1 && [ -f uv.lock ]; then
+  uv sync --locked --quiet 2>&1 | tee -a "$LOG_FILE" \
+    || echo "WARNING: uv sync failed; running with the existing environment" | tee -a "$LOG_FILE"
+fi
+
 # Use the virtualenv from the README's install steps when present; cron does not activate it
 PYTHON="${SCRIPT_DIR}/.venv/bin/python"
 [ -x "$PYTHON" ] || PYTHON="python3"

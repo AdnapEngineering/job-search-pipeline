@@ -1027,6 +1027,7 @@ def evaluate_jobs(input_path, output_path=None):
     evaluated_matches = []
     manual_reviews = []
     location_filtered = []
+    title_near_misses = []
     drops = {}
 
     for j in jobs:
@@ -1041,6 +1042,17 @@ def evaluate_jobs(input_path, output_path=None):
                     "url": j.get("url", "#"),
                     "phrase": rejection["detail"],
                 })
+            elif rejection["rejected_by"] == "title":
+                # Title rules run before scoring, so a pattern that is too broad drops strong roles silently
+                score, _ = score_breakdown(j)
+                if score >= STRONG_FLOOR:
+                    title_near_misses.append({
+                        "company": str(j.get("company") or "Unknown").strip().title(),
+                        "title": j.get("title") or "Unknown Role",
+                        "score": score,
+                        "url": j.get("url", "#"),
+                        "detail": rejection["detail"],
+                    })
             continue
 
         company = str(j.get("company") or "").strip()
@@ -1076,11 +1088,17 @@ def evaluate_jobs(input_path, output_path=None):
         unique_filtered.setdefault(_dedupe_key(e), e)
     location_filtered = [e for key, e in unique_filtered.items() if key not in seen_roles]
 
+    unique_near = {}
+    for e in sorted(title_near_misses, key=lambda e: e["score"], reverse=True):
+        unique_near.setdefault(_dedupe_key(e), e)
+    title_near_misses = [e for key, e in unique_near.items() if key not in seen_roles]
+
     result = {
         "total_evaluated": len(jobs),
         "top_matches": evaluated_matches,
         "manual_reviews": manual_reviews,
         "location_filtered": location_filtered,
+        "title_near_misses": title_near_misses,
         "dropped_by_rule": drop_funnel(drops),
     }
 
@@ -1156,7 +1174,22 @@ def generate_markdown(result, limit=25):
             phrase = r['phrase'].replace('|', '/')[:140]
             lines.append(f"| {_cell(r['company'])} | {_cell(r['title'])} | {r['score']}% | \"{phrase}\" | [Apply]({r['url']}) |")
 
-    funnel = [*result.get("prefilter_drops", []), *result.get("dropped_by_rule", [])]
+    near_misses = result.get("title_near_misses", [])
+    if near_misses:
+        lines.extend([
+            "",
+            f"<details><summary>Dropped by a Title Rule Despite a Keyword Score of {STRONG_FLOOR}%+ "
+            f"({len(near_misses)})</summary>",
+            "",
+            "| Company | Title | Keyword % | Rule | Link |",
+            "|---|---|---|---|---|"
+        ])
+        for r in near_misses:
+            lines.append(f"| {_cell(r['company'])} | {_cell(r['title'])} | {r['score']}% | {_cell(r['detail'])} "
+                         f"| [Apply]({r['url']}) |")
+        lines.extend(["", "</details>"])
+
+    funnel =[*result.get("prefilter_drops", []), *result.get("dropped_by_rule", [])]
     if funnel:
         lines.extend([
             "",

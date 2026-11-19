@@ -9,15 +9,23 @@ description = "Fetch, filter, score and AI-review job postings against your prof
 readme = "README.md"
 license = { file = "LICENSE" }
 requires-python = ">=3.10"
-dynamic = ["dependencies", "optional-dependencies"]
+# Exact versions live in uv.lock; `uv sync` installs them, `pip install -e .` resolves these ranges instead
+dependencies = [
+    "aiohttp>=3.9.0",
+    "beautifulsoup4>=4.12.0",
+    "pandas>=2.0.0",
+    # LinkedIn/Indeed scraping breaks often across jobspy releases; test before raising this bound
+    "python-jobspy>=1.1.0,<1.2",
+    "requests>=2.31.0",
+]
+
+[dependency-groups]
+# Installed by `uv sync` (skip with --no-dev); pinned to the version CI uses
+dev = ["ruff==0.15.20"]
 
 [project.scripts]
 # Optional: `pip install -e .` adds this command; `python3 -m job_search_pipeline` works without installing
 job-search = "job_search_pipeline.__main__:main"
-
-[tool.setuptools.dynamic]
-dependencies = { file = ["requirements.txt"] }
-optional-dependencies = { dev = { file = ["requirements-dev.txt"] } }
 
 [tool.setuptools.packages.find]
 include = ["job_search_pipeline*"]

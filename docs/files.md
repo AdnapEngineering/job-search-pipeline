@@ -12,8 +12,8 @@ job-search-pipeline/
 ├── run_job_search.sh         cron wrapper
 ├── config.example.json       every setting, with defaults; copy to config.json to start
 ├── candidate_profile.example.md
-├── pyproject.toml            package metadata, ruff settings
-└── requirements.txt          runtime dependencies (requirements-dev.txt: ruff)
+├── pyproject.toml            package metadata, dependency ranges, ruff settings
+└── uv.lock                   the exact dependency versions `uv sync`, cron and CI install
 ```
 
 Your own files sit next to these, ignored by git: `config.json`, `candidate_profile.md`, `.env` and `data/` (run data, the cron log and the latest summary).
@@ -22,13 +22,15 @@ Your own files sit next to these, ignored by git: `config.json`, `candidate_prof
 
 | File | Purpose |
 | :--- | :--- |
-| [`run_job_search.sh`](../run_job_search.sh) | Shell wrapper that runs `.venv`'s Python when present, with a concurrency lock (`flock`, or a `mkdir` lock on macOS); appends each run to `data/cron_job_search.log`, trimmed to its newest half past 5 MB. |
+| [`run_job_search.sh`](../run_job_search.sh) | Shell wrapper that runs `uv sync --locked` when uv is installed and then `.venv`'s Python when present, with a concurrency lock (`flock`, or a `mkdir` lock on macOS); appends each run to `data/cron_job_search.log`, trimmed to its newest half past 5 MB. |
 | [`config.example.json`](../config.example.json) | Tracked template for the career-agnostic configuration (sources, locations, pay, titles, skills, LLM rubric). |
 | `config.json` | Your own copy of the template, ignored by git; this is the file the pipeline reads and the one you edit. |
 | `config.draft.json` | Written by `--init-config` for you to review, ignored by git; the pipeline never reads it. |
 | [`candidate_profile.example.md`](../candidate_profile.example.md) | Tracked template for the candidate profile. |
 | `candidate_profile.md` | Your own copy of the template, ignored by git; read by `review.py` during Stage 4 rubric grading. |
-| [`pyproject.toml`](../pyproject.toml) | Package metadata (dependencies come from `requirements.txt`), the optional `job-search` command for `pip install -e .`, and ruff settings. |
+| [`pyproject.toml`](../pyproject.toml) | Package metadata, the runtime dependency ranges and the `dev` group (ruff), the optional `job-search` command, and ruff settings. |
+| [`.python-version`](../.python-version) | The Python `uv sync` builds `.venv` with (3.12: jobspy pins numpy 1.26.3, which has no 3.13 wheel). |
+| [`uv.lock`](../uv.lock) | The exact versions of every dependency, written by `uv lock`; `uv sync`, `run_job_search.sh` and CI install from it. |
 | [`tests/`](../tests) | Unit and regression tests, run against the generic `tests/fixtures/search_config.json`. |
 | [`docs/`](../docs) | These pages, and the README's image (`digest.png` is rendered from made-up data). |
 

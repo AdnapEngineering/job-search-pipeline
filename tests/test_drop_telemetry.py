@@ -93,6 +93,22 @@ class StructuredRejectionTests(unittest.TestCase):
         self.assertEqual({d["rule"]: d["count"] for d in out["dropped_by_rule"]}, {"jd_logistics": 1})
         self.assertEqual(len(out["top_matches"]), 1)
 
+    def test_strong_roles_dropped_by_a_title_rule_are_listed_once(self):
+        strong_desc = (" Build accessible payments SaaS with React, TypeScript, GraphQL, Node.js, SQL and AWS on our"
+                       " design system." * 12)
+        excluded = job(title="Frontend Engineer, Backend Tools", desc=strong_desc)
+        self.assertGreaterEqual(ev.score_breakdown(excluded)[0], ev.STRONG_FLOOR)
+        jobs = [excluded, dict(excluded, url="https://example.com/acme/repost"),
+                job(title="Account Executive", desc="Sell things." * 20)]
+        with tempfile.TemporaryDirectory() as tmp:
+            path = os.path.join(tmp, "enriched.json")
+            with open(path, "w") as f:
+                json.dump(jobs, f)
+            out = ev.evaluate_jobs(path)
+        self.assertEqual({d["rule"]: d["count"] for d in out["dropped_by_rule"]}, {"title": 3})
+        self.assertEqual([(e["title"], e["detail"]) for e in out["title_near_misses"]],
+                         [("Frontend Engineer, Backend Tools", 'matches titles.exclude_role_patterns "\\bbackend\\b"')])
+
 
 class PrefilterReasonTests(unittest.TestCase):
     def test_reasons_follow_the_check_order(self):
@@ -142,6 +158,16 @@ class FunnelOutputTests(unittest.TestCase):
         data = digest.page_data({"dropped_by_rule": FUNNEL}, {}, "now", 80)
         self.assertEqual(data["drops"][0]["count"], 4)
         self.assertIn("Dropped by deterministic rules", digest.render_html(data))
+
+    def test_title_near_misses_reach_the_summary_and_the_digest(self):
+        near = [{"company": "Acme", "title": "Fullstack Engineer - Embedded Payments", "score": 100,
+                 "url": "https://example.com/2", "detail": 'matches titles.exclude_role_patterns "\\bembedded\\b"'}]
+        md = ev.generate_markdown({"top_matches": [], "title_near_misses": near})
+        self.assertIn(f"Dropped by a Title Rule Despite a Keyword Score of {ev.STRONG_FLOOR}%+ (1)", md)
+        self.assertIn("| Acme | Fullstack Engineer - Embedded Payments | 100% |", md)
+        data = digest.page_data({"title_near_misses": near}, {}, "now", 80)
+        self.assertEqual(data["title_near_misses"][0]["detail"], near[0]["detail"])
+        self.assertNotIn("Dropped by a Title Rule", ev.generate_markdown({"top_matches": []}))
 
 
 class ExplainTests(unittest.TestCase):

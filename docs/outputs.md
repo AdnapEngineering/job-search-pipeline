@@ -115,7 +115,7 @@ Each run appends a timestamped block containing only matches at or above `--min-
 
 Roles are matched by `company|title`, and also by JD text plus title, so the same posting under another company name (a brand and its parent, a reposter) is one role. Exported roles are added to the same URL and role blocklists (`data/blocklist.json`, `data/blocklist_roles.json`) that Notion sync uses, so a role is written once and reposts on other boards are skipped. If Notion or Obsidian is also active, that output handles the blocklisting instead, so a role that fails to reach it is retried on the next run (and may appear in the `.txt` again). To re-export everything from scratch, delete those two blocklist files.
 
-For other formats, `--md-output PATH` writes the full Markdown table (matches, manual reviews, AI skips, location drops, drop counts per rule), overwritten each run. `data/evaluated_jobs.json` holds the raw Stage 3 results as JSON for custom integrations.
+For other formats, `--md-output PATH` writes the full Markdown table (matches, manual reviews, AI skips, location drops, title-rule near misses, drop counts per rule), overwritten each run. `data/evaluated_jobs.json` holds the raw Stage 3 results as JSON for custom integrations.
 
 ## HTML digest
 
@@ -125,7 +125,7 @@ Every run writes `data/digest.html`, a single page with no external scripts that
 xdg-open data/digest.html   # macOS: open data/digest.html
 ```
 
-It lists matches in three groups: **New this run**, **Still open** (seen before and again now), and **Earlier** (no longer in the run because the posting closed, was reposted, or was already sent to Notion or the `.txt` export; kept for `keep_days`). Each card shows the Match %, the AI verdict and reason, the gaps, and badges for third-party posters, roles already in Notion, and held reviews. Search, a minimum-match filter and a "hide third-party" toggle sit at the top. Below the matches are this run's AI-filtered roles, location drops, failed scrapes and the [drop counts per rule](usage.md#why-was-a-posting-dropped), plus source counts, source warnings and AI review spend.
+It lists matches in three groups: **New this run**, **Still open** (seen before and again now), and **Earlier** (no longer in the run because the posting closed, was reposted, or was already sent to Notion or the `.txt` export; kept for `keep_days`). Each card shows the Match %, the AI verdict and reason, the gaps, and badges for third-party posters, roles already in Notion, and held reviews. Search, a minimum-match filter and a "hide third-party" toggle sit at the top. Below the matches are this run's AI-filtered roles, location drops, failed scrapes, title-rule near misses (roles a title pattern dropped although their keyword score reached `strong_floor`, a sign the pattern is too broad) and the [drop counts per rule](usage.md#why-was-a-posting-dropped), plus source counts, source warnings and AI review spend.
 
 **Mark applied** and **Hide** remember your choice in that browser only (local storage); they do not change the pipeline's blocklists. The matches behind the page are kept in `paths.digest_store` (`data/digest_matches.json`), so the page keeps matches from earlier runs even though each run only finds new ones.
 
