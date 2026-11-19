@@ -7,6 +7,7 @@
 | :--- | :--- |
 | `--check` | Check the setup and exit without running (same as `python3 -m job_search_pipeline.check`); see [Checking the setup](../README.md#checking-the-setup). |
 | `--explain URL` | Trace one posting through the Stage 1 filters, every Stage 3 rule and the score breakdown, then exit; see [Why was a posting dropped?](#why-was-a-posting-dropped). `--title`, `--company` and `--location` fill in a posting the pipeline has not seen; `--rescrape` fetches its description again. |
+| `--calibrate` | Replay the current Stage 3 rules and keyword score over the postings the AI reviewer has already graded, with no LLM calls, then exit; see [Tuning the rules against past reviews](#tuning-the-rules-against-past-reviews). |
 | `--init-config [URL ...]` | Draft the career-specific settings from `candidate_profile.md` (and up to 3 sample postings) with the AI reviewer's CLI, write them to `config.draft.json`, then exit; see [Your config and profile](../README.md#your-config-and-profile). `--init-output PATH` writes elsewhere; `--force` overwrites an existing file there. |
 | `--skip-fetch` | Skip Stage 1 (`sources/filter.py`) and reuse `data/filtered_jobs.json`. |
 | `--skip-scrape` | Skip Stage 2 (`scrape.py`) and reuse `data/enriched_jobs.json`. |
@@ -36,6 +37,23 @@ python3 -m job_search_pipeline --explain 'https://jobs.lever.co/acme/123'
 ```
 
 It prints each Stage 1 filter and Stage 3 rule with ✓ or ✗ and what matched, then the score line by line (base, title credit, each core strength and domain term with its points, each penalty) and the tier it lands in. For a dropped posting it also shows what it would have scored without the rule that dropped it, which tells you whether loosening that rule would let a good match through. A posting that passes goes on to the location-wording check and the blocklist. The posting's company, title and location come from `data/enriched_jobs.json` or `data/filtered_jobs.json` when the pipeline has seen it; for a new one the company is guessed from the URL and `--title` / `--location` fill in the rest. Quote the URL, since shells treat `?` and `&` specially. It reads your current `config.json`, so you can edit a rule and run it again to see the effect.
+
+## Tuning the rules against past reviews
+
+Every AI review is cached with its grades, so the reviews you have already paid for can tune the free Python rules:
+
+```bash
+python3 -m job_search_pipeline --calibrate
+```
+
+It matches each cached review to the saved posting (reviews whose posting has aged out of `data/` are left out) and prints:
+
+- **Keyword score vs. verdict:** APPLY / STRETCH / SKIP counts per 10-point band. If the verdicts don't improve as the score rises, the keyword score is a poor review floor; the lowest score of any APPLY or STRETCH says how low `min_review_score` can go without losing them. Reviews only exist above the floor in use when they ran, so to learn about the band below it, lower `secondary_floor` and `min_review_score` for a while.
+- **Hard rules that would drop reviewed postings today:** a rule that drops a role the reviewer rated APPLY or STRETCH is too strict (useful after editing `config.json`).
+- **Penalties:** how often each `hard_ask_penalties`, `penalized_keywords`, optional excluded skill or years penalty fires on APPLY, STRETCH and SKIP roles. A penalty that fires almost only on skips could be a hard rule; one whose skip share is at or below the overall rate is costing good roles points.
+- **Skips no rule touched:** the reviewer's blockers for skipped roles that passed every rule and drew no penalty, the candidates for new `hard_exclude_skills`, `hard_ask_penalties` or `penalized_keywords` entries.
+
+This matters most on a small AI budget (`llm_review.budget`) or none: a few runs with the review on build the labels, and rules tuned against them keep fewer poor matches in the review queue, or in the output when it runs with `--no-llm-review`.
 
 ## Troubleshooting
 

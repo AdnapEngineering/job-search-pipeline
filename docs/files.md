@@ -40,6 +40,7 @@ Your own files sit next to these, ignored by git: `config.json`, `candidate_prof
 | [`__main__.py`](../job_search_pipeline/__main__.py) | Entry point for `python3 -m job_search_pipeline` and `job-search`: loads the env files, then runs `pipeline.py`. |
 | [`env.py`](../job_search_pipeline/env.py) | Reads `$JOB_SEARCH_ENV_FILE` and `.env` into the environment. |
 | [`pipeline.py`](../job_search_pipeline/pipeline.py) | End-to-end orchestrator and CLI flags, source-health monitor, pre-LLM blocklist filter, and notifier. |
+| [`calibrate.py`](../job_search_pipeline/calibrate.py) | `--calibrate`: replays the Stage 3 rules and keyword score over the cached AI reviews and reports where they disagree. |
 | [`explain.py`](../job_search_pipeline/explain.py) | `--explain URL`: traces one posting through the Stage 1 filters, the Stage 3 rules and the score breakdown. |
 | [`init_config.py`](../job_search_pipeline/init_config.py) | `--init-config`: drafts the career-specific settings from `candidate_profile.md` with the AI reviewer's CLI and validates them into `config.draft.json`. |
 | [`check.py`](../job_search_pipeline/check.py) | Setup check (`--check`): dependencies, config typos and placeholders, profile, AI reviewer CLI, Notion database properties, Obsidian vault, outputs. |
