@@ -52,7 +52,7 @@ Delete `data/blocklist.json` and `data/blocklist_roles.json`. Every open match i
 Synced and exported roles go into the blocklists by URL and by `company|title` (so reposts stay out too), and deleting the Notion page or Obsidian note doesn't change that. Remove the role's URL from `data/blocklist.json` and its keys from `data/blocklist_roles.json`.
 
 **Why does a run take 15+ minutes?**
-Almost all of it is the LinkedIn and Indeed searches (one per search term per entry in `sources.searches`, with a pause between LinkedIn queries). The ATS feed takes under a minute and the JD scrape seconds. Trim `search_terms` or `searches` to speed it up.
+Almost all of it is the LinkedIn, Indeed and Glassdoor searches (one per search term per entry in `sources.searches`, with a pause between LinkedIn queries). The ATS feed takes under a minute and the JD scrape seconds. Trim `search_terms` or `searches` to speed it up.
 
 **Is there a shorter command?**
 `pip install -e .` adds `job-search`, which takes the same flags as `python3 -m job_search_pipeline`.

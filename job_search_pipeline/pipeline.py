@@ -34,6 +34,7 @@ FEED_STALE_HOURS = int(_SOURCES_CFG["feed_stale_hours"])
 _SOURCE_LABELS = [
     ("linkedin", "LinkedIn"),
     ("indeed", "Indeed"),
+    ("glassdoor", "Glassdoor"),
     ("jobicy", "Jobicy"),
     ("himalayas", "Himalayas"),
     ("wwr", "WWR"),
@@ -83,7 +84,7 @@ def source_health(path=SOURCE_STATS_PATH):
         parts.append(part)
         if s.get("error"):
             warnings.append(f"{label} fetch failed: {s['error']}")
-        elif key in ("linkedin", "indeed") and s.get("raw", 0) == 0:
+        elif key in ("linkedin", "indeed", "glassdoor") and s.get("raw", 0) == 0:
             warnings.append(f"{label} returned no rows at all (blocked, or jobspy needs an update?)")
     return {"line": "Sources (postings that passed filters): " + " · ".join(parts), "warnings": warnings}
 
