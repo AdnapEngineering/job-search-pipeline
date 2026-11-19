@@ -22,8 +22,8 @@ Get a first list of matches in your browser, with no Notion, AI reviewer or push
 ```bash
 git clone https://github.com/AdnapEngineering/job-search-pipeline.git
 cd job-search-pipeline
-python3 -m venv .venv && source .venv/bin/activate
-pip install -r requirements.txt
+uv sync                              # creates .venv with the locked dependencies (no uv? see Install options)
+source .venv/bin/activate
 
 cp config.example.json config.json   # then edit it (see below), or draft it with --init-config
 python3 -m job_search_pipeline --check   # flags typos and settings still at their placeholders
@@ -138,23 +138,27 @@ With `--no-llm-review` (or no AI reviewer installed), the keyword score is the M
 
 ## Setup
 
-The [Quickstart](#quickstart) covers cloning, the virtualenv, dependencies and your first config. This section covers the rest: updates, install options, secrets and the setup check ([Notion](docs/outputs.md#notion) has its own page). Python 3.10+ is required.
+The [Quickstart](#quickstart) covers cloning, dependencies and your first config. This section covers the rest: updates, install options, secrets and the setup check ([Notion](docs/outputs.md#notion) has its own page). Python 3.10+ is required.
 
 ### Updating
 
 ```bash
 git pull origin main
+uv sync              # match .venv to the pulled uv.lock (run_job_search.sh also does this on each run)
 ```
 
 Your settings live in `config.json` and your background in `candidate_profile.md`. Git ignores both, so pulling never touches them. New settings arrive in the tracked template `config.example.json`; after a pull, `git diff HEAD@{1} -- config.example.json` shows what was added so you can copy the keys you want into your own file. Any key you leave out keeps its built-in default.
 
 ### Install options
 
-The Quickstart's `pip install -r requirements.txt` inside `.venv` is all a run needs; `run_job_search.sh` uses `.venv`'s Python automatically when it exists, even from cron. Two extras:
+The Quickstart's `uv sync` is all a run needs ([install uv](https://docs.astral.sh/uv/getting-started/installation/) first). It installs the exact versions pinned in `uv.lock` into `.venv`, the same ones CI tests, plus ruff for development (`uv sync --no-dev` leaves it out) and a `job-search` command, same as `python3 -m job_search_pipeline`. `run_job_search.sh` uses `.venv`'s Python automatically when it exists, even from cron, and runs `uv sync --locked` first when uv is installed, so a pull that changes `uv.lock` reaches cron on its next run.
+
+Without uv, install into a virtualenv with pip. This resolves the version ranges in `pyproject.toml` instead of the lockfile, so it can pick newer releases than CI has tested:
 
 ```bash
-pip install -e .                      # adds a `job-search` command, same as `python3 -m job_search_pipeline`
-pip install -r requirements-dev.txt   # ruff, for development (see Tests)
+python3 -m venv .venv && source .venv/bin/activate
+pip install -e .              # runtime dependencies and the `job-search` command
+pip install ruff==0.15.20     # for development (see Tests)
 ```
 
 ### Your config and profile
@@ -252,12 +256,12 @@ The ATS feed is refreshed once a day, usually between about 15:00 and 19:00 UTC;
 ### Tests
 
 ```bash
-pip install -r requirements-dev.txt   # ruff, pinned to the version CI uses
-ruff check .
-python3 -m unittest discover -s tests
+uv sync                                       # includes ruff, pinned to the version CI uses
+uv run ruff check .
+uv run python -m unittest discover -s tests
 ```
 
-GitHub Actions runs the same lint and tests on Python 3.10 and 3.13 for every pull request and push to `main` ([`.github/workflows/ci.yml`](.github/workflows/ci.yml)).
+GitHub Actions runs the same lint and tests on Python 3.10 and 3.12 (the version `.python-version` pins for `uv sync`) for every pull request and push to `main`, installing from `uv.lock` ([`.github/workflows/ci.yml`](.github/workflows/ci.yml)). It fails when `pyproject.toml` changed without a matching lockfile, so run `uv lock` after editing dependencies and commit `uv.lock` with them; `uv lock --upgrade-package NAME` moves one dependency to its newest allowed version.
 
 The tests load `tests/fixtures/search_config.json` (a made-up search) through `tests/_fixture_config.py` and write only to a temporary directory, so they pass whatever your own `config.json` says and never touch `data/`.
 

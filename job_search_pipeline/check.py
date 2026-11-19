@@ -15,7 +15,7 @@ from job_search_pipeline.env import effective_env, read_env_file  # noqa: F401  
 
 ROOT_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
-# pip package -> import name, for every runtime dependency in requirements.txt
+# pip package -> import name, for every runtime dependency in pyproject.toml
 DEPENDENCIES = {"requests": "requests", "beautifulsoup4": "bs4", "aiohttp": "aiohttp", "pandas": "pandas",
                 "python-jobspy": "jobspy"}
 
@@ -79,8 +79,8 @@ def check_python(report):
 def check_dependencies(report):
     missing = [pkg for pkg, mod in DEPENDENCIES.items() if importlib.util.find_spec(mod) is None]
     if missing:
-        report.add(FAIL, "Dependencies", f"missing {', '.join(missing)}; run `pip install -r requirements.txt` "
-                                         "(inside .venv if you made one)")
+        report.add(FAIL, "Dependencies", f"missing {', '.join(missing)}; run `uv sync` (or `pip install -e .` "
+                                         "inside a virtualenv)")
         return False
     report.add(OK, "Dependencies", "all installed")
     return True

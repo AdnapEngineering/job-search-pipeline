@@ -90,6 +90,8 @@ def page_data(eval_results, store, now, min_score, spend=None):
         "location_filtered": _rows(eval_results.get("location_filtered", []),
                                    ("company", "title", "score", "phrase", "url")),
         "manual_reviews": _rows(eval_results.get("manual_reviews", []), ("company", "title", "reason", "url")),
+        "title_near_misses": _rows(eval_results.get("title_near_misses", []),
+                                   ("company", "title", "score", "detail", "url")),
         "drops": _rows([*eval_results.get("prefilter_drops", []), *eval_results.get("dropped_by_rule", [])],
                        ("stage", "label", "count", "examples")),
         "sources": health.get("line", ""),
@@ -346,6 +348,8 @@ summary { cursor: pointer; font-weight: 600; }
     {label: "Phrase", cls: "hide-sm", cell: function (r) { return document.createTextNode(r.phrase || ""); }}]);
   table("Manual review needed (description could not be fetched)", D.manual_reviews, [role,
     {label: "Reason", cls: "hide-sm", cell: function (r) { return document.createTextNode(r.reason || ""); }}]);
+  table("Dropped by a title rule despite a strong keyword score", D.title_near_misses || [], [role, pct,
+    {label: "Rule", cls: "hide-sm", cell: function (r) { return document.createTextNode(r.detail || ""); }}]);
   function txt(key) { return function (r) { return document.createTextNode(r[key] != null ? String(r[key]) : ""); }; }
   table("Dropped by deterministic rules", D.drops || [], [
     {label: "Stage", cls: "hide-sm", cell: txt("stage")}, {label: "Rule", cell: txt("label")},
