@@ -146,15 +146,18 @@ def score_job(title, desc):
 
 
 def _install_linkedin_details_cache():
-    """Wrap jobspy's LinkedIn._get_job_details with a disk cache keyed by job id."""
+    """Wrap jobspy's LinkedIn job-page fetch with a disk cache keyed by job id."""
     try:
         from jobspy.linkedin import LinkedIn
-        from jobspy.model import JobType
+        from jobspy.model import CompensationInterval, JobType
     except ImportError:
         return lambda: 0
-    original = getattr(LinkedIn, "_get_job_details", None)
-    if original is None:
+    # Named _fetch_details since jobspy 1.2 (_get_job_details before); a rename would silently drop the cache
+    method = next((m for m in ("_fetch_details", "_get_job_details") if hasattr(LinkedIn, m)), None)
+    if method is None:
+        print("WARNING: jobspy's LinkedIn job-page fetch was not found; the details cache is off", file=sys.stderr)
         return lambda: 0
+    original = getattr(LinkedIn, method)
 
     cutoff = datetime.now(timezone.utc).timestamp() - LI_DETAILS_CACHE_DAYS * 86400
     stored_cache = load_json(LI_DETAILS_CACHE_PATH, default={})
@@ -169,18 +172,23 @@ def _install_linkedin_details_cache():
             details = dict(entry["details"])
             types = [JobType[n] for n in details.get("job_type") or [] if n in JobType.__members__]
             details["job_type"] = types or None
+            # jobspy copies these onto the JobPost without validation, so restore the enum it expects
+            if details.get("interval") in CompensationInterval.__members__:
+                details["interval"] = CompensationInterval[details["interval"]]
             return details
         details = original(self, job_id)
         if details.get("description"):
             stored = dict(details)
             stored["job_type"] = [t.name for t in details.get("job_type") or []]
+            if isinstance(details.get("interval"), CompensationInterval):
+                stored["interval"] = details["interval"].name
             cache[job_id] = {"fetched": datetime.now(timezone.utc).timestamp(), "details": stored}
         return details
 
-    LinkedIn._get_job_details = cached_details
+    setattr(LinkedIn, method, cached_details)
 
     def finish():
-        LinkedIn._get_job_details = original
+        setattr(LinkedIn, method, original)
         try:
             atomic_write_json(LI_DETAILS_CACHE_PATH, cache)
         except (OSError, TypeError) as e:
@@ -291,7 +299,8 @@ def _row_to_job(row, counts=None):
 
 
 def _scrape_site(site, lookback_hours, terms):
-    logger = logging.getLogger("JobSpy:LinkedIn" if site == "linkedin" else "JobSpy:Indeed")
+    # jobspy logs as "jobspy.<site>" since 1.2 ("JobSpy:LinkedIn" before); a rename hides 429s from the counter
+    logger = logging.getLogger(f"jobspy.{site}")
     counter = _ErrorCounter()
     logger.addHandler(counter)
     finish_cache = _install_linkedin_details_cache() if site == "linkedin" else (lambda: 0)
@@ -307,7 +316,7 @@ def _scrape_site(site, lookback_hours, terms):
                     results_wanted=wanted,
                     hours_old=lookback_hours,
                     country_indeed=COUNTRY_INDEED,
-                    linkedin_fetch_description=True,
+                    fetch_description=True,
                     enforce_annual_salary=True,
                 )
             except Exception as e:

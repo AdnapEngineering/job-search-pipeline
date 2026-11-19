@@ -29,7 +29,6 @@ Your own files sit next to these, ignored by git: `config.json`, `candidate_prof
 | [`candidate_profile.example.md`](../candidate_profile.example.md) | Tracked template for the candidate profile. |
 | `candidate_profile.md` | Your own copy of the template, ignored by git; read by `review.py` during Stage 4 rubric grading. |
 | [`pyproject.toml`](../pyproject.toml) | Package metadata, the runtime dependency ranges and the `dev` group (ruff), the optional `job-search` command, and ruff settings. |
-| [`.python-version`](../.python-version) | The Python `uv sync` builds `.venv` with (3.12: jobspy pins numpy 1.26.3, which has no 3.13 wheel). |
 | [`uv.lock`](../uv.lock) | The exact versions of every dependency, written by `uv lock`; `uv sync`, `run_job_search.sh` and CI install from it. |
 | [`tests/`](../tests) | Unit and regression tests, run against the generic `tests/fixtures/search_config.json`. |
 | [`docs/`](../docs) | These pages, and the README's image (`digest.png` is rendered from made-up data). |
