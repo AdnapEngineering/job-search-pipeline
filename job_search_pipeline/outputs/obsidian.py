@@ -63,6 +63,9 @@ def build_note(job: dict) -> str:
         lines.append("third_party: true")
     lines += ["status: Prospect", "tags:", f"  - {TAG}", "---", ""]
     lines += ["## Why It Matches", "", job.get("reason") or "Matches target criteria", ""]
+    if job.get("also_open"):
+        lines += ["## Also Open at This Company", ""]
+        lines += [f"- [{e['title']}]({e['url']}) ({e['score']}%)" for e in job["also_open"]] + [""]
     if job.get("url"):
         lines += [f"[Open the posting]({job['url']})", ""]
     return "\n".join(lines)

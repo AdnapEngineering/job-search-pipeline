@@ -91,6 +91,56 @@ class NotionSyncTests(_Base):
         self.assertTrue(props["Why It Matches"]["rich_text"][0]["text"]["content"].startswith("[Third-party poster]"))
 
 
+def role(company, title, score, n):
+    return {"company": company, "title": title, "score": score, "url": f"https://example.com/jobs/{n}",
+            "location": "Remote", "reason": "APPLY: fits"}
+
+
+class PerCompanyCapTests(_Base):
+    """companies.max_roles_per_run: one company's batch of roles becomes one row that names the rest."""
+
+    BATCH = [role("Bask Health", "Frontend Engineer, Sites", 92, 1), role("Globex", "Frontend Engineer", 90, 2),
+             role("Bask Health, Inc.", "Senior Frontend Engineer, EMR", 100, 3),
+             role("Bask Health", "Product Engineer, Merchant", 83, 4)]
+
+    def select(self, cap):
+        return blocklist.select_new_matches(self.BATCH, 80, verbose=False, max_per_company=cap)
+
+    def test_keeps_the_top_role_per_company_and_lists_the_rest_on_it(self):
+        out = self.select(1)
+        self.assertEqual([j["url"][-1] for j in out], ["2", "3"])  # input order kept
+        self.assertEqual([(e["title"], e["score"]) for e in out[1]["also_open"]],
+                         [("Frontend Engineer, Sites", 92), ("Product Engineer, Merchant", 83)])
+        self.assertNotIn("also_open", self.BATCH[2])  # the input job is not changed
+
+    def test_cap_of_two_keeps_two_and_zero_keeps_all(self):
+        self.assertEqual([j["score"] for j in self.select(2)], [92, 90, 100])
+        self.assertEqual(self.select(0), self.BATCH)
+
+    def test_held_back_roles_are_blocklisted_with_the_synced_one(self):
+        with patch.object(sync._session, "post", return_value=_Res(200)) as post, \
+                patch.object(blocklist, "MAX_ROLES_PER_RUN", 1):
+            urls = sync.sync_jobs_to_notion(self.BATCH, database_id="db", min_score=80)
+        self.assertEqual(urls, ["https://example.com/jobs/2", "https://example.com/jobs/3"])
+        self.assertEqual(post.call_count, 2)
+        why = post.call_args_list[1].kwargs["json"]["properties"]["Why It Matches"]["rich_text"][0]["text"]["content"]
+        self.assertEqual(why, "APPLY: fits Also open at this company: Frontend Engineer, Sites (92%); "
+                              "Product Engineer, Merchant (83%)")
+        self.assertEqual(len(blocklist.load_blocklist()), 4)
+        self.assertEqual(blocklist.select_new_matches(self.BATCH, 80, verbose=False), [])  # none trickle in later
+
+    def test_failed_sync_leaves_the_held_back_roles_open(self):
+        with patch.object(sync._session, "post", return_value=_Res(500)), \
+                patch.object(blocklist, "MAX_ROLES_PER_RUN", 1):
+            sync.sync_jobs_to_notion(self.BATCH, database_id="db", min_score=80)
+        self.assertEqual(blocklist.load_blocklist(), set())
+
+    def test_long_list_is_cut_to_notions_limit(self):
+        job = dict(match(1), also_open=[{"title": "x" * 300, "score": 90, "url": "u", "keys": []}] * 10)
+        why = sync._build_notion_payload(job, "db")["properties"]["Why It Matches"]["rich_text"][0]["text"]["content"]
+        self.assertEqual(len(why), sync.RICH_TEXT_MAX)
+
+
 class SummaryLabelTests(_Base):
     MATCHES = [match(1, 92), match(2, 75, third_party=True), match(3, 67), match(4, 95, review_failed=True)]
 

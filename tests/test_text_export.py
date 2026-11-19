@@ -43,6 +43,11 @@ class TextExportTests(unittest.TestCase):
             self.assertIn("    " + line + "\n", text)
         self.assertNotIn("Frontend Engineer 2", text)
 
+    def test_roles_held_back_by_the_company_cap_are_listed(self):
+        job = match(1, also_open=[{"title": "UI Engineer", "score": 83, "url": "https://example.com/jobs/9", "keys": []}])
+        self.assertTrue(text_export.format_job(job).endswith(
+            "\n    Also open: UI Engineer (83%) https://example.com/jobs/9"))
+
     def test_empty_fields_are_left_out(self):
         self.assertEqual(text_export.format_job({"score": 85, "company": None, "title": ""}),
                          "[85%] Unknown — Unknown Role")
