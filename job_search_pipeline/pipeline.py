@@ -10,6 +10,7 @@ from datetime import datetime, timezone
 import requests
 
 from job_search_pipeline.blocklist import is_blocked, load_blocklist, load_role_blocklist
+from job_search_pipeline.direct_links import resolve_direct_links
 from job_search_pipeline.evaluate import evaluate_jobs, generate_markdown
 from job_search_pipeline.outputs.html_digest import HTML_DIGEST_ENABLED, HTML_DIGEST_PATH, HTML_DIGEST_URL, write_digest
 from job_search_pipeline.review import PROVIDER, reason_for_notion, review_matches, spend_line
@@ -372,6 +373,10 @@ def run(args):
           + (f"{deferred} held by the AI review budget, " if deferred else "")
           + f"{tally['third_party']} from third-party posters)")
     print(f"Total manual reviews needed: {len(eval_results.get('manual_reviews', []))}")
+
+    # Glassdoor (resolve_direct_hosts) links on roles about to be written point at the employer's posting
+    if resolve_direct_links(eval_results["top_matches"], args.min_score):
+        print("Re-pointed job-board links at the employer's posting (see [direct links] above).")
 
     # 5. Export to .txt / Obsidian / Notion. Only the last active output blocklists what it wrote, so a
     # role that fails there is retried next run instead of being dropped. Obsidian never overwrites a
