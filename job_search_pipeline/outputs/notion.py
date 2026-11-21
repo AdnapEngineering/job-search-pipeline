@@ -68,7 +68,8 @@ def _build_notion_payload(job: dict, database_id: str) -> dict:
     """Build the Notion page-create payload from a job dict."""
     first_seen = job.get("first_seen")
     date_str = first_seen[:10] if first_seen else datetime.now(timezone.utc).strftime("%Y-%m-%d")
-    why = " ".join(filter(None, [job.get("reason") or "Matches target criteria", also_open_text(job)]))
+    why = " ".join(filter(None, [job.get("reason") or "Matches target criteria", also_open_text(job),
+                                 job.get("direct_link_note")]))
 
     properties = {
         "Company & Stage": {"title": [{"text": {"content": (job.get("company") or "Unknown").title()}}]},

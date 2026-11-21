@@ -156,7 +156,8 @@ def record_exported(jobs: list[dict]) -> None:
     if not jobs:
         return
     extras = [e for j in jobs for e in j.get("also_open") or []]
-    append_to_blocklist([j["url"] for j in jobs] + [e["url"] for e in extras])
+    append_to_blocklist([j["url"] for j in jobs] + [j["board_url"] for j in jobs if j.get("board_url")]
+                        + [e["url"] for e in extras])
     append_to_role_blocklist([k for j in jobs for k in job_keys(j)] + [k for e in extras for k in e["keys"]])
 
 

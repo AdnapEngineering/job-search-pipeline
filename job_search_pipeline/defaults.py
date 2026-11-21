@@ -223,6 +223,7 @@ DEFAULTS = {
             "himalayas.app", "weworkremotely.com", "glassdoor.com",
         ],
         "extra_tracking_params": [],
+        "resolve_direct_hosts": ["glassdoor.com"],
     },
     "llm_review": {
         "provider": "auto",

@@ -300,6 +300,7 @@ def _row_to_job(row, counts=None):
         "stack_detected": reasons,
         "ats": str(row.get("site") or "Indeed").capitalize(),
         "score": score,
+        **({"company_site": site} if isinstance(site := row.get("company_url_direct"), str) and site else {}),
     }
 
 
