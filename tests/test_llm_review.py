@@ -416,6 +416,11 @@ class SpendAndRepostTests(unittest.TestCase):
             self.assertAlmostEqual(review.priced_usd(usage, "openai"), 2.0)
             self.assertEqual(review.priced_usd(usage, "agy"), 0)
             self.assertIsNone(review.priced_usd(usage, "anthropic"))  # Claude reports its own cost
+        per_model = dict(per_provider, **{"cheap-model": {"input_per_mtok": 0.5, "output_per_mtok": 1}})
+        with patch.dict(review._PRICING_CFG, per_model, clear=True):
+            usage = {"input": 1_000_000, "cached": 0, "output": 100_000}
+            self.assertAlmostEqual(review.priced_usd(usage, "openai", "cheap-model"), 0.6)  # model rates win
+            self.assertAlmostEqual(review.priced_usd(usage, "openai", "other-model"), 2.0)  # else the provider's
 
     @patch("job_search_pipeline.review.subprocess.run")
     def test_spend_is_recorded_per_run_and_reported_cost_wins(self, run):
@@ -547,6 +552,46 @@ class TieredTriageFleetTests(unittest.TestCase):
         self.assertEqual(skipped[0]["verdict"], "skip")
         self.assertLessEqual(skipped[0]["score"], review.BLOCKER_CAP)
         self.assertIn("10+ years C++ kernel", skipped[0]["blockers"])
+
+    @patch("job_search_pipeline.review.subprocess.run")
+    def test_each_pass_is_tracked_and_priced_at_its_own_models_rates(self, run):
+        triage_passed = json.dumps({"status": "SUCCESS", "usage": {"input_tokens": 1_000_000, "output_tokens": 0},
+                                    "response": json.dumps({
+            "hard_reqs": 3, "level": 2, "logistics_ok": True, "third_party": False,
+            "pay_min": None, "pay_max": None, "reason": "Meets requirements", "blockers": []})})
+        deep = json.dumps({"status": "SUCCESS", "usage": {"input_tokens": 1_000_000, "output_tokens": 100_000},
+                           "response": VERDICT})
+        run.side_effect = [completed(triage_passed), completed(deep)]
+        pricing = {"fast-flash-model": {"input_per_mtok": 0.1, "output_per_mtok": 0.4},
+                   "agy": {"input_per_mtok": 2, "output_per_mtok": 10}}  # the deep model falls back to these
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "profile.md").write_text("test profile", encoding="utf-8")
+            (root / "jobs.json").write_text(json.dumps([dict(JOB, description_full=JD)]), encoding="utf-8")
+            stats = {}
+            with (patch.object(review, "PROVIDER", "agy"),
+                  patch.object(review, "DEFAULT_MODEL", "deep-pro-model"),
+                  patch.object(review, "TRIAGE_MODEL", "fast-flash-model"),
+                  patch.object(review, "WORKERS", 1),
+                  patch.object(review, "PROFILE_PATH", str(root / "profile.md")),
+                  patch.object(review, "CACHE_PATH", str(root / "cache.json")),
+                  patch.object(review, "SPEND_PATH", str(root / "spend.json")),
+                  patch.object(review, "_provider_config", return_value="/test/cli"),
+                  patch.dict(review._BUDGET_CFG, {}, clear=True),
+                  patch.dict(review._PRICING_CFG, pricing, clear=True),
+                  contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO())):
+                review.review_matches([JOB], str(root / "jobs.json"), stats=stats)
+            ledger = json.loads((root / "spend.json").read_text())
+
+        triage, deep_pass = stats["passes"]["triage"], stats["passes"]["review"]
+        self.assertEqual((triage["model"], triage["calls"], triage["tokens"]), ("fast-flash-model", 1, 1_000_000))
+        self.assertEqual((deep_pass["model"], deep_pass["calls"], deep_pass["tokens"]), ("deep-pro-model", 1, 1_100_000))
+        self.assertAlmostEqual(triage["usd"], 0.1)
+        self.assertAlmostEqual(deep_pass["usd"], 3.0)
+        self.assertAlmostEqual(stats["usd"], 3.1)
+        self.assertEqual(stats["triage_model"], "fast-flash-model")
+        self.assertEqual(ledger[0]["passes"], stats["passes"])
+        self.assertEqual(ledger[0]["triage_model"], "fast-flash-model")
 
 
     def test_triage_is_not_part_of_the_cache_key(self):
