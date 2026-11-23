@@ -170,6 +170,15 @@ def parse_args(argv=None):
     parser.add_argument("--calibrate", action="store_true",
                         help="Check the Stage 3 rules and keyword score against the cached AI reviews (no LLM "
                              "calls), then exit")
+    parser.add_argument("--auto-calibrate", action="store_true",
+                        help="Run the 3-stage calibration agent workflow (Mine -> Propose -> Replay & Verify) "
+                             "against cached AI reviews, write config.calibrated.json, then exit")
+    parser.add_argument("--calibrate-output", metavar="PATH", default=None,
+                        help="With --auto-calibrate: where to write the calibrated config (default config.calibrated.json)")
+    parser.add_argument("--apply", action="store_true",
+                        help="With --auto-calibrate: write verified rule updates directly to config.json")
+    parser.add_argument("--triage-model", type=str, default=None,
+                        help="Optional lightweight model for Pass-1 triage in Stage 4 AI review (overrides llm_review.triage_model)")
     parser.add_argument("--title", default=None, help="With --explain: the posting's title, for one not seen yet")
     parser.add_argument("--company", default=None, help="With --explain: the company (guessed from the URL otherwise)")
     parser.add_argument("--location", default=None, help="With --explain: the posting's location")
@@ -249,13 +258,20 @@ def drop_blocklisted(eval_results):
     eval_results["top_matches"] = kept
 
 
-def ai_review(eval_results, min_score):
+def ai_review(eval_results, min_score, triage_model=None):
     """Re-grade top matches against candidate_profile.md; AI-skipped roles move to eval_results['ai_skipped']."""
     print_banner(f"AI Review ({PROVIDER})")
     started = time.monotonic()
     spend = {}
-    top_matches, ai_skipped = review_matches(eval_results["top_matches"], ENRICHED_JOBS, min_score=min_score,
-                                             stats=spend)
+    import job_search_pipeline.review as rev_mod
+    old_triage = rev_mod.TRIAGE_MODEL
+    if triage_model is not None:
+        rev_mod.TRIAGE_MODEL = triage_model.strip()
+    try:
+        top_matches, ai_skipped = review_matches(eval_results["top_matches"], ENRICHED_JOBS, min_score=min_score,
+                                                 stats=spend)
+    finally:
+        rev_mod.TRIAGE_MODEL = old_triage
     if spend.get("skipped"):
         eval_results["ai_review_skipped"] = spend.pop("skipped")
     elif spend:
@@ -364,7 +380,7 @@ def run(args):
     if args.no_llm_review:
         print("\n--> [Step: AI Review] Skipped (--no-llm-review flag passed).")
     else:
-        ai_review(eval_results, args.review_min_score)
+        ai_review(eval_results, args.review_min_score, triage_model=args.triage_model)
 
     tally = match_tally(eval_results["top_matches"], args.min_score)
     deferred = sum(1 for j in eval_results["top_matches"] if j.get("review_deferred"))
@@ -456,6 +472,9 @@ def main():
     if args.calibrate:
         from job_search_pipeline.calibrate import calibrate
         sys.exit(calibrate())
+    if args.auto_calibrate:
+        from job_search_pipeline.calibrate import auto_calibrate
+        sys.exit(auto_calibrate(output=args.calibrate_output, apply_in_place=args.apply))
     if args.init_config is not None:
         from job_search_pipeline.init_config import init_config
         sys.exit(init_config(args.init_config, output=args.init_output, force=args.force))

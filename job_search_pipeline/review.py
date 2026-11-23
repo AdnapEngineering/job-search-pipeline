@@ -133,10 +133,12 @@ def _profile_text():
         return f.read()
 
 
-def _profile_hash(profile, model, provider="agy"):
+def _profile_hash(profile, model, provider="agy", triage_model=""):
     cache_input = profile + "|" + model + "|" + PROMPT + "|" + REVIEW_VERSION
     if provider != "agy":
         cache_input += "|cli|" + provider
+    if triage_model:
+        cache_input += "|triage|" + triage_model
     return hashlib.sha256(cache_input.encode()).hexdigest()[:16]
 
 
@@ -170,6 +172,31 @@ def _find_agy():
 
 PROVIDER = resolve_provider(_LLM_CFG)
 DEFAULT_MODEL = resolve_model(_LLM_CFG, PROVIDER)
+TRIAGE_MODEL = (_LLM_CFG.get("triage_model") or "").strip()
+
+TRIAGE_PROMPT = (
+    "You are running a fast Pass-1 triage on a job posting for a candidate. Decide from the text below only. "
+    "Do not use tools, browse, or read files.\n\n"
+    "CANDIDATE PROFILE\n{profile}\n\n"
+    "JOB\n"
+    "Company: {company}\n"
+    "Title: {title}\n"
+    "Location: {location}\n"
+    "Posted salary: {salary}\n"
+    "Posting text:\n{jd}\n\n"
+    "Check only hard blockers:\n"
+    f"hard_reqs (0-4): {_HARD_REQS_DESC}\n"
+    f"level (0-2): {_LEVEL_DESC}\n"
+    "logistics_ok: false if the location, hybrid/onsite requirement, or work authorization rules the candidate out.\n"
+    "third_party: true if the posting comes from a staffing agency, recruiter, consultancy placing people with "
+    "its clients, or a job aggregator rather than from the employer itself.\n"
+    "pay_min, pay_max: the lowest and highest annual base salary figures in the posting, in dollars "
+    "(null when the posting gives none; hourly rates times 2080).\n\n"
+    "Reply with one JSON object and nothing else, in this shape:\n"
+    "{{\"hard_reqs\": 0, \"level\": 0, \"logistics_ok\": true, \"third_party\": false, \"pay_min\": null, \"pay_max\": null, "
+    "\"reason\": \"one plain sentence, under 160 characters, naming the deciding blocker if any\", "
+    "\"blockers\": [\"short phrases for each hard gap, empty if none\"]}}"
+)
 
 
 def _norm_quote(text):
@@ -432,6 +459,76 @@ def _cli_response(executable, provider, model, prompt, timeout=None):
     if not isinstance(response, str):
         raise ValueError("CLI returned no text")
     return response, usage
+
+
+def _parse_triage(text, salary=None):
+    """Parse Pass-1 triage JSON; returns (blocked_verdict_dict_or_None, parsed_ok_bool).
+    When the posting has a hard blocker (hard_reqs == 0, logistics_ok is False, pay below floor, or hidden
+    third-party), returns a full skip verdict dict so Pass 2 is skipped. When the posting passes Pass 1,
+    returns (None, True) so Pass 2 grades the full 12-point rubric."""
+    text = re.sub(r"```(?:json)?", "", text or "")
+    start, end = text.find("{"), text.rfind("}")
+    if start < 0 or end <= start:
+        return None, False
+    try:
+        obj = json.loads(text[start:end + 1])
+    except ValueError:
+        return None, False
+    try:
+        hard_reqs = max(0, min(COMPONENTS["hard_reqs"], int(obj.get("hard_reqs"))))
+        level = max(0, min(COMPONENTS["level"], int(obj.get("level", COMPONENTS["level"]))))
+    except (TypeError, ValueError):
+        return None, False
+    logistics_ok = obj.get("logistics_ok") is not False
+    third_party = obj.get("third_party") is True
+    pay = _pay_band(obj, salary)
+    pay_blocked = _below_pay_floor(pay) and pay_floor_cap(pay) < STRETCH_MIN
+    if hard_reqs > 0 and logistics_ok and not pay_blocked and not (HIDE_THIRD_PARTY and third_party):
+        return None, True
+    parts = {"hard_reqs": hard_reqs, "core_work": 0, "evidence": 0, "level": level}
+    score, verdict = score_components(parts, logistics_ok, pay)
+    blockers = obj.get("blockers") or []
+    blockers = [str(b)[:60] for b in blockers][:6] if isinstance(blockers, list) else []
+    if _below_pay_floor(pay):
+        blockers.append(f"pay tops out at ${pay[1] / 1000:.0f}k")
+    return {
+        "verdict": "skip",
+        "score": min(score, BLOCKER_CAP),
+        "components": dict(parts, logistics_ok=logistics_ok),
+        "evidence_quote": "",
+        "third_party": third_party,
+        "pay": list(pay) if pay else None,
+        "model_verdict": "skip",
+        "reason": str(obj.get("reason", "")).strip()[:200] or "Filtered by Pass-1 triage.",
+        "blockers": blockers,
+        "triaged_out": True,
+    }, True
+
+
+def _triage_one(executable, triage_model, profile, job, jd, salary=None, provider="agy", on_usage=None):
+    """Run Pass-1 triage with `triage_model`; returns (early_skip_result_or_None, passed_triage_bool)."""
+    jd = jd or ""
+    if len(jd) < 200:
+        return None, False
+    prompt = TRIAGE_PROMPT.format(profile=profile, company=job.get("company") or "Unknown",
+                                  title=job.get("title") or "", location=job.get("location") or "",
+                                  salary=_salary_text(salary), jd=jd)
+    try:
+        response_text, usage = _cli_response(executable, provider, triage_model, prompt)
+        if on_usage:
+            on_usage(usage)
+        early_skip, ok = _parse_triage(response_text, salary)
+        if not ok:
+            print(f"[AI review] unparseable triage reply for {job.get('company')}", file=sys.stderr)
+        return early_skip, ok
+    except subprocess.TimeoutExpired:
+        print(f"[AI review] triage timeout for {job.get('company')}", file=sys.stderr)
+    except RuntimeError as error:
+        print(f"[AI review] {provider} triage {error} for {job.get('company')}", file=sys.stderr)
+    except (OSError, ValueError) as error:
+        print(f"[AI review] {provider} triage CLI error for {job.get('company')}: {type(error).__name__}",
+              file=sys.stderr)
+    return None, False
 
 
 def _review_one(executable, model, profile, job, jd, salary=None, provider="agy", on_usage=None):
@@ -703,11 +800,27 @@ def _reuse_reposts(misses, jd_by_url, cache, phash, results):
     return todo
 
 
-def _run_reviews(todo, executable, model, profile, jd_by_url, salary_by_url, budget):
+def _run_reviews(todo, executable, model, profile, jd_by_url, salary_by_url, budget, triage_model=""):
     """Review `todo` in parallel within the budget: ({url key: result} for the reviews that succeeded,
-    {url keys deferred because a cap was reached})."""
+    {url keys deferred because a cap was reached}).
+    When `triage_model` is set, runs a two-stage fleet: Pass 1 screens all jobs in parallel with
+    `triage_model` for hard blockers, and Pass 2 runs deep grading with `model` only on survivors."""
     deferred = set()
     prompt_chars = len(profile) + len(PROMPT)
+    triage_chars = len(profile) + len(TRIAGE_PROMPT)
+
+    def run_triage(job):
+        key = _url_key(job)
+        jd = jd_by_url.get(key) or ""
+        reservation = budget.reserve(triage_chars + len(jd))
+        if reservation is None:
+            deferred.add(key)
+            return None, False
+        try:
+            return _triage_one(executable, triage_model, profile, job, jd, salary_by_url.get(key), PROVIDER,
+                               on_usage=budget.record)
+        finally:
+            budget.release(reservation)
 
     def run_one(job):
         key = _url_key(job)
@@ -722,9 +835,30 @@ def _run_reviews(todo, executable, model, profile, jd_by_url, salary_by_url, bud
         finally:
             budget.release(reservation)
 
+    results = {}
+    survivors = list(todo)
+    if triage_model and triage_model != model:
+        with ThreadPoolExecutor(max_workers=WORKERS) as pool:
+            triage_outs = list(pool.map(run_triage, todo))
+        survivors = []
+        for job, (early_skip, ok) in zip(todo, triage_outs, strict=True):
+            key = _url_key(job)
+            if key in deferred:
+                continue
+            if early_skip is not None:
+                results[key] = early_skip
+            elif ok:
+                survivors.append(job)
+            else:
+                # Fall back to deep review if triage returned an unparseable response
+                survivors.append(job)
+
     with ThreadPoolExecutor(max_workers=WORKERS) as pool:
-        outs = list(pool.map(run_one, todo))
-    return {_url_key(job): out for job, out in zip(todo, outs, strict=True) if out}, deferred
+        outs = list(pool.map(run_one, survivors))
+    for job, out in zip(survivors, outs, strict=True):
+        if out:
+            results[_url_key(job)] = out
+    return results, deferred
 
 
 def _save_cache(cache, phash, changed):
@@ -779,8 +913,8 @@ def review_matches(matches, enriched_path, min_score=55, stats=None):
             stats["skipped"] = skip_message(PROVIDER)
         return matches, []
 
-    model, profile = DEFAULT_MODEL, _profile_text()
-    phash = _profile_hash(profile, model, PROVIDER)
+    model, triage_model, profile = DEFAULT_MODEL, TRIAGE_MODEL, _profile_text()
+    phash = _profile_hash(profile, model, PROVIDER, triage_model)
     cache = load_json(CACHE_PATH, default={})
     if not isinstance(cache, dict):
         cache = {}
@@ -795,11 +929,13 @@ def review_matches(matches, enriched_path, min_score=55, stats=None):
 
     today = datetime.now().strftime("%Y-%m-%d")
     budget = Budget(*spent_on(today, load_spend()))
+    tier_note = f" (Pass-1 triage: {triage_model} -> Pass-2 deep: {model})" if triage_model and triage_model != model else f" with {model}"
     print(f"[AI review] {cache_hits} cached, {repost_hits} reposts of cached reviews, "
-          f"{len(todo)} to review with {model} via {PROVIDER}."
+          f"{len(todo)} to review{tier_note} via {PROVIDER}."
           + (f" Caps: {', '.join(f'{v:g} {k}' for k, v in budget.caps().items())}." if budget.caps() else ""))
 
-    fresh, deferred = (_run_reviews(todo, executable, model, profile, jd_by_url, salary_by_url, budget)
+    fresh, deferred = (_run_reviews(todo, executable, model, profile, jd_by_url, salary_by_url, budget,
+                                    triage_model=triage_model)
                        if todo else ({}, set()))
     for job in todo:
         key = _url_key(job)

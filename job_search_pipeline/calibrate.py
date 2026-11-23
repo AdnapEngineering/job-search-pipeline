@@ -5,12 +5,26 @@ config's keyword score, hard rules and penalties over those postings shows which
 which would drop roles it rated APPLY, how well the keyword score ranks verdicts (and so where the review floor
 belongs), and which reasons for its skips no rule catches yet. That is what lets a small AI budget, or none,
 go further: tune the Python rules against grades already paid for.
+
+With `--auto-calibrate`, runs a 3-stage agent workflow (Mine -> Propose -> Replay & Verify):
+1. Mines false-negative hard gates (that drop APPLY/STRETCH roles) and uncaught SKIP blockers.
+2. Asks the configured AI reviewer CLI to propose minimal config.json rule updates.
+3. Replays the proposed config in memory over all cached reviews to verify that no APPLY role is dropped
+   and that the SKIP catch rate improves before writing a calibrated draft (or applying with `--apply`).
 """
 import collections
+import copy
+import importlib
+import json
+import os
+import subprocess
 
-from job_search_pipeline.config import CFG, get_path, load_json
+from job_search_pipeline.config import CFG, CONFIG_PATH, ROOT_DIR, atomic_write_json, get_path, load_json
 from job_search_pipeline.evaluate import DROP_RULES, evaluate_job_traced, score_breakdown
-from job_search_pipeline.review import VERDICTS, _rescored
+from job_search_pipeline.init_config import (GROUPS, INT, INT_MAP, REGEX_LIST, ROLE_GROUPS, STR_LIST, _clean,
+                                             parse_reply)
+from job_search_pipeline.review import (CLI_NAMES, DEFAULT_MODEL, PROFILE_PATH, PROVIDER, VERDICTS, _cli_path,
+                                        _cli_response, _rescored, priced_usd)
 from job_search_pipeline.urls import normalize_url
 
 REVIEW_MIN_SCORE = int(CFG["skills_and_scoring"]["min_review_score"])
@@ -18,6 +32,66 @@ BAND = 10
 MAX_EXAMPLES = 3
 MAX_UNCAUGHT = 15
 _OPTIONAL_PREFIX = "Excluded skills offered as optional: "
+DEFAULT_CALIBRATED_OUTPUT = os.path.join(ROOT_DIR, "config.calibrated.json")
+AUTO_CALIBRATE_TIMEOUT = 300
+
+CALIBRATE_FIELDS = {
+    ("titles", "exclude_seniority_patterns"): REGEX_LIST,
+    ("titles", "exclude_tech_patterns"): REGEX_LIST,
+    ("titles", "exclude_role_patterns"): REGEX_LIST,
+    ("titles", "soft_exclude_role_patterns"): REGEX_LIST,
+    ("titles", "target_patterns"): REGEX_LIST,
+    ("titles", "strong_target_patterns"): REGEX_LIST,
+    ("titles", "primary_role_groups"): ROLE_GROUPS,
+    ("skills_and_scoring", "hard_exclude_skills"): STR_LIST,
+    ("skills_and_scoring", "avoid_keywords"): STR_LIST,
+    ("skills_and_scoring", "penalized_keywords"): INT_MAP,
+    ("skills_and_scoring", "core_strengths"): STR_LIST,
+    ("skills_and_scoring", "core_strength_weights"): INT_MAP,
+    ("skills_and_scoring", "focus_keywords"): INT_MAP,
+    ("skills_and_scoring", "focus_keyword_groups"): GROUPS,
+    ("skills_and_scoring", "min_review_score"): INT,
+    ("skills_and_scoring", "secondary_floor"): INT,
+    ("experience", "max_min_yoe"): INT,
+    ("experience", "max_min_secondary_yoe"): INT,
+}
+
+AUTO_CALIBRATE_PROMPT = """You are an automated rule-calibration agent for a job-search pipeline.
+Your goal is to propose minimal, high-precision updates to `config.json` based on empirical discrepancies
+between Stage 3 deterministic rules and Stage 4 AI reviews.
+
+Rules of calibration:
+1. NEVER drop an APPLY role: If a hard rule in `false_negative_gates` dropped an APPLY role, loosen or remove
+   the offending pattern/skill from that setting.
+2. CATCH repeated SKIP blockers: Look at `uncaught_skips` (postings the AI reviewer rated SKIP that passed
+   every deterministic rule and penalty). When the same required skill, specialty, or title word appears in
+   uncaught skips and does NOT conflict with the candidate profile, add it to:
+   - `skills_and_scoring.hard_exclude_skills` (only for unambiguous non-target languages/specialties)
+   - `skills_and_scoring.avoid_keywords` (technologies to reject when required)
+   - `skills_and_scoring.penalized_keywords` (map of lower-case term -> 5..15 points penalty)
+   - `titles.exclude_role_patterns` or `titles.exclude_tech_patterns` (word-bounded lower-case regexes)
+3. Keep all existing valid entries in any list/map you touch unless you are loosening a false-negative rule.
+   Return the COMPLETE replacement value for each config key you modify (only include keys you are changing).
+
+CANDIDATE PROFILE
+{profile}
+
+CURRENT CONFIG (relevant sections)
+{current_config}
+
+CALIBRATION TELEMETRY
+{telemetry}
+
+Reply with one JSON object and nothing else, in this shape:
+{{
+  "rationale": ["1-sentence explanation for each rule change"],
+  "changes": {{
+    "titles": {{ ...only modified keys... }},
+    "skills_and_scoring": {{ ...only modified keys... }},
+    "experience": {{ ...only modified keys... }}
+  }}
+}}
+"""
 
 
 def labeled_reviews(cache=None, jobs=None):
@@ -129,4 +203,183 @@ def report(labeled, missing, out=print):
 def calibrate():
     labeled, missing = labeled_reviews()
     report(labeled, missing)
+    return 0
+
+
+def calibration_telemetry(analysis):
+    """Structured telemetry dict of false-negative gates, penalty skip rates, and uncaught skips for the agent."""
+    false_negatives = []
+    for rule, hits in sorted(analysis["gates"].items(), key=lambda kv: -len(kv[1])):
+        non_skips = [
+            {"verdict": v, "company": j.get("company"), "title": j.get("title"), "detail": detail}
+            for v, j, detail in hits if v != "skip"
+        ]
+        if non_skips:
+            false_negatives.append({
+                "rule": rule,
+                "description": DROP_RULES.get(rule, rule),
+                "total_hits": len(hits),
+                "apply_dropped": sum(1 for v, _, _ in hits if v == "apply"),
+                "stretch_dropped": sum(1 for v, _, _ in hits if v == "stretch"),
+                "examples": non_skips[:5],
+            })
+    penalties = [
+        {"label": label, "total": len(vs), "skip_rate": round(vs.count("skip") / len(vs), 2),
+         "apply_hits": vs.count("apply"), "stretch_hits": vs.count("stretch")}
+        for label, vs in sorted(analysis["penalties"].items(), key=lambda kv: -len(kv[1]))
+    ]
+    uncaught = [
+        {"company": j.get("company"), "title": j.get("title"),
+         "blockers": [b for b in blockers if b][:4]}
+        for j, blockers in analysis["uncaught"][:30]
+    ]
+    return {
+        "lowest_apply_score": analysis["lowest_apply"],
+        "lowest_stretch_or_apply_score": analysis["lowest_stretch_or_apply"],
+        "false_negative_gates": false_negatives,
+        "penalties": penalties,
+        "uncaught_skips_count": len(analysis["uncaught"]),
+        "uncaught_skips": uncaught,
+    }
+
+
+def metrics_for_analysis(analysis, total_labeled):
+    """Summary metrics for comparing baseline vs proposed rules on the same labeled set."""
+    apply_drops = sum(1 for hits in analysis["gates"].values() for v, _, _ in hits if v == "apply")
+    stretch_drops = sum(1 for hits in analysis["gates"].values() for v, _, _ in hits if v == "stretch")
+    skip_Gate_catches = sum(1 for hits in analysis["gates"].values() for v, _, _ in hits if v == "skip")
+    return {
+        "total_labeled": total_labeled,
+        "apply_drops": apply_drops,
+        "stretch_drops": stretch_drops,
+        "skip_gate_catches": skip_Gate_catches,
+        "uncaught_skips": len(analysis["uncaught"]),
+        "lowest_apply": analysis["lowest_apply"],
+    }
+
+
+def apply_proposed_changes(base_cfg, reply):
+    """(updated_cfg, changed_keys, rationale, problems) laying validated agent changes onto `base_cfg`."""
+    updated = copy.deepcopy(base_cfg)
+    changes = reply.get("changes") if isinstance(reply.get("changes"), dict) else reply
+    changed_keys, problems = [], []
+    for (section, key), shape in CALIBRATE_FIELDS.items():
+        sec_obj = changes.get(section) if isinstance(changes, dict) else None
+        if not isinstance(sec_obj, dict) or key not in sec_obj:
+            continue
+        val = sec_obj[key]
+        if val is None:
+            continue
+        cleaned, issues = _clean(val, shape)
+        problems.extend(f"{section}.{key}: {p}" for p in issues)
+        if cleaned is not None:
+            updated.setdefault(section, {})[key] = cleaned
+            changed_keys.append(f"{section}.{key}")
+    rationale = [str(r).strip() for r in (reply.get("rationale") or []) if isinstance(r, str) and str(r).strip()]
+    return updated, changed_keys, rationale, problems
+
+
+def replay_with_config(candidate_cfg, labeled):
+    """Replay Stage 3 evaluation over `labeled` using `candidate_cfg` in-memory, restoring CFG afterwards."""
+    import job_search_pipeline.config as cfg_mod
+    import job_search_pipeline.evaluate as ev_mod
+    import job_search_pipeline.sources.filter as ff_mod
+
+    merged = cfg_mod.merge_defaults(candidate_cfg)
+    saved = copy.deepcopy(cfg_mod.CFG)
+    try:
+        cfg_mod.CFG.clear()
+        cfg_mod.CFG.update(merged)
+        importlib.reload(ff_mod)
+        importlib.reload(ev_mod)
+        return analyze(labeled)
+    finally:
+        cfg_mod.CFG.clear()
+        cfg_mod.CFG.update(saved)
+        importlib.reload(ff_mod)
+        importlib.reload(ev_mod)
+
+
+def auto_calibrate(output=None, apply_in_place=False, out=print):
+    """Run the 3-stage Auto-Calibration Agent Workflow: Mine -> Propose -> Replay & Verify."""
+    labeled, missing = labeled_reviews()
+    report(labeled, missing, out=out)
+    if not labeled:
+        return 0
+
+    baseline_analysis = analyze(labeled)
+    baseline_metrics = metrics_for_analysis(baseline_analysis, len(labeled))
+    telemetry = calibration_telemetry(baseline_analysis)
+    if not telemetry["false_negative_gates"] and not telemetry["uncaught_skips"]:
+        out("\n[Auto-Calibrate] All APPLY roles pass and all SKIP roles are already caught. No rule changes needed.")
+        return 0
+
+    executable = _cli_path(PROVIDER)
+    if not executable:
+        out(f"\n[Auto-Calibrate] The {CLI_NAMES[PROVIDER]} CLI for provider {PROVIDER!r} was not found.")
+        return 1
+
+    profile = ""
+    if os.path.exists(PROFILE_PATH):
+        with open(PROFILE_PATH, encoding="utf-8") as f:
+            profile = f.read().strip()
+
+    raw_cfg = load_json(CONFIG_PATH, default={}) or {}
+    relevant_cfg = {sec: CFG.get(sec, {}) for sec in ("titles", "skills_and_scoring", "experience")}
+    prompt = AUTO_CALIBRATE_PROMPT.format(
+        profile=profile or "(no candidate_profile.md)",
+        current_config=json.dumps(relevant_cfg, indent=2),
+        telemetry=json.dumps(telemetry, indent=2),
+    )
+
+    out(f"\n[Auto-Calibrate · Stage 2] Proposing rule updates with {PROVIDER}"
+        + (f" ({DEFAULT_MODEL})" if DEFAULT_MODEL else "") + "...")
+    try:
+        reply_text, usage = _cli_response(executable, PROVIDER, DEFAULT_MODEL, prompt, timeout=AUTO_CALIBRATE_TIMEOUT)
+    except subprocess.TimeoutExpired:
+        out(f"[Auto-Calibrate] CLI timed out after {AUTO_CALIBRATE_TIMEOUT}s.")
+        return 1
+    except (RuntimeError, OSError, ValueError) as e:
+        out(f"[Auto-Calibrate] CLI failed ({type(e).__name__}: {e}).")
+        return 1
+
+    reply = parse_reply(reply_text)
+    if not reply:
+        out("[Auto-Calibrate] Agent reply did not contain a valid JSON object.")
+        return 1
+
+    candidate_cfg, changed_keys, rationale, problems = apply_proposed_changes(raw_cfg, reply)
+    for p in problems:
+        out(f"  ! {p}")
+    if not changed_keys:
+        out("[Auto-Calibrate] Agent proposed no valid config changes.")
+        return 0
+
+    out(f"[Auto-Calibrate · Stage 3] Replaying proposed changes ({', '.join(changed_keys)}) across "
+        f"{len(labeled)} cached review(s)...")
+    proposed_analysis = replay_with_config(candidate_cfg, labeled)
+    proposed_metrics = metrics_for_analysis(proposed_analysis, len(labeled))
+
+    for r in rationale:
+        out(f"  • {r}")
+    out(f"  Replay results: APPLY drops {baseline_metrics['apply_drops']} -> {proposed_metrics['apply_drops']} · "
+        f"STRETCH drops {baseline_metrics['stretch_drops']} -> {proposed_metrics['stretch_drops']} · "
+        f"Uncaught SKIPs {baseline_metrics['uncaught_skips']} -> {proposed_metrics['uncaught_skips']} · "
+        f"Caught SKIPs {baseline_metrics['skip_gate_catches']} -> {proposed_metrics['skip_gate_catches']}")
+
+    if usage:
+        usd = usage.get("usd") if usage.get("usd") is not None else priced_usd(usage)
+        tokens = usage["input"] + usage["cached"] + usage["output"]
+        out(f"  Used {tokens:,} tokens" + (f" (${usd:.3f})" if usd is not None else ""))
+
+    if proposed_metrics["apply_drops"] > baseline_metrics["apply_drops"]:
+        out("  ✗ Rejected: proposed rules would drop more APPLY roles than the current config.")
+        return 1
+
+    target_path = os.path.abspath(CONFIG_PATH if apply_in_place else (output or DEFAULT_CALIBRATED_OUTPUT))
+    atomic_write_json(target_path, candidate_cfg, indent=2)
+    out(f"\nWrote calibrated config to {target_path}")
+    if target_path != os.path.abspath(CONFIG_PATH):
+        out(f"Review the diff with `diff -u {os.path.relpath(CONFIG_PATH)} {os.path.relpath(target_path)}` "
+            "or pass `--auto-calibrate --apply` to update config.json in place.")
     return 0

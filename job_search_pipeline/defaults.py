@@ -228,6 +228,7 @@ DEFAULTS = {
     "llm_review": {
         "provider": "auto",
         "model": "",
+        "triage_model": "",
         "agy_path": "",
         "claude_path": "",
         "codex_path": "",

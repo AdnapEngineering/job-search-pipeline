@@ -96,6 +96,8 @@ More in [`docs/`](docs):
 │ 4. AI review (review.py)                                                   │
 │    • Reuses cached reviews (also for reposts), records token/USD spend,    │
 │      and stops at the configured per-run / per-day caps.                   │
+│    • Optional two-pass fleet (triage_model): fast Pass-1 triage screens    │
+│      out hard blockers before Pass-2 runs deep 12-point rubric grading.    │
 │    • Drops roles already in Notion blocklists, and remote roles limited to │
 │      other states/time zones, before spending LLM quota.                   │
 │    • Grades each match against candidate_profile.md on a 12-point rubric:  │
@@ -239,6 +241,12 @@ python3 -m job_search_pipeline --skip-fetch --skip-scrape --no-notion --no-notif
 
 # Skip the LLM review step (use Stage 3 keyword scores only)
 python3 -m job_search_pipeline --no-llm-review --min-score 75
+
+# Two-pass AI review fleet: use a fast model for Pass-1 blocker triage before Pass-2 deep grading
+python3 -m job_search_pipeline --triage-model haiku
+
+# Auto-calibrate Stage 3 rules against cached AI reviews (Mine -> Propose -> Replay & Verify)
+python3 -m job_search_pipeline --auto-calibrate
 ```
 
 ### Cron
