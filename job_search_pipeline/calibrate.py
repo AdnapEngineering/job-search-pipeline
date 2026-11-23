@@ -9,11 +9,14 @@ go further: tune the Python rules against grades already paid for.
 With `--auto-calibrate`, runs a 3-stage agent workflow (Mine -> Propose -> Replay & Verify):
 1. Mines false-negative hard gates (that drop APPLY/STRETCH roles) and uncaught SKIP blockers.
 2. Asks the configured AI reviewer CLI to propose minimal config.json rule updates.
-3. Replays the proposed config in memory over all cached reviews to verify that no APPLY role is dropped
-   and that the SKIP catch rate improves before writing a calibrated draft (or applying with `--apply`).
+3. Replays the proposed config in memory. Guardrails on every review: no more APPLY or STRETCH drops.
+   The gain (fewer uncaught SKIPs or dropped roles) must show on a holdout the agent never saw (30% by
+   default, `--holdout`), so changes that only fit the postings it was shown are rejected. Only then is a
+   calibrated draft written (or `config.json` updated with `--apply`).
 """
 import collections
 import copy
+import hashlib
 import importlib
 import json
 import os
@@ -34,6 +37,7 @@ MAX_UNCAUGHT = 15
 _OPTIONAL_PREFIX = "Excluded skills offered as optional: "
 DEFAULT_CALIBRATED_OUTPUT = os.path.join(ROOT_DIR, "config.calibrated.json")
 AUTO_CALIBRATE_TIMEOUT = 300
+HOLDOUT_FRACTION = 0.3
 
 CALIBRATE_FIELDS = {
     ("titles", "exclude_seniority_patterns"): REGEX_LIST,
@@ -258,6 +262,64 @@ def metrics_for_analysis(analysis, total_labeled):
     }
 
 
+def _split_key(job):
+    return hashlib.sha256(normalize_url(job.get("url", "")).encode()).hexdigest()
+
+
+def split_holdout(labeled, fraction=HOLDOUT_FRACTION):
+    """(train, holdout): reviews split per verdict so the holdout gets some of each.
+
+    The agent only sees telemetry from `train`; `holdout` is kept back to check that its changes generalize
+    instead of fitting the postings it was shown. The split is by URL hash, so the same reviews always split
+    the same way. A verdict with a single review stays in train. `fraction` 0 disables the holdout.
+    """
+    if fraction <= 0:
+        return list(labeled), []
+    by_verdict = collections.defaultdict(list)
+    for item in labeled:
+        by_verdict[item[1]["verdict"]].append(item)
+    train, holdout = [], []
+    for verdict in VERDICTS:
+        group = sorted(by_verdict.get(verdict, []), key=lambda item: _split_key(item[0]))
+        n = min(len(group) - 1, max(1, round(len(group) * fraction))) if len(group) > 1 else 0
+        holdout.extend(group[:n])
+        train.extend(group[n:])
+    return train, holdout
+
+
+def _drops(m):
+    return m["apply_drops"] + m["stretch_drops"]
+
+
+def verify_proposal(base_all, prop_all, base_check, prop_check):
+    """(accepted, reasons) for a proposal: the gate between an agent's suggestion and a written config.
+
+    Guardrails on every labeled review: no more APPLY drops and no more STRETCH drops than today.
+    Gain on the check set (the holdout, or train when the holdout is off): fewer uncaught SKIPs or fewer
+    dropped APPLY/STRETCH roles. A proposal that only moves numbers on the postings the agent saw is rejected.
+    """
+    reasons = []
+    if prop_all["apply_drops"] > base_all["apply_drops"]:
+        reasons.append(f"would drop more APPLY roles ({base_all['apply_drops']} -> {prop_all['apply_drops']})")
+    if prop_all["stretch_drops"] > base_all["stretch_drops"]:
+        reasons.append(f"would drop more STRETCH roles ({base_all['stretch_drops']} -> {prop_all['stretch_drops']})")
+    if not base_check["uncaught_skips"] and not _drops(base_check):
+        reasons.append("the check set has no uncaught SKIPs or dropped roles, so no gain can be measured "
+                       "(collect more reviews, or lower --holdout)")
+    elif prop_check["uncaught_skips"] >= base_check["uncaught_skips"] and _drops(prop_check) >= _drops(base_check):
+        reasons.append(f"no gain on the check set (uncaught SKIPs {base_check['uncaught_skips']} -> "
+                       f"{prop_check['uncaught_skips']}, dropped APPLY/STRETCH {_drops(base_check)} -> "
+                       f"{_drops(prop_check)})")
+    return not reasons, reasons
+
+
+def _metrics_line(base, prop):
+    return (f"APPLY drops {base['apply_drops']} -> {prop['apply_drops']} · "
+            f"STRETCH drops {base['stretch_drops']} -> {prop['stretch_drops']} · "
+            f"Uncaught SKIPs {base['uncaught_skips']} -> {prop['uncaught_skips']} · "
+            f"Caught SKIPs {base['skip_gate_catches']} -> {prop['skip_gate_catches']}")
+
+
 def apply_proposed_changes(base_cfg, reply):
     """(updated_cfg, changed_keys, rationale, problems) laying validated agent changes onto `base_cfg`."""
     updated = copy.deepcopy(base_cfg)
@@ -300,18 +362,26 @@ def replay_with_config(candidate_cfg, labeled):
         importlib.reload(ev_mod)
 
 
-def auto_calibrate(output=None, apply_in_place=False, out=print):
+def auto_calibrate(output=None, apply_in_place=False, out=print, holdout=HOLDOUT_FRACTION):
     """Run the 3-stage Auto-Calibration Agent Workflow: Mine -> Propose -> Replay & Verify."""
+    if not 0 <= holdout < 1:
+        out(f"[Auto-Calibrate] --holdout must be at least 0 and below 1, got {holdout}.")
+        return 2
     labeled, missing = labeled_reviews()
     report(labeled, missing, out=out)
     if not labeled:
         return 0
 
-    baseline_analysis = analyze(labeled)
-    baseline_metrics = metrics_for_analysis(baseline_analysis, len(labeled))
-    telemetry = calibration_telemetry(baseline_analysis)
+    train, held = split_holdout(labeled, holdout)
+    check = held or train
+    baseline_all = metrics_for_analysis(analyze(labeled), len(labeled))
+    baseline_check = metrics_for_analysis(analyze(check), len(check))
+    telemetry = calibration_telemetry(analyze(train))
+    out(f"\n[Auto-Calibrate · Stage 1] Split {len(labeled)} review(s): {len(train)} shown to the agent, "
+        + (f"{len(held)} held out to verify." if held else "none held out (verifying on the same reviews)."))
     if not telemetry["false_negative_gates"] and not telemetry["uncaught_skips"]:
-        out("\n[Auto-Calibrate] All APPLY roles pass and all SKIP roles are already caught. No rule changes needed.")
+        out("[Auto-Calibrate] No dropped APPLY/STRETCH roles or uncaught SKIPs in the training reviews. "
+            "No rule changes needed.")
         return 0
 
     executable = _cli_path(PROVIDER)
@@ -357,24 +427,25 @@ def auto_calibrate(output=None, apply_in_place=False, out=print):
 
     out(f"[Auto-Calibrate · Stage 3] Replaying proposed changes ({', '.join(changed_keys)}) across "
         f"{len(labeled)} cached review(s)...")
-    proposed_analysis = replay_with_config(candidate_cfg, labeled)
-    proposed_metrics = metrics_for_analysis(proposed_analysis, len(labeled))
+    proposed_all = metrics_for_analysis(replay_with_config(candidate_cfg, labeled), len(labeled))
+    proposed_check = metrics_for_analysis(replay_with_config(candidate_cfg, check), len(check))
 
     for r in rationale:
         out(f"  • {r}")
-    out(f"  Replay results: APPLY drops {baseline_metrics['apply_drops']} -> {proposed_metrics['apply_drops']} · "
-        f"STRETCH drops {baseline_metrics['stretch_drops']} -> {proposed_metrics['stretch_drops']} · "
-        f"Uncaught SKIPs {baseline_metrics['uncaught_skips']} -> {proposed_metrics['uncaught_skips']} · "
-        f"Caught SKIPs {baseline_metrics['skip_gate_catches']} -> {proposed_metrics['skip_gate_catches']}")
+    out(f"  Replay results (all {len(labeled)}): {_metrics_line(baseline_all, proposed_all)}")
+    if held:
+        out(f"  Replay results (holdout {len(held)}): {_metrics_line(baseline_check, proposed_check)}")
 
     if usage:
         usd = usage.get("usd") if usage.get("usd") is not None else priced_usd(usage)
         tokens = usage["input"] + usage["cached"] + usage["output"]
         out(f"  Used {tokens:,} tokens" + (f" (${usd:.3f})" if usd is not None else ""))
 
-    if proposed_metrics["apply_drops"] > baseline_metrics["apply_drops"]:
-        out("  ✗ Rejected: proposed rules would drop more APPLY roles than the current config.")
+    accepted, reasons = verify_proposal(baseline_all, proposed_all, baseline_check, proposed_check)
+    if not accepted:
+        out("  ✗ Rejected: " + "; ".join(reasons) + ".")
         return 1
+    out("  ✓ Verified: no new APPLY/STRETCH drops, and a gain on the " + ("holdout." if held else "same reviews."))
 
     target_path = os.path.abspath(CONFIG_PATH if apply_in_place else (output or DEFAULT_CALIBRATED_OUTPUT))
     atomic_write_json(target_path, candidate_cfg, indent=2)

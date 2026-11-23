@@ -8,6 +8,7 @@ Run via Antigravity `run_workflow`:
     )
 
 Optional `Args`:
+    - "holdout" (float): share of reviews kept from the agents to verify their changes (default 0.3)
     - "apply" (bool): write verified changes directly to config.json instead of config.calibrated.json
     - "output" (str): custom output path for the calibrated config
 """
@@ -22,12 +23,16 @@ if ROOT not in sys.path:
 
 from job_search_pipeline.calibrate import (  # noqa: E402
     DEFAULT_CALIBRATED_OUTPUT,
+    HOLDOUT_FRACTION,
+    _metrics_line,
     analyze,
     apply_proposed_changes,
     calibration_telemetry,
     labeled_reviews,
     metrics_for_analysis,
     replay_with_config,
+    split_holdout,
+    verify_proposal,
 )
 from job_search_pipeline.config import CFG, CONFIG_PATH, atomic_write_json, load_json  # noqa: E402
 from job_search_pipeline.review import PROFILE_PATH  # noqa: E402
@@ -48,11 +53,14 @@ async def run_auto_calibrate():
         log("No cached reviews with saved JDs found. Run the pipeline first.")
         return
 
-    baseline_analysis = analyze(labeled)
-    baseline_metrics = metrics_for_analysis(baseline_analysis, len(labeled))
-    telemetry = calibration_telemetry(baseline_analysis)
+    train, held = split_holdout(labeled, float(WORKFLOW_ARGS.get("holdout", HOLDOUT_FRACTION)))
+    check = held or train
+    baseline_metrics = metrics_for_analysis(analyze(labeled), len(labeled))
+    baseline_check = metrics_for_analysis(analyze(check), len(check))
+    telemetry = calibration_telemetry(analyze(train))  # agents only ever see the training reviews
+    log(f"Split: {len(train)} reviews shown to the agents, {len(held)} held out to verify.")
     log(
-        f"Baseline: {baseline_metrics['apply_drops']} APPLY drops, "
+        f"Baseline (all): {baseline_metrics['apply_drops']} APPLY drops, "
         f"{baseline_metrics['stretch_drops']} STRETCH drops, "
         f"{baseline_metrics['uncaught_skips']} uncaught SKIPs, "
         f"{baseline_metrics['skip_gate_catches']} caught SKIPs."
@@ -152,17 +160,15 @@ async def run_auto_calibrate():
         log("Specialists proposed no config changes.")
         return
 
-    proposed_analysis = replay_with_config(candidate_cfg, labeled)
-    proposed_metrics = metrics_for_analysis(proposed_analysis, len(labeled))
+    proposed_metrics = metrics_for_analysis(replay_with_config(candidate_cfg, labeled), len(labeled))
+    proposed_check = metrics_for_analysis(replay_with_config(candidate_cfg, check), len(check))
 
     for r in rationale:
         log(f"• {r}")
-    log(
-        f"Replay comparison: APPLY drops {baseline_metrics['apply_drops']} -> {proposed_metrics['apply_drops']} | "
-        f"STRETCH drops {baseline_metrics['stretch_drops']} -> {proposed_metrics['stretch_drops']} | "
-        f"Uncaught SKIPs {baseline_metrics['uncaught_skips']} -> {proposed_metrics['uncaught_skips']} | "
-        f"Caught SKIPs {baseline_metrics['skip_gate_catches']} -> {proposed_metrics['skip_gate_catches']}"
-    )
+    log(f"Replay (all {len(labeled)}): {_metrics_line(baseline_metrics, proposed_metrics)}")
+    if held:
+        log(f"Replay (holdout {len(held)}): {_metrics_line(baseline_check, proposed_check)}")
+    accepted, reasons = verify_proposal(baseline_metrics, proposed_metrics, baseline_check, proposed_check)
 
     test_res = subprocess.run(
         [sys.executable, "-m", "unittest", "discover", "-s", "tests"],
@@ -173,8 +179,8 @@ async def run_auto_calibrate():
     tests_ok = test_res.returncode == 0
     log(f"Unit test suite check: {'PASSED' if tests_ok else 'FAILED'}")
 
-    if proposed_metrics["apply_drops"] > baseline_metrics["apply_drops"]:
-        log("REJECTED: Proposed changes would drop more APPLY roles than baseline.")
+    if not accepted:
+        log("REJECTED: " + "; ".join(reasons) + ".")
     elif not tests_ok:
         log(f"REJECTED: Unit tests failed:\n{test_res.stderr[-500:]}")
     else:
@@ -190,6 +196,8 @@ async def run_auto_calibrate():
             "rationale": rationale,
             "baseline_metrics": baseline_metrics,
             "proposed_metrics": proposed_metrics,
+            "baseline_holdout": baseline_check if held else None,
+            "proposed_holdout": proposed_check if held else None,
         }, indent=2))
 
 

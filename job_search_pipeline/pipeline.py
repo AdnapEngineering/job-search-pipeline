@@ -175,6 +175,9 @@ def parse_args(argv=None):
                              "against cached AI reviews, write config.calibrated.json, then exit")
     parser.add_argument("--calibrate-output", metavar="PATH", default=None,
                         help="With --auto-calibrate: where to write the calibrated config (default config.calibrated.json)")
+    parser.add_argument("--holdout", type=float, default=None, metavar="FRACTION",
+                        help="With --auto-calibrate: share of cached reviews kept from the agent to verify its "
+                             "changes generalize (default 0.3; 0 verifies on the reviews it saw)")
     parser.add_argument("--apply", action="store_true",
                         help="With --auto-calibrate: write verified rule updates directly to config.json")
     parser.add_argument("--triage-model", type=str, default=None,
@@ -474,7 +477,8 @@ def main():
         sys.exit(calibrate())
     if args.auto_calibrate:
         from job_search_pipeline.calibrate import auto_calibrate
-        sys.exit(auto_calibrate(output=args.calibrate_output, apply_in_place=args.apply))
+        sys.exit(auto_calibrate(output=args.calibrate_output, apply_in_place=args.apply,
+                                 **({} if args.holdout is None else {"holdout": args.holdout})))
     if args.init_config is not None:
         from job_search_pipeline.init_config import init_config
         sys.exit(init_config(args.init_config, output=args.init_output, force=args.force))

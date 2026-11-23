@@ -67,51 +67,114 @@ class CalibrateTests(unittest.TestCase):
         cal.report([], 0, out=lines.append)
         self.assertIn("Nothing to calibrate against yet", "\n".join(lines))
 
-    def test_auto_calibrate_proposes_replays_and_writes_calibrated_config(self):
-        proposal = json.dumps({
-            "rationale": ["Add python backend requirement to hard_exclude_skills to catch uncaught skip."],
-            "changes": {
-                "skills_and_scoring": {
-                    "hard_exclude_skills": ["c++", "rust", "golang", "c#", ".net", "ruby", "python"]
-                }
-            }
-        })
+    def _auto(self, proposal, labeled=None, **kwargs):
+        """(rc, output lines, saved config or None, prompt sent to the agent) for one auto_calibrate run."""
+        reply = (json.dumps(proposal), {"input": 500, "cached": 0, "output": 100, "usd": 0.01})
         with tempfile.TemporaryDirectory() as tmp:
             out_path = os.path.join(tmp, "config.calibrated.json")
             lines = []
-            with (patch.object(cal, "labeled_reviews", return_value=(self.labeled, 0)),
+            with (patch.object(cal, "labeled_reviews", return_value=(labeled or self.labeled, 0)),
                   patch.object(cal, "_cli_path", return_value="/bin/fake-cli"),
-                  patch.object(cal, "_cli_response", return_value=(proposal, {"input": 500, "cached": 0, "output": 100, "usd": 0.01}))):
-                rc = cal.auto_calibrate(output=out_path, out=lines.append)
-            self.assertEqual(rc, 0)
-            self.assertTrue(os.path.exists(out_path))
-            with open(out_path, encoding="utf-8") as f:
-                saved = json.load(f)
-            self.assertIn("python", saved["skills_and_scoring"]["hard_exclude_skills"])
-            text = "\n".join(lines)
-            self.assertIn("Replay results:", text)
-            self.assertIn("Wrote calibrated config", text)
+                  patch.object(cal, "_cli_response", return_value=reply) as cli):
+                rc = cal.auto_calibrate(output=out_path, out=lines.append, **kwargs)
+            saved = None
+            if os.path.exists(out_path):
+                with open(out_path, encoding="utf-8") as f:
+                    saved = json.load(f)
+        prompt = cli.call_args.args[3] if cli.call_args else ""
+        return rc, "\n".join(lines), saved, prompt
+
+    @staticmethod
+    def _skills(*extra):
+        return {"changes": {"skills_and_scoring": {
+            "hard_exclude_skills": ["c++", "rust", "golang", "c#", ".net", "ruby", *extra]}},
+            "rationale": ["test change"]}
+
+    def test_auto_calibrate_writes_a_change_that_catches_a_skip(self):
+        labeled = [(j, r) if r["verdict"] != "skip" else (job(j["title"], j["url"], DESC + PY), r)
+                   for j, r in self.labeled]
+        rc, text, saved, _ = self._auto(self._skills("django"), labeled=labeled)
+        self.assertEqual(rc, 0, text)
+        self.assertIn("django", saved["skills_and_scoring"]["hard_exclude_skills"])
+        self.assertIn("Uncaught SKIPs 1 -> 0", text)
+        self.assertIn("Verified", text)
+
+    def test_auto_calibrate_rejects_a_change_with_no_gain(self):
+        # "python" is not in any posting, so nothing new is caught: the old gate wrote this anyway
+        rc, text, saved, _ = self._auto(self._skills("python"))
+        self.assertEqual(rc, 1)
+        self.assertIsNone(saved)
+        self.assertIn("no gain on the check set", text)
 
     def test_auto_calibrate_rejects_changes_that_increase_apply_drops(self):
-        bad_proposal = json.dumps({
-            "rationale": ["Drop React roles (regression)."],
-            "changes": {
-                "skills_and_scoring": {
-                    "hard_exclude_skills": ["react"]
-                }
-            }
-        })
-        with tempfile.TemporaryDirectory() as tmp:
-            out_path = os.path.join(tmp, "config.calibrated.json")
-            lines = []
-            with (patch.object(cal, "labeled_reviews", return_value=(self.labeled, 0)),
-                  patch.object(cal, "_cli_path", return_value="/bin/fake-cli"),
-                  patch.object(cal, "_cli_response", return_value=(bad_proposal, None))):
-                rc = cal.auto_calibrate(output=out_path, out=lines.append)
-            self.assertEqual(rc, 1)
-            self.assertFalse(os.path.exists(out_path))
-            self.assertIn("Rejected: proposed rules would drop more APPLY roles", "\n".join(lines))
+        rc, text, saved, _ = self._auto(self._skills("react"))
+        self.assertEqual(rc, 1)
+        self.assertIsNone(saved)
+        self.assertIn("Rejected: would drop more APPLY roles", text)
 
+    def test_auto_calibrate_rejects_a_bad_holdout_fraction(self):
+        rc, text, _, _ = self._auto(self._skills("django"), holdout=1)
+        self.assertEqual(rc, 2)
+        self.assertIn("--holdout must be", text)
+
+    def test_auto_calibrate_hides_the_holdout_and_rejects_overfit_rules(self):
+        labeled = HOLDOUT_SET
+        train, held = cal.split_holdout(labeled)
+        held_skip = next(j for j, r in held if r["verdict"] == "skip")
+        train_skips = [j for j, r in train if r["verdict"] == "skip"]
+
+        # A rule naming only the training skips' titles fixes train but not the held-out skip
+        overfit = {"changes": {"titles": {"exclude_role_patterns": [
+            rf"\b{j['title'].lower()}\b" for j in train_skips]}}, "rationale": ["overfit"]}
+        rc, text, saved, prompt = self._auto(overfit, labeled=labeled)
+        self.assertNotIn(held_skip["title"], prompt)
+        self.assertTrue(all(j["title"] in prompt for j in train_skips))
+        self.assertEqual(rc, 1, text)
+        self.assertIsNone(saved)
+        self.assertIn("Replay results (holdout", text)
+        self.assertIn("no gain on the check set", text)
+
+        # The general rule (the skill every skip asks for) also catches the held-out skip
+        rc, text, saved, _ = self._auto(self._skills("django"), labeled=labeled)
+        self.assertEqual(rc, 0, text)
+        self.assertIn("Verified: no new APPLY/STRETCH drops, and a gain on the holdout", text)
+
+
+PY = " Requires 5+ years of Python and Django on the backend."
+HOLDOUT_SET = (
+    [(job(f"Platform Integrations Engineer {n}", f"https://example.com/s{n}", DESC + PY),
+      {"verdict": "skip", "blockers": ["Python/Django backend"]}) for n in ("alpha", "bravo", "charlie", "delta")]
+    + [(job("Frontend Engineer", f"https://example.com/a{n}"), {"verdict": "apply"}) for n in range(3)]
+    + [(job("Senior Frontend Engineer", f"https://example.com/t{n}"), {"verdict": "stretch"}) for n in range(3)]
+)
+
+
+class HoldoutTests(unittest.TestCase):
+    def test_split_is_per_verdict_and_stable(self):
+        train, held = cal.split_holdout(HOLDOUT_SET)
+        self.assertEqual(len(train) + len(held), len(HOLDOUT_SET))
+        self.assertEqual(sorted(r["verdict"] for _, r in held), ["apply", "skip", "stretch"])
+        again_train, again_held = cal.split_holdout(list(reversed(HOLDOUT_SET)))
+        self.assertEqual({j["url"] for j, _ in held}, {j["url"] for j, _ in again_held})
+
+    def test_single_review_verdicts_stay_in_train_and_zero_disables(self):
+        one_each = HOLDOUT_SET[:1] + HOLDOUT_SET[4:5] + HOLDOUT_SET[7:8]
+        train, held = cal.split_holdout(one_each)
+        self.assertEqual(({j['url'] for j, _ in train}, held), ({j['url'] for j, _ in one_each}, []))
+        self.assertEqual(cal.split_holdout(HOLDOUT_SET, 0), (HOLDOUT_SET, []))
+
+    def test_gate(self):
+        def m(apply=0, stretch=0, uncaught=0):
+            return {"apply_drops": apply, "stretch_drops": stretch, "uncaught_skips": uncaught}
+        self.assertEqual(cal.verify_proposal(m(), m(), m(uncaught=2), m(uncaught=1)), (True, []))
+        self.assertEqual(cal.verify_proposal(m(stretch=1), m(), m(stretch=1), m()), (True, []))
+        ok, why = cal.verify_proposal(m(), m(stretch=1), m(uncaught=2), m(uncaught=0))
+        self.assertFalse(ok)
+        self.assertIn("more STRETCH roles", why[0])
+        ok, why = cal.verify_proposal(m(), m(), m(uncaught=1), m(uncaught=1))
+        self.assertIn("no gain", why[0])
+        ok, why = cal.verify_proposal(m(), m(), m(), m())
+        self.assertIn("no gain can be measured", why[0])
 
 if __name__ == "__main__":
     unittest.main()
