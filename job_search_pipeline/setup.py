@@ -8,6 +8,24 @@ from job_search_pipeline.env import load_env_files
 
 ROOT_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
+# Postal codes, so "Round Rock, TX" typed into the comma-separated nearby list does not add "TX" as a local city
+US_STATE_CODES = set(
+    "AL AK AZ AR CA CO CT DE DC FL GA HI ID IL IN IA KS KY LA ME MD MA MI MN MS MO MT NE NV NH NJ NM NY NC ND OH "
+    "OK OR PA RI SC SD TN TX UT VT VA WA WV WI WY PR".split())
+
+
+def _phrase(text):
+    """A lower-case regex for `text` as a whole phrase: not inside a longer word, even when it starts or ends
+    with punctuation (".NET Developer", "C++ Developer")."""
+    return r"(?<!\w)" + re.escape(text.lower()) + r"(?!\w)"
+
+
+def _strong_phrase(text):
+    """The phrase for strong_target_patterns, which the pipeline wraps in \\b...\\b: a \\b cannot sit beside an
+    edge character such as the "." in ".NET", so a multi-word title drops its edge punctuation."""
+    trimmed = re.sub(r"^\W+|\W+$", "", text)
+    return re.escape((trimmed if " " in trimmed else text).lower())
+
 
 def _list(prompt, minimum=1):
     while True:
@@ -35,10 +53,11 @@ def _number(prompt, default):
 
 def make_config(titles, skills, city, nearby, salary, years):
     """Translate plain text answers into the existing configuration format."""
-    patterns = [re.escape(title.lower()) for title in titles]
+    patterns = [_phrase(title) for title in titles]
     searches = [["linkedin", "United States", " remote", 40], ["indeed", "Remote", "", 40]]
     location = {}
     if city:
+        nearby = [name for name in nearby if name.upper() not in US_STATE_CODES]
         local_names = [city.split(",", 1)[0].strip(), *nearby]
         local_patterns = [re.escape(name.lower()) for name in local_names]
         location = {
@@ -52,7 +71,7 @@ def make_config(titles, skills, city, nearby, salary, years):
         "location": location,
         "titles": {
             "target_patterns": patterns,
-            "strong_target_patterns": patterns,
+            "strong_target_patterns": [_strong_phrase(title) for title in titles],
             "exclude_seniority_patterns": [],
             "hn_role_pattern": "(" + "|".join(patterns) + ")",
         },
@@ -68,8 +87,8 @@ def make_config(titles, skills, city, nearby, salary, years):
 
 def main():
     load_env_files()
-    path = os.path.abspath(os.path.expanduser(
-        os.environ.get("JOB_PIPELINE_CONFIG") or os.path.join(ROOT_DIR, "config.json")))
+    # Resolved exactly as config.py does (no ~ expansion), so setup writes the file the pipeline will read
+    path = os.path.abspath(os.environ.get("JOB_PIPELINE_CONFIG") or os.path.join(ROOT_DIR, "config.json"))
     if os.path.exists(path):
         print(f"Setup stopped: {path} already exists. Your settings were not changed.")
         return 1
@@ -81,11 +100,13 @@ def main():
     try:
         titles = _list("Job titles you want (e.g. Product Manager, Project Manager): ")
         skills = _list("Your skills (at least 3, e.g. planning, communication, budgeting): ", minimum=3)
-        city = input("US city and state for local jobs (e.g. Austin, TX), or Enter for remote only: ").strip()
-        if city and not city.split(",", 1)[0].strip():
-            print("Please provide a city name. No settings were written.")
-            return 1
-        nearby = _list("Nearby cities to include, separated by commas (or Enter for none): ", minimum=0) if city else []
+        while True:
+            city = input("US city and state for local jobs (e.g. Austin, TX), or Enter for remote only: ").strip()
+            if not city or city.split(",", 1)[0].strip():
+                break
+            print("Please start with a city name, e.g. Austin, TX.")
+        nearby = _list("Nearby city names without the state, separated by commas (e.g. Round Rock, Cedar Park), "
+                       "or Enter for none: ", minimum=0) if city else []
         salary = _number("Minimum annual salary in USD (Enter for no minimum): ", 0)
         years = _number("Maximum years of experience a job may require (Enter for no limit): ", 99)
     except (EOFError, KeyboardInterrupt):
