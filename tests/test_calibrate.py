@@ -1,7 +1,11 @@
-"""--calibrate: replaying the Stage 3 rules over cached AI reviews."""
+"""--calibrate and --auto-calibrate: replaying and auto-tuning Stage 3 rules over cached AI reviews."""
 import _fixture_config  # noqa: F401  (must come before any pipeline import)
 
+import json
+import os
+import tempfile
 import unittest
+from unittest.mock import patch
 
 import job_search_pipeline.calibrate as cal
 
@@ -62,6 +66,51 @@ class CalibrateTests(unittest.TestCase):
         lines.clear()
         cal.report([], 0, out=lines.append)
         self.assertIn("Nothing to calibrate against yet", "\n".join(lines))
+
+    def test_auto_calibrate_proposes_replays_and_writes_calibrated_config(self):
+        proposal = json.dumps({
+            "rationale": ["Add python backend requirement to hard_exclude_skills to catch uncaught skip."],
+            "changes": {
+                "skills_and_scoring": {
+                    "hard_exclude_skills": ["c++", "rust", "golang", "c#", ".net", "ruby", "python"]
+                }
+            }
+        })
+        with tempfile.TemporaryDirectory() as tmp:
+            out_path = os.path.join(tmp, "config.calibrated.json")
+            lines = []
+            with (patch.object(cal, "labeled_reviews", return_value=(self.labeled, 0)),
+                  patch.object(cal, "_cli_path", return_value="/bin/fake-cli"),
+                  patch.object(cal, "_cli_response", return_value=(proposal, {"input": 500, "cached": 0, "output": 100, "usd": 0.01}))):
+                rc = cal.auto_calibrate(output=out_path, out=lines.append)
+            self.assertEqual(rc, 0)
+            self.assertTrue(os.path.exists(out_path))
+            with open(out_path, encoding="utf-8") as f:
+                saved = json.load(f)
+            self.assertIn("python", saved["skills_and_scoring"]["hard_exclude_skills"])
+            text = "\n".join(lines)
+            self.assertIn("Replay results:", text)
+            self.assertIn("Wrote calibrated config", text)
+
+    def test_auto_calibrate_rejects_changes_that_increase_apply_drops(self):
+        bad_proposal = json.dumps({
+            "rationale": ["Drop React roles (regression)."],
+            "changes": {
+                "skills_and_scoring": {
+                    "hard_exclude_skills": ["react"]
+                }
+            }
+        })
+        with tempfile.TemporaryDirectory() as tmp:
+            out_path = os.path.join(tmp, "config.calibrated.json")
+            lines = []
+            with (patch.object(cal, "labeled_reviews", return_value=(self.labeled, 0)),
+                  patch.object(cal, "_cli_path", return_value="/bin/fake-cli"),
+                  patch.object(cal, "_cli_response", return_value=(bad_proposal, None))):
+                rc = cal.auto_calibrate(output=out_path, out=lines.append)
+            self.assertEqual(rc, 1)
+            self.assertFalse(os.path.exists(out_path))
+            self.assertIn("Rejected: proposed rules would drop more APPLY roles", "\n".join(lines))
 
 
 if __name__ == "__main__":

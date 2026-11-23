@@ -8,6 +8,8 @@
 | `--check` | Check the setup and exit without running (same as `python3 -m job_search_pipeline.check`); see [Checking the setup](../README.md#checking-the-setup). |
 | `--explain URL` | Trace one posting through the Stage 1 filters, every Stage 3 rule and the score breakdown, then exit; see [Why was a posting dropped?](#why-was-a-posting-dropped). `--title`, `--company` and `--location` fill in a posting the pipeline has not seen; `--rescrape` fetches its description again. |
 | `--calibrate` | Replay the current Stage 3 rules and keyword score over the postings the AI reviewer has already graded, with no LLM calls, then exit; see [Tuning the rules against past reviews](#tuning-the-rules-against-past-reviews). |
+| `--auto-calibrate` | Run the 3-stage calibration agent workflow (**Mine → Propose → Replay & Verify**) against cached AI reviews, write `config.calibrated.json`, then exit; `--calibrate-output PATH` writes elsewhere, and `--apply` updates `config.json` in place once verified. |
+| `--triage-model MODEL` | Run Stage 4 AI review as a two-pass fleet: `MODEL` (overrides `llm_review.triage_model`) screens all candidates in parallel for hard blockers in Pass 1 before the primary `llm_review.model` runs deep rubric grading on survivors in Pass 2. |
 | `--init-config [URL ...]` | Draft the career-specific settings from `candidate_profile.md` (and up to 3 sample postings) with the AI reviewer's CLI, write them to `config.draft.json`, then exit; see [Your config and profile](../README.md#your-config-and-profile). `--init-output PATH` writes elsewhere; `--force` overwrites an existing file there. |
 | `--skip-fetch` | Skip Stage 1 (`sources/filter.py`) and reuse `data/filtered_jobs.json`. |
 | `--skip-scrape` | Skip Stage 2 (`scrape.py`) and reuse `data/enriched_jobs.json`. |
@@ -54,6 +56,22 @@ It matches each cached review to the saved posting (reviews whose posting has ag
 - **Skips no rule touched:** the reviewer's blockers for skipped roles that passed every rule and drew no penalty, the candidates for new `hard_exclude_skills`, `hard_ask_penalties` or `penalized_keywords` entries.
 
 This matters most on a small AI budget (`llm_review.budget`) or none: a few runs with the review on build the labels, and rules tuned against them keep fewer poor matches in the review queue, or in the output when it runs with `--no-llm-review`.
+
+### Automated rule calibration and Antigravity workflows
+
+To let an agent propose and verify rule updates automatically from your cached reviews:
+
+```bash
+python3 -m job_search_pipeline --auto-calibrate
+python3 -m job_search_pipeline --auto-calibrate --apply   # write verified updates directly to config.json
+```
+
+`--auto-calibrate` mines false-negative gates (rules that dropped `APPLY` or `STRETCH` postings) and uncaught `SKIP` blockers, asks the configured AI reviewer CLI for minimal `config.json` changes, validates every regex and type, and **replays Stage 3 in memory** across all cached reviews. If the proposed changes would drop more `APPLY` roles than your current config, they are rejected; otherwise the verified config is written to `config.calibrated.json` (or `config.json` with `--apply`).
+
+When running inside **Antigravity**, two dynamic `run_workflow` scripts in [`workflows/`](../workflows) orchestrate parallel agent fleets directly:
+
+- [`workflows/auto_calibrate_workflow.py`](../workflows/auto_calibrate_workflow.py): Fans out parallel specialist agents (**Skills & Exclusions Specialist** and **Title & Experience Gates Specialist**) with structured JSON schemas, replays the merged config against cached reviews, and runs the unit test suite before writing `config.calibrated.json`.
+- [`workflows/tiered_review_workflow.py`](../workflows/tiered_review_workflow.py): Runs Stage 4 as a native two-stage Antigravity agent fleet (`flash` Pass-1 blocker triage in parallel → `inherit` Pass-2 deep 12-point rubric grading on survivors) with schema validation, updating `data/review_cache.json`, `data/evaluated_jobs.json`, and `data/digest.html`.
 
 ## Troubleshooting
 

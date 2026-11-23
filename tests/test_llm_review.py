@@ -497,5 +497,57 @@ class SpendAndRepostTests(unittest.TestCase):
         self.assertLess(review.signature_similarity(sig, review.jd_signature(other)), 0.1)
 
 
+class TieredTriageFleetTests(unittest.TestCase):
+    """Two-stage review fleet: Pass-1 lightweight triage filters hard blockers before Pass-2 deep rubric grading."""
+
+    @patch("job_search_pipeline.review.subprocess.run")
+    def test_triage_pass_filters_hard_blockers_and_sends_survivors_to_deep_review(self, run):
+        triage_blocked = json.dumps({"status": "SUCCESS", "response": json.dumps({
+            "hard_reqs": 0, "level": 1, "logistics_ok": True, "third_party": False,
+            "pay_min": None, "pay_max": None, "reason": "Requires 10+ years C++ kernel work",
+            "blockers": ["10+ years C++ kernel"]
+        })})
+        triage_passed = json.dumps({"status": "SUCCESS", "response": json.dumps({
+            "hard_reqs": 3, "level": 2, "logistics_ok": True, "third_party": False,
+            "pay_min": 150000, "pay_max": 180000, "reason": "Meets requirements", "blockers": []
+        })})
+        run.side_effect = [completed(triage_passed), completed(triage_blocked), completed(AGY_OUTPUT)]
+
+        job_pass = dict(JOB, url="https://example.com/jobs/pass", title="Frontend Engineer", score=90)
+        job_block = dict(JOB, url="https://example.com/jobs/block", title="Systems Engineer", score=75)
+        jds = {
+            job_pass["url"]: JD + " Frontend pass posting text. " * 10,
+            job_block["url"]: JD + " Systems block posting text. " * 10,
+        }
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "profile.md").write_text("test profile", encoding="utf-8")
+            (root / "jobs.json").write_text(
+                json.dumps([dict(j, description_full=jds[j["url"]]) for j in (job_pass, job_block)]),
+                encoding="utf-8",
+            )
+            with (patch.object(review, "PROVIDER", "agy"),
+                  patch.object(review, "DEFAULT_MODEL", "deep-pro-model"),
+                  patch.object(review, "TRIAGE_MODEL", "fast-flash-model"),
+                  patch.object(review, "WORKERS", 1),
+                  patch.object(review, "PROFILE_PATH", str(root / "profile.md")),
+                  patch.object(review, "CACHE_PATH", str(root / "cache.json")),
+                  patch.object(review, "SPEND_PATH", str(root / "spend.json")),
+                  patch.object(review, "_provider_config", return_value="/test/cli"),
+                  contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO())):
+                kept, skipped = review.review_matches([job_pass, job_block], str(root / "jobs.json"))
+
+        # 2 triage calls + 1 deep call (the blocked job skipped Pass 2)
+        self.assertEqual(run.call_count, 3)
+        self.assertEqual(len(kept), 1)
+        self.assertEqual(kept[0]["url"], job_pass["url"])
+        self.assertEqual(kept[0]["verdict"], "apply")
+        self.assertEqual(len(skipped), 1)
+        self.assertEqual(skipped[0]["url"], job_block["url"])
+        self.assertEqual(skipped[0]["verdict"], "skip")
+        self.assertLessEqual(skipped[0]["score"], review.BLOCKER_CAP)
+        self.assertIn("10+ years C++ kernel", skipped[0]["blockers"])
+
+
 if __name__ == "__main__":
     unittest.main()

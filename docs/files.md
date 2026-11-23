@@ -7,6 +7,7 @@ job-search-pipeline/
 ├── job_search_pipeline/      the code (run with `python3 -m job_search_pipeline`)
 │   ├── sources/              Stage 1: where postings come from              │
 │   └── outputs/              Stage 5: where matches go                      │
+├── workflows/                Antigravity multi-agent workflow scripts
 ├── tests/
 ├── docs/                     the rest of the documentation, and README images
 ├── run_job_search.sh         cron wrapper
@@ -26,6 +27,8 @@ Your own files sit next to these, ignored by git: `config.json`, `candidate_prof
 | [`config.example.json`](../config.example.json) | Tracked template for the career-agnostic configuration (sources, locations, pay, titles, skills, LLM rubric). |
 | `config.json` | Your own copy of the template, ignored by git; this is the file the pipeline reads and the one you edit. |
 | `config.draft.json` | Written by `--init-config` for you to review, ignored by git; the pipeline never reads it. |
+| `config.calibrated.json` | Written by `--auto-calibrate` after replay verification against cached AI reviews, ignored by git; copy to `config.json` or pass `--auto-calibrate --apply`. |
+| [`workflows/`](../workflows) | Antigravity `run_workflow` scripts (`auto_calibrate_workflow.py` for parallel specialist rule tuning and `tiered_review_workflow.py` for two-stage agent fleet review). |
 | [`candidate_profile.example.md`](../candidate_profile.example.md) | Tracked template for the candidate profile. |
 | `candidate_profile.md` | Your own copy of the template, ignored by git; read by `review.py` during Stage 4 rubric grading. |
 | [`pyproject.toml`](../pyproject.toml) | Package metadata, the runtime dependency ranges and the `dev` group (ruff), the optional `job-search` command, and ruff settings. |
@@ -40,7 +43,7 @@ Your own files sit next to these, ignored by git: `config.json`, `candidate_prof
 | [`__main__.py`](../job_search_pipeline/__main__.py) | Entry point for `python3 -m job_search_pipeline` and `job-search`: loads the env files, then runs `pipeline.py`. |
 | [`env.py`](../job_search_pipeline/env.py) | Reads `$JOB_SEARCH_ENV_FILE` and `.env` into the environment. |
 | [`pipeline.py`](../job_search_pipeline/pipeline.py) | End-to-end orchestrator and CLI flags, source-health monitor, pre-LLM blocklist filter, and notifier. |
-| [`calibrate.py`](../job_search_pipeline/calibrate.py) | `--calibrate`: replays the Stage 3 rules and keyword score over the cached AI reviews and reports where they disagree. |
+| [`calibrate.py`](../job_search_pipeline/calibrate.py) | `--calibrate` and `--auto-calibrate`: replays the Stage 3 rules and keyword score over cached AI reviews, reports discrepancies, and optionally runs a 3-stage agent workflow (Mine → Propose → Replay & Verify) to tune `config.json`. |
 | [`explain.py`](../job_search_pipeline/explain.py) | `--explain URL`: traces one posting through the Stage 1 filters, the Stage 3 rules and the score breakdown. |
 | [`init_config.py`](../job_search_pipeline/init_config.py) | `--init-config`: drafts the career-specific settings from `candidate_profile.md` with the AI reviewer's CLI and validates them into `config.draft.json`. |
 | [`check.py`](../job_search_pipeline/check.py) | Setup check (`--check`): dependencies, config typos and placeholders, profile, AI reviewer CLI, Notion database properties, Obsidian vault, outputs. |
