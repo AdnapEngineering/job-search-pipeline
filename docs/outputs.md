@@ -122,7 +122,9 @@ For other formats, `--md-output PATH` writes the full Markdown table (matches, m
 Every run writes `data/digest.html`, a single page with no external scripts that works offline. The [screenshot](../README.md#job-search-pipeline) at the top shows one. Open it with:
 
 ```bash
-xdg-open data/digest.html   # macOS: open data/digest.html
+xdg-open data/digest.html   # Linux
+open data/digest.html       # macOS
+explorer.exe "$(wslpath -w data/digest.html)"   # Windows (WSL)
 ```
 
 It lists matches in three groups: **New this run**, **Still open** (seen before and again now), and **Earlier** (no longer in the run because the posting closed, was reposted, or was already sent to Notion or the `.txt` export; kept for `keep_days`). Each card shows the Match %, the AI verdict and reason, the gaps, and badges for third-party posters, roles already in Notion, and held reviews. Search, a minimum-match filter and a "hide third-party" toggle sit at the top. Below the matches are this run's AI-filtered roles, location drops, failed scrapes, title-rule near misses (roles a title pattern dropped although their keyword score reached `strong_floor`, a sign the pattern is too broad) and the [drop counts per rule](usage.md#why-was-a-posting-dropped), plus source counts, source warnings and AI review spend.

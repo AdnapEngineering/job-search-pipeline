@@ -19,13 +19,13 @@ Every run also writes a page of matches you can open in a browser, with no accou
 
 Get a first list in your browser without Notion, an AI account, or notifications. The guided setup is for **US-based searches**; other countries need [additional configuration](docs/configuration.md#location-rules).
 
-1. Install [Git](https://git-scm.com/install/), [Python 3.10 or newer](https://www.python.org/downloads/), and [uv](https://docs.astral.sh/uv/getting-started/installation/). The commands below are for macOS or Linux.
-2. Open Terminal and paste these commands, then answer the setup questions when prompted:
+1. Install Git and [uv](https://docs.astral.sh/uv/getting-started/installation/) for your system ([macOS](#macos), [Windows](#windows) or [Linux](#linux) below). uv downloads a suitable Python (3.10 or newer) for you, so you don't need to install Python yourself.
+2. In a terminal, paste these commands, then answer the setup questions when prompted:
 
 ```bash
 git clone https://github.com/AdnapEngineering/job-search-pipeline.git
 cd job-search-pipeline
-python3 -m job_search_pipeline.setup
+uv run python -m job_search_pipeline.setup
 ```
 
 Setup never replaces an existing config. Your answers are stored locally; searches send your job titles and search location to job sources.
@@ -33,13 +33,40 @@ Setup never replaces an existing config. Your answers are stored locally; search
 3. When setup finishes, paste these commands:
 
 ```bash
-uv sync
-source .venv/bin/activate
-python3 -m job_search_pipeline --check
-python3 -m job_search_pipeline --no-notion --no-llm-review --no-notify
+uv run python -m job_search_pipeline --check
+uv run python -m job_search_pipeline --no-notion --no-llm-review --no-notify
 ```
 
-The check may warn that optional AI features are missing; that is fine for this first search. When the search finishes, open `data/digest.html` in your browser (on Linux run `xdg-open data/digest.html`; on macOS run `open data/digest.html`).
+The check may warn that optional AI features are missing; that is fine for this first search. When the search finishes, open `data/digest.html` in your browser: `open data/digest.html` on macOS, `explorer.exe "$(wslpath -w data/digest.html)"` on Windows (WSL), `xdg-open data/digest.html` on Linux.
+
+`uv run` installs the locked dependencies into `.venv` on first use and runs each command with that environment's Python. If you prefer, run `uv sync` once, then `source .venv/bin/activate` and use `python3` in place of `uv run python`.
+
+#### macOS
+
+1. Open **Terminal** (Cmd+Space, type "Terminal").
+2. Install Apple's command-line developer tools, which include Git: run `xcode-select --install` and click **Install** in the dialog. Skip this if `git --version` already prints a version.
+3. Install uv: `curl -LsSf https://astral.sh/uv/install.sh | sh`, then close and reopen Terminal.
+
+Use `uv run python` as shown above rather than the system `python3`: the one bundled with Apple's developer tools can be older than 3.10.
+
+#### Windows
+
+The pipeline and its scheduling scripts (`run_job_search.sh`, cron) are written for macOS and Linux, so on Windows run it inside **WSL** (Windows Subsystem for Linux):
+
+1. Right-click Start, open **Terminal (Admin)** or **PowerShell (Admin)**, run `wsl --install`, and restart when it finishes. This installs Ubuntu.
+2. Open **Ubuntu** from the Start menu and create a Linux username and password when asked.
+3. In the Ubuntu window, install Git and uv, then close and reopen Ubuntu:
+
+```bash
+sudo apt update && sudo apt install -y git curl
+curl -LsSf https://astral.sh/uv/install.sh | sh
+```
+
+Run every command in this README from the Ubuntu window. Clone into your Linux home folder (the default when Ubuntu opens), not under `/mnt/c/`, which is much slower. To open files from Windows, use `explorer.exe .` to show the current folder in File Explorer.
+
+#### Linux
+
+Install Git with your package manager (for example `sudo apt install git` on Debian or Ubuntu), then install uv: `curl -LsSf https://astral.sh/uv/install.sh | sh`.
 
 The starter looks for the exact title phrases you enter and scores jobs by matching your skills. Add title variations and several specific skills for better results. It searches remote roles, plus local roles if you enter a city; remote roles restricted to other states or time zones are not automatically excluded. Some default sources focus on software jobs, so coverage varies by career. Existing filters also reject jobs requiring security clearance or a foreign language by default. See [Configuration](docs/configuration.md) to adjust these rules or search outside the US.
 
@@ -167,7 +194,7 @@ pip install ruff==0.15.20     # for development (see Tests)
 
 ### Your config and profile
 
-For a guided first config, run `python3 -m job_search_pipeline.setup`. It creates a small `config.json` without requiring AI or editing JSON. It does not replace an existing config. To change it later, edit it as described in [Configuration](docs/configuration.md); to start over, first move or rename your existing config.
+For a guided first config, run `uv run python -m job_search_pipeline.setup` (or `python3 -m job_search_pipeline.setup` inside an activated `.venv`). It creates a small `config.json` without requiring AI or editing JSON. It does not replace an existing config. To change it later, edit it as described in [Configuration](docs/configuration.md); to start over, first move or rename your existing config.
 
 Alternatively, create the full template and optional profile manually:
 
