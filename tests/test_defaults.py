@@ -18,6 +18,11 @@ class DefaultsMatchTemplateTest(unittest.TestCase):
         with open(EXAMPLE, encoding="utf-8") as f:
             cls.example = json.load(f)
 
+    def test_every_data_path_is_redirected_in_tests(self):
+        # A path missing from the fixture falls back to the real data/ folder, and tests would write there
+        from job_search_pipeline.defaults import DEFAULTS
+        self.assertEqual(set(DEFAULTS["paths"]), set(_fixture_config._DATA_FILES))
+
     def test_same_sections_and_keys(self):
         self.assertEqual(list(self.example), list(DEFAULTS))
         for section, keys in DEFAULTS.items():

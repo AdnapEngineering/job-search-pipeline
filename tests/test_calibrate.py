@@ -47,6 +47,23 @@ class CalibrateTests(unittest.TestCase):
         self.assertEqual(len(labeled), 2)
         self.assertEqual(missing, 1)
 
+    def test_archived_postings_are_labels_after_leaving_the_job_files(self):
+        from job_search_pipeline.config import atomic_write_json, get_path
+        paths = {name: get_path(name) for name in ("review_cache", "reviewed_postings", "filtered_jobs",
+                                                    "enriched_jobs")}
+        try:
+            atomic_write_json(paths["review_cache"], CACHE)
+            atomic_write_json(paths["reviewed_postings"], {j["url"]: j for j in JOBS})
+            atomic_write_json(paths["filtered_jobs"], [])
+            atomic_write_json(paths["enriched_jobs"], [])
+            labeled, missing = cal.labeled_reviews()
+        finally:
+            for path in paths.values():
+                if os.path.exists(path):
+                    os.remove(path)
+        self.assertEqual(len(labeled), 3)
+        self.assertEqual(missing, 1)
+
     def test_analysis_flags_rules_that_drop_reviewed_roles_and_uncaught_skips(self):
         a = cal.analyze(self.labeled)
         self.assertEqual(sum(len(v) for v in a["bands"].values()), 3)

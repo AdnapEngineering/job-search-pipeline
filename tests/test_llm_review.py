@@ -604,5 +604,49 @@ class TieredTriageFleetTests(unittest.TestCase):
         self.assertEqual(cache[job_old["url"]]["triage"], "fast-flash-model")
         self.assertTrue(cache[job_old["url"]]["result"]["triaged_out"])
 
+
+class PostingArchiveTests(unittest.TestCase):
+    """data/reviewed_postings.json keeps the text of reviewed postings after they age out of enriched_jobs."""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.root = Path(self.tmp.name)
+        self.enriched = self.root / "enriched.json"
+        self.archive = self.root / "archive.json"
+
+    def tearDown(self):
+        self.tmp.cleanup()
+
+    def posting(self, n, first_seen="2026-11-20", **extra):
+        return dict({"url": f"https://example.com/jobs/{n}", "company": "Acme", "title": f"Engineer {n}",
+                     "first_seen": first_seen, "description_full": JD, "description_ai": JD, "score": 80}, **extra)
+
+    def run_archive(self, cache, postings, limit=1000):
+        self.enriched.write_text(json.dumps(postings), encoding="utf-8")
+        count = review.archive_postings(cache, str(self.enriched), str(self.archive), limit)
+        saved = json.loads(self.archive.read_text(encoding="utf-8")) if self.archive.exists() else {}
+        return count, saved
+
+    def test_keeps_reviewed_postings_only_and_survives_them_leaving_enriched(self):
+        cache = {f"https://example.com/jobs/{n}": {"result": {}} for n in (1, 2, 3)}
+        postings = [self.posting(1), self.posting(2, description_ai="Posting expired"), self.posting(4)]
+        count, saved = self.run_archive(cache, postings)
+        self.assertEqual(list(saved), ["https://example.com/jobs/1"])  # 2 expired, 3 not saved, 4 not reviewed
+        self.assertNotIn("score", saved["https://example.com/jobs/1"])
+        self.assertEqual(count, 1)
+        count, saved = self.run_archive(cache, [])  # posting aged out of enriched_jobs.json
+        self.assertEqual(list(saved), ["https://example.com/jobs/1"])
+
+    def test_follows_cache_pruning_caps_to_newest_and_can_be_off(self):
+        cache = {f"https://example.com/jobs/{n}": {"result": {}} for n in (1, 2, 3)}
+        postings = [self.posting(1, "2026-11-01"), self.posting(2, "2026-11-10"), self.posting(3, "2026-11-20")]
+        _, saved = self.run_archive(cache, postings, limit=2)
+        self.assertEqual(sorted(saved), ["https://example.com/jobs/2", "https://example.com/jobs/3"])
+        del cache["https://example.com/jobs/3"]
+        _, saved = self.run_archive(cache, [])
+        self.assertEqual(list(saved), ["https://example.com/jobs/2"])
+        self.archive.unlink()
+        self.assertEqual(self.run_archive(cache, postings, limit=0), (0, {}))
+
 if __name__ == "__main__":
     unittest.main()
