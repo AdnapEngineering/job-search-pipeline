@@ -99,7 +99,9 @@ Reply with one JSON object and nothing else, in this shape:
 
 
 def labeled_reviews(cache=None, jobs=None):
-    """([(job, rescored review result)] for cached reviews whose posting is saved, count of reviews without one)."""
+    """([(job, rescored review result)] for cached full reviews whose posting is saved, count of reviews without one).
+
+    Pass-1 triage skips are left out: they come from the cheap triage model, which never grades the rubric."""
     cache = load_json(get_path("review_cache"), default={}) if cache is None else cache
     if jobs is None:
         jobs = [*(load_json(get_path("filtered_jobs"), default=[]) or []),
@@ -108,8 +110,8 @@ def labeled_reviews(cache=None, jobs=None):
     labeled, missing = [], 0
     for url, entry in (cache or {}).items():
         result = entry.get("result") if isinstance(entry, dict) else None
-        if not isinstance(result, dict):
-            continue
+        if not isinstance(result, dict) or result.get("triaged_out"):
+            continue  # a Pass-1 triage skip is the cheap model's call on blockers only, not a graded label
         result = _rescored(result)
         job = by_url.get(normalize_url(url))
         if result.get("verdict") not in VERDICTS:

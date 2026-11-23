@@ -549,5 +549,60 @@ class TieredTriageFleetTests(unittest.TestCase):
         self.assertIn("10+ years C++ kernel", skipped[0]["blockers"])
 
 
+    def test_triage_is_not_part_of_the_cache_key(self):
+        # Turning triage on or off must not throw away full reviews already paid for
+        self.assertEqual(review._profile_hash("p", "m", "agy"), review._profile_hash("p", "m", "agy"))
+        full = {"profile": "h", "result": {"verdict": "apply"}}
+        triaged = {"profile": "h", "result": {"verdict": "skip", "triaged_out": True}, "triage": "flash"}
+        self.assertTrue(review._usable(full, "h", ""))
+        self.assertTrue(review._usable(full, "h", "flash"))
+        self.assertTrue(review._usable(triaged, "h", "flash"))
+        self.assertFalse(review._usable(triaged, "h", ""))       # triage off: give it a full review
+        self.assertFalse(review._usable(triaged, "h", "other"))  # new triage model: triage it again
+        self.assertFalse(review._usable(full, "other-profile", ""))
+        self.assertFalse(review._usable("junk", "h", ""))
+
+    @patch("job_search_pipeline.review.subprocess.run")
+    def test_turning_triage_on_keeps_full_reviews_and_retriages_old_triage_skips(self, run):
+        triage_blocked = json.dumps({"status": "SUCCESS", "response": json.dumps({
+            "hard_reqs": 0, "level": 1, "logistics_ok": True, "third_party": False,
+            "pay_min": None, "pay_max": None, "reason": "Requires C++", "blockers": ["C++"]})})
+        run.side_effect = [completed(triage_blocked)]
+        job_full = dict(JOB, url="https://example.com/jobs/full", title="Frontend Engineer", score=90)
+        job_old = dict(JOB, url="https://example.com/jobs/old-triage", title="Systems Engineer", score=75)
+        full = {"verdict": "skip", "score": 25, "reason": "r", "blockers": [],
+                "components": {"hard_reqs": 1, "core_work": 1, "evidence": 1, "level": 0, "logistics_ok": True}}
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "profile.md").write_text("test profile", encoding="utf-8")
+            (root / "jobs.json").write_text(json.dumps(
+                [dict(j, description_full=JD + f" {j['title']} posting. " * 10) for j in (job_full, job_old)]),
+                encoding="utf-8")
+            cache_path = root / "cache.json"
+            with (patch.object(review, "PROVIDER", "agy"),
+                  patch.object(review, "DEFAULT_MODEL", "deep-pro-model"),
+                  patch.object(review, "TRIAGE_MODEL", "fast-flash-model"),
+                  patch.object(review, "WORKERS", 1),
+                  patch.object(review, "PROFILE_PATH", str(root / "profile.md")),
+                  patch.object(review, "CACHE_PATH", str(cache_path)),
+                  patch.object(review, "SPEND_PATH", str(root / "spend.json")),
+                  patch.object(review, "_provider_config", return_value="/test/cli"),
+                  contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO())):
+                phash = review._profile_hash("test profile", "deep-pro-model", "agy")
+                cache_path.write_text(json.dumps({
+                    job_full["url"]: {"profile": phash, "result": full},
+                    job_old["url"]: {"profile": phash, "triage": "old-flash-model",
+                                     "result": {"verdict": "skip", "triaged_out": True, "reason": "x",
+                                                "blockers": []}},
+                }), encoding="utf-8")
+                review.review_matches([job_full, job_old], str(root / "jobs.json"))
+                cache = json.loads(cache_path.read_text(encoding="utf-8"))
+
+        self.assertEqual(run.call_count, 1)  # only the old-model triage skip was re-triaged
+        self.assertEqual(cache[job_full["url"]]["result"]["components"], full["components"])
+        self.assertNotIn("triage", cache[job_full["url"]])
+        self.assertEqual(cache[job_old["url"]]["triage"], "fast-flash-model")
+        self.assertTrue(cache[job_old["url"]]["result"]["triaged_out"])
+
 if __name__ == "__main__":
     unittest.main()

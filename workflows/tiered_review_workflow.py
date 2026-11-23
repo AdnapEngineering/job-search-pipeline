@@ -28,7 +28,6 @@ ROOT = "/home/justin/projects/job-search-pipeline"
 if ROOT not in sys.path:
     sys.path.insert(0, ROOT)
 
-from job_search_pipeline.blocklist import role_key  # noqa: E402
 from job_search_pipeline.config import CFG, atomic_write_json, get_path, load_json  # noqa: E402
 from job_search_pipeline.outputs.html_digest import HTML_DIGEST_ENABLED, HTML_DIGEST_PATH, write_digest  # noqa: E402
 from job_search_pipeline.review import (  # noqa: E402
@@ -38,7 +37,6 @@ from job_search_pipeline.review import (  # noqa: E402
     PROVIDER,
     TRIAGE_PROMPT,
     _apply_results,
-    _jd_hash,
     _load_review_inputs,
     _parse_triage,
     _parse_verdict,
@@ -47,9 +45,9 @@ from job_search_pipeline.review import (  # noqa: E402
     _reuse_reposts,
     _salary_text,
     _save_cache,
+    cache_entry,
     _split_cached,
     _url_key,
-    jd_signature,
     reason_for_notion,
 )
 
@@ -115,10 +113,10 @@ async def run_tiered_review():
 
     due = sorted((j for j in matches if j.get("score", 0) >= MIN_REVIEW_SCORE),
                  key=lambda j: j.get("score", 0), reverse=True)
-    results, misses = _split_cached(due, cache, phash)
+    results, misses = _split_cached(due, cache, phash, TRIAGE_TIER)
     cache_hits = len(results)
     jd_by_url, salary_by_url = _load_review_inputs(misses, ENRICHED_PATH)
-    todo = _reuse_reposts(misses, jd_by_url, cache, phash, results)
+    todo = _reuse_reposts(misses, jd_by_url, cache, phash, results, TRIAGE_TIER)
     repost_hits = len(misses) - len(todo)
 
     todo_valid = [j for j in todo if len(jd_by_url.get(_url_key(j)) or "") >= 200]
@@ -192,17 +190,10 @@ async def run_tiered_review():
     for job in batch:
         key = _url_key(job)
         if key in fresh:
-            jd = jd_by_url.get(key) or ""
-            cache[key] = {
-                "profile": phash,
-                "result": fresh[key],
-                "role": role_key(job.get("company"), job.get("title")),
-                "jd": _jd_hash(jd),
-                "sig": jd_signature(jd),
-            }
+            cache[key] = cache_entry(phash, fresh[key], job, jd_by_url.get(key) or "", TRIAGE_TIER)
 
     results.update(fresh)
-    _save_cache(cache, phash, changed=bool(fresh or repost_hits))
+    _save_cache(cache, phash, changed=bool(fresh or repost_hits), triage_model=TRIAGE_TIER)
 
     kept, skipped, failed, hidden = _apply_results(matches, results, deferred, MIN_REVIEW_SCORE)
     for job in kept:
