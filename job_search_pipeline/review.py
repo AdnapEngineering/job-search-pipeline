@@ -133,13 +133,25 @@ def _profile_text():
         return f.read()
 
 
-def _profile_hash(profile, model, provider="agy", triage_model=""):
+def _profile_hash(profile, model, provider="agy"):
+    """Cache key for full reviews. The triage model is left out on purpose: a full review reads the same
+    with or without triage in front of it, so turning triage on or off keeps every paid-for review."""
     cache_input = profile + "|" + model + "|" + PROMPT + "|" + REVIEW_VERSION
     if provider != "agy":
         cache_input += "|cli|" + provider
-    if triage_model:
-        cache_input += "|triage|" + triage_model
     return hashlib.sha256(cache_input.encode()).hexdigest()[:16]
+
+
+def _usable(hit, phash, triage_model=""):
+    """True if a cache entry can stand in for a review now: same profile/prompt/model/provider, and for a
+    Pass-1 triage skip, made by the triage model in use (turn triage off, or change its model, and those
+    postings get a fresh review)."""
+    if not isinstance(hit, dict) or hit.get("profile") != phash:
+        return False
+    result = hit.get("result")
+    if isinstance(result, dict) and result.get("triaged_out"):
+        return bool(triage_model) and hit.get("triage") == triage_model
+    return True
 
 
 def _cli_path(provider):
@@ -595,13 +607,13 @@ def signature_similarity(a, b):
     return sum(1 for h in union if h in sa and h in sb) / len(union)
 
 
-def _find_repost(job, jd, cache, phash):
+def _find_repost(job, jd, cache, phash, triage_model=""):
     """Key of a current-profile cached review of the same posting under another URL, or None:
     the same JD text, or the same company|title with JD text at least REPOST_SIMILARITY alike."""
     h, role = _jd_hash(jd), role_key(job.get("company"), job.get("title"))
     sig = None
     for key, hit in cache.items():
-        if not isinstance(hit, dict) or hit.get("profile") != phash:
+        if not _usable(hit, phash, triage_model):
             continue
         if hit.get("jd") == h:
             return key
@@ -756,13 +768,13 @@ def _url_key(job):
     return normalize_url(job.get("url", ""))
 
 
-def _split_cached(due, cache, phash):
-    """({url key: rescored result} for jobs with a current-profile cached review, [jobs without one])."""
+def _split_cached(due, cache, phash, triage_model=""):
+    """({url key: rescored result} for jobs with a usable cached review, [jobs without one])."""
     results, misses = {}, []
     for job in due:
         key = _url_key(job)
         hit = cache.get(key)
-        if isinstance(hit, dict) and hit.get("profile") == phash:
+        if _usable(hit, phash, triage_model):
             results[key] = _rescored(hit["result"])
         else:
             misses.append(job)
@@ -785,13 +797,13 @@ def _load_review_inputs(jobs, enriched_path):
     return jd_by_url, salary_by_url
 
 
-def _reuse_reposts(misses, jd_by_url, cache, phash, results):
+def _reuse_reposts(misses, jd_by_url, cache, phash, results, triage_model=""):
     """Copy the paid-for review of a repost under a new URL into `results` and `cache`; return the jobs left."""
     todo = []
     for job in misses:
         key = _url_key(job)
         jd = jd_by_url.get(key) or ""
-        source = _find_repost(job, jd, cache, phash) if len(jd) >= 200 else None
+        source = _find_repost(job, jd, cache, phash, triage_model) if len(jd) >= 200 else None
         if source:
             results[key] = _rescored(cache[source]["result"])
             cache[key] = dict(cache[source], repost_of=source)
@@ -861,10 +873,19 @@ def _run_reviews(todo, executable, model, profile, jd_by_url, salary_by_url, bud
     return results, deferred
 
 
-def _save_cache(cache, phash, changed):
-    """Drop entries from another profile, prompt, model or provider (they can never be read again), and
-    write the cache when anything changed."""
-    stale = [key for key, hit in cache.items() if not isinstance(hit, dict) or hit.get("profile") != phash]
+def cache_entry(phash, result, job, jd, triage_model=""):
+    """The cache record for one review; a Pass-1 triage skip also records the triage model that made it."""
+    entry = {"profile": phash, "result": result, "role": role_key(job.get("company"), job.get("title")),
+             "jd": _jd_hash(jd), "sig": jd_signature(jd)}
+    if result.get("triaged_out"):
+        entry["triage"] = triage_model
+    return entry
+
+
+def _save_cache(cache, phash, changed, triage_model=""):
+    """Drop entries that can never be read again (another profile, prompt, model or provider, or a triage
+    skip from a triage model no longer in use), and write the cache when anything changed."""
+    stale = [key for key, hit in cache.items() if not _usable(hit, phash, triage_model)]
     if not (changed or stale):
         return
     for key in stale:
@@ -914,17 +935,17 @@ def review_matches(matches, enriched_path, min_score=55, stats=None):
         return matches, []
 
     model, triage_model, profile = DEFAULT_MODEL, TRIAGE_MODEL, _profile_text()
-    phash = _profile_hash(profile, model, PROVIDER, triage_model)
+    phash = _profile_hash(profile, model, PROVIDER)
     cache = load_json(CACHE_PATH, default={})
     if not isinstance(cache, dict):
         cache = {}
     due = sorted((j for j in matches if j.get("score", 0) >= min_score),
                  key=lambda j: j.get("score", 0), reverse=True)
 
-    results, misses = _split_cached(due, cache, phash)
+    results, misses = _split_cached(due, cache, phash, triage_model)
     cache_hits = len(results)
     jd_by_url, salary_by_url = _load_review_inputs(misses, enriched_path)
-    todo = _reuse_reposts(misses, jd_by_url, cache, phash, results)
+    todo = _reuse_reposts(misses, jd_by_url, cache, phash, results, triage_model)
     repost_hits = len(misses) - len(todo)
 
     today = datetime.now().strftime("%Y-%m-%d")
@@ -940,11 +961,9 @@ def review_matches(matches, enriched_path, min_score=55, stats=None):
     for job in todo:
         key = _url_key(job)
         if key in fresh:
-            jd = jd_by_url.get(key) or ""
-            cache[key] = {"profile": phash, "result": fresh[key], "role": role_key(job.get("company"), job.get("title")),
-                          "jd": _jd_hash(jd), "sig": jd_signature(jd)}
+            cache[key] = cache_entry(phash, fresh[key], job, jd_by_url.get(key) or "", triage_model)
     results.update(fresh)
-    _save_cache(cache, phash, changed=bool(todo or repost_hits))
+    _save_cache(cache, phash, changed=bool(todo or repost_hits), triage_model=triage_model)
 
     kept, skipped, failed, hidden = _apply_results(matches, results, deferred, min_score)
     summary = {

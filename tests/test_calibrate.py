@@ -40,6 +40,13 @@ class CalibrateTests(unittest.TestCase):
                           ("https://example.com/3", "skip")])
         self.assertEqual(self.missing, 1)
 
+    def test_triage_skips_are_not_calibration_labels(self):
+        cache = dict(CACHE, **{"https://example.com/1": {"result": {"verdict": "skip", "triaged_out": True}}})
+        labeled, missing = cal.labeled_reviews(cache, JOBS)
+        self.assertNotIn("https://example.com/1", [j["url"] for j, _ in labeled])
+        self.assertEqual(len(labeled), 2)
+        self.assertEqual(missing, 1)
+
     def test_analysis_flags_rules_that_drop_reviewed_roles_and_uncaught_skips(self):
         a = cal.analyze(self.labeled)
         self.assertEqual(sum(len(v) for v in a["bands"].values()), 3)
