@@ -91,13 +91,16 @@ How cost is known depends on the CLI:
 | Codex (`openai`) | Reported | Estimated from `pricing` when you set it; otherwise tokens only. |
 | agy | Reported | Estimated from `pricing` when you set it; otherwise tokens only. |
 
-Prices are USD per million tokens, either keyed by provider (so switching `provider` picks up the right rates) or flat (applied to whichever provider is configured):
+Prices are USD per million tokens, keyed by model name, by provider (so switching `provider` picks up the right rates), or flat (applied to whichever provider is configured). Each call uses the most specific block that exists: its model, then its provider, then the flat rates. A model key lets the Pass-1 `triage_model` and the Pass-2 `model` carry different rates:
 
 ```json
 "pricing": {
-  "openai": { "input_per_mtok": 1.25, "cached_input_per_mtok": 0.125, "output_per_mtok": 10 }
+  "openai": { "input_per_mtok": 1.25, "cached_input_per_mtok": 0.125, "output_per_mtok": 10 },
+  "gpt-5-mini": { "input_per_mtok": 0.25, "cached_input_per_mtok": 0.025, "output_per_mtok": 2 }
 }
 ```
+
+Each ledger entry also has a `passes` object with separate calls, tokens and cost for `review` (Pass 2) and, when `triage_model` is set, `triage` (Pass 1), each priced at its own model's rates. Those entries also record `triage_model`. Budget estimates also use each pass's own average output, so short triage replies don't lower the estimate for a deep review.
 
 Caps go in `llm_review.budget`. Every cap defaults to `0`, which means no limit:
 

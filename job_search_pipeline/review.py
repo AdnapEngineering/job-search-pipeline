@@ -402,17 +402,21 @@ def _usage(provider, source):
     return {"input": uncached, "cached": cached, "output": output, "usd": usd}
 
 
-def _rates(provider=None):
-    """The pricing block for `provider`: llm_review.pricing.<provider> when present, else flat rates in
-    llm_review.pricing itself (applied to whichever provider is configured)."""
+def _rates(provider=None, model=None):
+    """The pricing block for one call, most specific first: llm_review.pricing.<model> (so the Pass-1 triage
+    model and the Pass-2 review model can carry their own rates), then llm_review.pricing.<provider>, then
+    flat rates in llm_review.pricing itself (applied to whichever provider is configured)."""
     provider = provider or PROVIDER
-    nested = _PRICING_CFG.get(provider)
-    return nested if isinstance(nested, dict) else _PRICING_CFG
+    for key in (model, provider):
+        nested = _PRICING_CFG.get(key) if key else None
+        if isinstance(nested, dict):
+            return nested
+    return _PRICING_CFG
 
 
-def priced_usd(usage, provider=None):
+def priced_usd(usage, provider=None, model=None):
     """Cost of `usage` at the configured rates (USD per million tokens), or None when unpriced."""
-    rates = _rates(provider)
+    rates = _rates(provider, model)
     rate_in = rates.get("input_per_mtok")
     rate_out = rates.get("output_per_mtok")
     if rate_in is None or rate_out is None:
@@ -645,12 +649,24 @@ def spent_on(day, entries):
                 for e in todays))
 
 
+PASS_TRIAGE, PASS_REVIEW = "triage", "review"
+
+
+def _new_tally(model):
+    return {"model": model or "", "calls": 0, "input_tokens": 0, "cached_tokens": 0, "output_tokens": 0,
+            "usd": 0.0, "usd_estimated": False, "usd_unknown": False}
+
+
 class Budget:
     """Running spend for one review pass, checked against the llm_review.budget caps (0 = no cap).
 
     Each review reserves its estimated cost before it starts and settles to the real usage after, so
     reviews running in parallel cannot jointly pass a cap. The first cap reached stops the pass: the
-    remaining jobs (lower keyword scores, since the pass runs best-first) are deferred to the next run."""
+    remaining jobs (lower keyword scores, since the pass runs best-first) are deferred to the next run.
+
+    Usage is also tallied per stage (PASS_TRIAGE for the Pass-1 triage model, PASS_REVIEW for the Pass-2
+    model), each priced at its own model's rates, so a cheap triage model's replies neither skew the
+    estimate for a deep review nor get billed at the deep model's price."""
 
     def __init__(self, today_usd=0.0, today_tokens=0):
         self.max_reviews = _cap("max_reviews_per_run", int)
@@ -662,6 +678,7 @@ class Budget:
         self.started = self.reserved_tokens = 0
         self.reserved_usd = 0.0
         self.stopped_by = ""
+        self.passes = {}
         self._lock = threading.Lock()
 
     @property
@@ -673,20 +690,30 @@ class Budget:
                  "tokens/run": self.max_tokens_run, "tokens/day": self.max_tokens_day}
         return {k: v for k, v in named.items() if v}
 
-    def _estimate(self, prompt_chars):
-        out = self.output / self.calls if self.calls else EST_OUTPUT_TOKENS
+    def _tally(self, stage, model):
+        tally = self.passes.get(stage)
+        if tally is None:
+            tally = self.passes[stage] = _new_tally(model)
+        return tally
+
+    def _estimate(self, prompt_chars, stage, model):
+        # Average over this stage's replies when it has any: triage replies are far shorter than reviews
+        tally = self.passes.get(stage)
+        calls, output, usd_sum = ((tally["calls"], tally["output_tokens"], tally["usd"]) if tally and tally["calls"]
+                                  else (self.calls, self.output, self.usd))
+        out = output / calls if calls else EST_OUTPUT_TOKENS
         tokens = prompt_chars // CHARS_PER_TOKEN + int(out)
-        usd = priced_usd({"input": tokens - int(out), "cached": 0, "output": int(out)})
+        usd = priced_usd({"input": tokens - int(out), "cached": 0, "output": int(out)}, model=model)
         if usd is None:  # no pricing set: assume the average reported cost so far
-            usd = self.usd / self.calls if self.calls else 0.0
+            usd = usd_sum / calls if calls else 0.0
         return tokens, usd
 
-    def reserve(self, prompt_chars):
-        """The (tokens, usd) reserved for one review, or None once a cap would be passed."""
+    def reserve(self, prompt_chars, stage=PASS_REVIEW, model=None):
+        """The (tokens, usd) reserved for one `stage` call to `model`, or None once a cap would be passed."""
         with self._lock:
             if self.stopped_by:
                 return None
-            tokens, usd = self._estimate(prompt_chars)
+            tokens, usd = self._estimate(prompt_chars, stage, model)
             run_tokens, run_usd = self.tokens + self.reserved_tokens + tokens, self.usd + self.reserved_usd + usd
             checks = (
                 ("reviews/run", self.max_reviews, self.started + 1),
@@ -709,24 +736,34 @@ class Budget:
             self.reserved_tokens -= reservation[0]
             self.reserved_usd -= reservation[1]
 
-    def record(self, usage):
-        """Add one completed reply's usage (None when the CLI reported none)."""
+    def record(self, usage, stage=PASS_REVIEW, model=None):
+        """Add one completed `stage` reply's usage from `model` (None when the CLI reported none)."""
         with self._lock:
+            tally = self._tally(stage, model)
             self.calls += 1
+            tally["calls"] += 1
             if not usage:
-                self.usd_unknown = True
+                self.usd_unknown = tally["usd_unknown"] = True
                 return
             self.input += usage["input"]
             self.cached += usage["cached"]
             self.output += usage["output"]
+            tally["input_tokens"] += usage["input"]
+            tally["cached_tokens"] += usage["cached"]
+            tally["output_tokens"] += usage["output"]
             usd = usage.get("usd")
             if usd is None:
-                usd = priced_usd(usage)
+                usd = priced_usd(usage, model=model)
                 if usd is None:
-                    self.usd_unknown = True
+                    self.usd_unknown = tally["usd_unknown"] = True
                     return
-                self.usd_estimated = True
+                self.usd_estimated = tally["usd_estimated"] = True
             self.usd += usd
+            tally["usd"] += usd
+
+    def recorder(self, stage, model):
+        """An on_usage callback that records each reply under `stage` and `model`."""
+        return lambda usage: self.record(usage, stage, model)
 
     def totals(self):
         """This pass's usage, spend and caps, plus the day's running totals, as summary fields."""
@@ -735,6 +772,9 @@ class Budget:
             "tokens": self.tokens, "usd": round(self.usd, 4), "usd_estimated": self.usd_estimated,
             "usd_unknown": self.usd_unknown, "stopped_by": self.stopped_by, "caps": self.caps(),
             "today_usd": round(self.today_usd + self.usd, 4), "today_tokens": self.today_tokens + self.tokens,
+            "passes": {stage: dict(t, usd=round(t["usd"], 4),
+                                   tokens=t["input_tokens"] + t["cached_tokens"] + t["output_tokens"])
+                       for stage, t in self.passes.items()},
         }
 
 
@@ -743,9 +783,14 @@ def _write_spend(stats, path=None):
     path = path or SPEND_PATH
     cutoff = (datetime.now() - timedelta(days=SPEND_KEEP_DAYS)).strftime("%Y-%m-%d")
     entries = [e for e in load_spend(path) if isinstance(e, dict) and str(e.get("date", "")) >= cutoff]
-    entries.append({k: stats[k] for k in (
+    entry = {k: stats[k] for k in (
         "time", "date", "provider", "model", "reviewed", "failed", "deferred", "cache_hits", "repost_hits",
-        "input_tokens", "cached_tokens", "output_tokens", "usd", "usd_estimated", "usd_unknown")})
+        "input_tokens", "cached_tokens", "output_tokens", "usd", "usd_estimated", "usd_unknown")}
+    if stats.get("triage_model"):
+        entry["triage_model"] = stats["triage_model"]
+    if stats.get("passes"):  # per-stage (Pass-1 triage / Pass-2 review) tokens and cost
+        entry["passes"] = stats["passes"]
+    entries.append(entry)
     atomic_write_json(path, entries, indent=1)
 
 
@@ -825,26 +870,26 @@ def _run_reviews(todo, executable, model, profile, jd_by_url, salary_by_url, bud
     def run_triage(job):
         key = _url_key(job)
         jd = jd_by_url.get(key) or ""
-        reservation = budget.reserve(triage_chars + len(jd))
+        reservation = budget.reserve(triage_chars + len(jd), PASS_TRIAGE, triage_model)
         if reservation is None:
             deferred.add(key)
             return None, False
         try:
             return _triage_one(executable, triage_model, profile, job, jd, salary_by_url.get(key), PROVIDER,
-                               on_usage=budget.record)
+                               on_usage=budget.recorder(PASS_TRIAGE, triage_model))
         finally:
             budget.release(reservation)
 
     def run_one(job):
         key = _url_key(job)
         jd = jd_by_url.get(key) or ""
-        reservation = budget.reserve(prompt_chars + len(jd))
+        reservation = budget.reserve(prompt_chars + len(jd), PASS_REVIEW, model)
         if reservation is None:
             deferred.add(key)
             return None
         try:
             return _review_one(executable, model, profile, job, jd, salary_by_url.get(key), PROVIDER,
-                               on_usage=budget.record)
+                               on_usage=budget.recorder(PASS_REVIEW, model))
         finally:
             budget.release(reservation)
 
@@ -1002,6 +1047,7 @@ def review_matches(matches, enriched_path, min_score=55, stats=None):
     kept, skipped, failed, hidden = _apply_results(matches, results, deferred, min_score)
     summary = {
         "time": datetime.now().strftime("%Y-%m-%d %H:%M"), "date": today, "provider": PROVIDER, "model": model,
+        "triage_model": triage_model if triage_model and triage_model != model else "",
         "reviewed": len(fresh), "failed": failed, "deferred": len(deferred), "cache_hits": cache_hits,
         "repost_hits": repost_hits, **budget.totals(),
     }
