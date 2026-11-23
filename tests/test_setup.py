@@ -72,6 +72,26 @@ class GuidedSetupTest(unittest.TestCase):
         )
         self.assertEqual(result.returncode, 0, result.stderr)
 
+    def test_titles_match_whole_phrases_and_nearby_skips_state_codes(self):
+        self.assertEqual(self.run_setup([
+            "Software Engineer, .NET Developer", "C#, SQL, Azure", ", TX", "Austin, TX",
+            "Round Rock, TX, Cedar Park", "", "",
+        ]), 0)
+        with open(self.path, encoding="utf-8") as f:
+            config = json.load(f)
+        self.assertEqual(config["location"]["local_metro_patterns"], ["austin", r"round\ rock", r"cedar\ park"])
+        env = dict(os.environ, JOB_PIPELINE_CONFIG=self.path)
+        result = subprocess.run(
+            [sys.executable, "-c",
+             "from job_search_pipeline.sources.filter import is_valid_title, is_local_metro, STRONG_TARGET_RE; "
+             "assert is_valid_title('Senior Software Engineer'); "
+             "assert not is_valid_title('Software Engineering Manager'); "
+             "assert is_valid_title('.NET Developer'); assert STRONG_TARGET_RE.search('.net developer'); "
+             "assert is_local_metro('Round Rock, TX'); assert not is_local_metro('Houston, TX')"],
+            env=env, capture_output=True, text=True,
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+
     def test_existing_config_is_never_replaced(self):
         with open(self.path, "w", encoding="utf-8") as f:
             f.write("existing settings")
