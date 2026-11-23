@@ -10,6 +10,7 @@
     "reviewed_postings": "data/reviewed_postings.json",
     "run_history": "data/run_history.json",
     "linkedin_details_cache": "data/linkedin_details_cache.json",
+    "throttle_state": "data/throttle_state.json",
     "candidate_profile": "candidate_profile.md",
     "text_export": "data/job_matches.txt",
     "llm_spend": "data/llm_spend.json",
@@ -25,7 +26,8 @@
     "github_feed_base_chunk_url": "https://riley-dorrington.github.io/job-board-data/data/chunks/",
     "jobspy_enabled": true,
     "country_indeed": "USA",
-    "linkedin_pause_seconds": 3,
+    "linkedin_pause_seconds": 10,
+    "block_cooldown_hours": 24,
     "search_terms": [
       "Target Role Title 1",
       "Senior Target Role Title",

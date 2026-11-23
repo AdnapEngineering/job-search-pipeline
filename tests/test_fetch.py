@@ -7,6 +7,7 @@ import io
 import json
 import logging
 import unittest
+from datetime import datetime, timedelta, timezone
 from unittest.mock import patch
 
 import aiohttp
@@ -122,6 +123,83 @@ class LinkedInRateLimitTests(unittest.TestCase):
             _, stats = fi._scrape_site("glassdoor", 72, ["A", "B", "C"])
         self.assertEqual(calls, ["A remote"])
         self.assertEqual((stats["rate_limited"], stats["skipped_queries"]), (1, 2))
+
+
+class BlockCooldownTests(unittest.TestCase):
+    NOW = datetime(2026, 11, 23, 12, 0, tzinfo=timezone.utc)
+
+    def test_each_block_in_a_row_doubles_the_wait_up_to_the_cap(self):
+        state, hours = {}, []
+        for _ in range(4):
+            until = fi.record_block_outcome("linkedin", True, state, now=self.NOW)
+            hours.append((until - self.NOW).total_seconds() / 3600)
+        base = fi.BLOCK_COOLDOWN_HOURS
+        self.assertEqual(hours, [base, base * 2, base * 4, base * 4])
+        self.assertEqual(fi.cooldown_until("linkedin", state, now=self.NOW), until)
+        self.assertIsNone(fi.cooldown_until("linkedin", state, now=until + timedelta(seconds=1)))
+
+    def test_a_clean_run_clears_the_strikes(self):
+        state = {}
+        fi.record_block_outcome("linkedin", True, state, now=self.NOW)
+        self.assertIsNone(fi.record_block_outcome("linkedin", False, state, now=self.NOW))
+        self.assertEqual(state, {})
+        self.assertIsNone(fi.cooldown_until("linkedin", {"linkedin": {"until": "garbage"}}, now=self.NOW))
+
+    def run_fetch(self, state, blocked_sites=()):
+        calls = []
+
+        def fake_scrape(**kwargs):
+            site = kwargs["site_name"][0]
+            calls.append(site)
+            if site in blocked_sites:
+                logging.getLogger(f"jobspy.{site}").error("response status code 429 (blocked: use a proxy)")
+            return pd.DataFrame()
+
+        import tempfile
+        with tempfile.TemporaryDirectory() as tmp:
+            path = f"{tmp}/throttle.json"
+            if state is not None:
+                with open(path, "w", encoding="utf-8") as f:
+                    json.dump(state, f)
+            stats = {}
+            searches = [("linkedin", "United States", " remote", 10), ("indeed", "Remote", "", 10)]
+            with patch.object(fi, "scrape_jobs", fake_scrape), patch.object(fi, "SEARCHES", searches), \
+                    patch.object(fi, "THROTTLE_STATE_PATH", path), patch.object(fi, "LINKEDIN_PAUSE_SECONDS", 0), \
+                    patch.object(fi, "_install_linkedin_details_cache", lambda: (lambda: 0)), \
+                    contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
+                fi.fetch_indeed_jobs(stats=stats, terms=["A", "B"])
+            saved = fi.load_json(path, default=None)
+        return calls, stats, saved
+
+    def test_a_block_starts_a_cooldown_that_is_saved_and_reported(self):
+        calls, stats, saved = self.run_fetch(None, blocked_sites=("linkedin",))
+        self.assertEqual(calls.count("linkedin"), 1)
+        self.assertEqual(saved["linkedin"]["strikes"], 1)
+        self.assertEqual(stats["linkedin"]["cooldown_until"], saved["linkedin"]["until"])
+        with patch.object(run_pipeline, "load_json", lambda path: stats):
+            warnings = run_pipeline.source_health()["warnings"]
+        self.assertTrue(any(w.startswith("LinkedIn rate-limited: skipped 1 remaining queries; paused until")
+                            for w in warnings), warnings)
+
+    def test_a_cooling_site_is_not_queried_and_the_others_still_are(self):
+        until = (datetime.now(timezone.utc) + timedelta(hours=5)).isoformat()
+        state = {"linkedin": {"strikes": 1, "until": until}}
+        calls, stats, saved = self.run_fetch(state)
+        self.assertEqual(calls, ["indeed", "indeed"])
+        self.assertEqual(stats["linkedin"], {"raw": 0, "kept": 0, "cooldown_until": until, "cooldown_queries": 2})
+        self.assertEqual(saved, state)
+        with patch.object(run_pipeline, "load_json", lambda path: stats):
+            health = run_pipeline.source_health()
+        self.assertIn("LinkedIn 0 (cooling down)", health["line"])
+        self.assertTrue(any(w.startswith("LinkedIn cooling down after a block: skipped all 2 queries, next try after")
+                            for w in health["warnings"]), health["warnings"])
+        self.assertFalse(any(w.startswith("LinkedIn returned no rows") for w in health["warnings"]))
+
+    def test_an_expired_cooldown_is_retried_and_cleared_when_clean(self):
+        state = {"linkedin": {"strikes": 2, "until": "2026-01-01T00:00:00+00:00"}}
+        calls, _, saved = self.run_fetch(state)
+        self.assertEqual(calls.count("linkedin"), 2)
+        self.assertEqual(saved, {})
 
 
 class JobspySiteTests(unittest.TestCase):

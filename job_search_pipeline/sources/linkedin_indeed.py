@@ -9,7 +9,7 @@ import re
 import sys
 import time
 from concurrent.futures import ThreadPoolExecutor
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 import pandas as pd
 from jobspy import scrape_jobs
@@ -59,13 +59,42 @@ SEARCH_TERMS = _SOURCES_CFG["search_terms"]
 SEARCHES = [tuple(s) for s in _SOURCES_CFG["searches"]]
 # jobspy sites this module scrapes; ZipRecruiter and Google Jobs answer 403 / nothing without proxies
 JOBSPY_SITES = ("linkedin", "indeed", "glassdoor")
-# Sites that block bursts: pause between their queries and stop asking after the first block
+# Sites that block bursts: pause between their queries, stop asking after the first block, then cool down
 THROTTLED_SITES = ("linkedin", "glassdoor")
 LINKEDIN_PAUSE_SECONDS = int(_SOURCES_CFG["linkedin_pause_seconds"])
 COUNTRY_INDEED = _SOURCES_CFG["country_indeed"]
 
 LI_DETAILS_CACHE_PATH = get_path("linkedin_details_cache")
 LI_DETAILS_CACHE_DAYS = LOOKBACK_DAYS + 1
+
+# After a block, a throttled site is left alone for a while: asking again on every run keeps the block alive.
+# Each block in a row doubles the wait, up to BLOCK_COOLDOWN_MAX_FACTOR times the base.
+THROTTLE_STATE_PATH = get_path("throttle_state")
+BLOCK_COOLDOWN_HOURS = float(_SOURCES_CFG["block_cooldown_hours"])
+BLOCK_COOLDOWN_MAX_FACTOR = 4
+
+
+def cooldown_until(site, state, now=None):
+    """The time a throttled site's cooldown ends, or None when it may be queried now."""
+    now = now or datetime.now(timezone.utc)
+    try:
+        until = datetime.fromisoformat((state.get(site) or {})["until"])
+    except (KeyError, TypeError, ValueError):
+        return None
+    return until if until > now else None
+
+
+def record_block_outcome(site, blocked, state, now=None):
+    """Start or extend a site's cooldown after a block; clear it after a clean run. Returns the new end time."""
+    if not blocked:
+        state.pop(site, None)
+        return None
+    now = now or datetime.now(timezone.utc)
+    strikes = int((state.get(site) or {}).get("strikes", 0)) + 1
+    hours = BLOCK_COOLDOWN_HOURS * min(2 ** (strikes - 1), BLOCK_COOLDOWN_MAX_FACTOR)
+    until = now + timedelta(hours=hours)
+    state[site] = {"blocked_at": now.isoformat(), "strikes": strikes, "until": until.isoformat()}
+    return until
 
 
 def is_valid_jobspy_title(title):
@@ -362,12 +391,41 @@ def searched_sites(searches=None):
     return [site for site in JOBSPY_SITES if site in named]
 
 
+def _cooling_stats(site, until, terms):
+    queries = sum(1 for s in SEARCHES if s[0] == site) * len(terms)
+    print(f"  {site}: blocked recently; skipping all {queries} queries until {until:%Y-%m-%d %H:%M} UTC "
+          f"(delete {THROTTLE_STATE_PATH} to try sooner)", file=sys.stderr)
+    return [], {"raw": 0, "kept": 0, "cooldown_until": until.isoformat(), "cooldown_queries": queries}
+
+
 def fetch_indeed_jobs(lookback_hours=LOOKBACK_DAYS * 24, stats=None, terms=None):
     terms = terms or SEARCH_TERMS
     sites = searched_sites()
-    with ThreadPoolExecutor(max_workers=max(1, len(sites))) as pool:
-        futures = {site: pool.submit(_scrape_site, site, lookback_hours, terms) for site in sites}
+    throttle_state = load_json(THROTTLE_STATE_PATH, default={})
+    if not isinstance(throttle_state, dict):
+        throttle_state = {}
+    cooling = {site: until for site in sites if site in THROTTLED_SITES
+               and (until := cooldown_until(site, throttle_state))}
+    active = [site for site in sites if site not in cooling]
+    with ThreadPoolExecutor(max_workers=max(1, len(active))) as pool:
+        futures = {site: pool.submit(_scrape_site, site, lookback_hours, terms) for site in active}
         results = {site: f.result() for site, f in futures.items()}
+
+    state_before = dict(throttle_state)
+    for site in active:
+        if site in THROTTLED_SITES:
+            until = record_block_outcome(site, bool(results[site][1]["rate_limited"]), throttle_state)
+            if until:
+                results[site][1]["cooldown_until"] = until.isoformat()
+                print(f"  {site}: pausing this site until {until:%Y-%m-%d %H:%M} UTC so the block can expire",
+                      file=sys.stderr)
+    if throttle_state != state_before:
+        try:
+            atomic_write_json(THROTTLE_STATE_PATH, throttle_state)
+        except OSError as e:
+            print(f"Could not save the rate-limit cooldown state: {e}", file=sys.stderr)
+    for site, until in cooling.items():
+        results[site] = _cooling_stats(site, until, terms)
 
     scraped_jobs, seen = [], set()
     for site, (jobs, site_stats) in results.items():
@@ -377,6 +435,8 @@ def fetch_indeed_jobs(lookback_hours=LOOKBACK_DAYS * 24, stats=None, terms=None)
             if job["url"] not in seen:
                 seen.add(job["url"])
                 scraped_jobs.append(job)
+        if site in cooling:
+            continue
         print(f"  {site}: {site_stats['raw']} rows, {site_stats['kept']} passed filters"
               + (f", {site_stats['onsite_dropped']} dropped for a stated onsite requirement"
                  if site_stats.get('onsite_dropped') else "")
