@@ -104,7 +104,9 @@ def labeled_reviews(cache=None, jobs=None):
     Pass-1 triage skips are left out: they come from the cheap triage model, which never grades the rubric."""
     cache = load_json(get_path("review_cache"), default={}) if cache is None else cache
     if jobs is None:
-        jobs = [*(load_json(get_path("filtered_jobs"), default=[]) or []),
+        archive = load_json(get_path("reviewed_postings"), default={}) or {}
+        jobs = [*(archive.values() if isinstance(archive, dict) else []),
+                *(load_json(get_path("filtered_jobs"), default=[]) or []),
                 *(load_json(get_path("enriched_jobs"), default=[]) or [])]  # enriched last: it holds the JD
     by_url = {normalize_url(j.get("url", "")): j for j in jobs if isinstance(j, dict) and j.get("url")}
     labeled, missing = [], 0

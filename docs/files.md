@@ -27,6 +27,7 @@ Your own files sit next to these, ignored by git: `config.json`, `candidate_prof
 | [`config.example.json`](../config.example.json) | Tracked template for the career-agnostic configuration (sources, locations, pay, titles, skills, LLM rubric). |
 | `config.json` | Your own copy of the template, ignored by git; this is the file the pipeline reads and the one you edit. |
 | `config.draft.json` | Written by `--init-config` for you to review, ignored by git; the pipeline never reads it. |
+| `data/reviewed_postings.json` | Copy of every posting the AI review graded, kept after it ages out of `enriched_jobs.json` so `--calibrate` can replay it; follows the review cache, capped by `llm_review.posting_archive_max`. |
 | `config.calibrated.json` | Written by `--auto-calibrate` after replay verification against cached AI reviews, ignored by git; copy to `config.json` or pass `--auto-calibrate --apply`. |
 | [`workflows/`](../workflows) | Antigravity `run_workflow` scripts (`auto_calibrate_workflow.py` for parallel specialist rule tuning and `tiered_review_workflow.py` for two-stage agent fleet review). |
 | [`candidate_profile.example.md`](../candidate_profile.example.md) | Tracked template for the candidate profile. |

@@ -45,6 +45,7 @@ from job_search_pipeline.review import (  # noqa: E402
     _reuse_reposts,
     _salary_text,
     _save_cache,
+    archive_postings,
     cache_entry,
     _split_cached,
     _url_key,
@@ -194,6 +195,7 @@ async def run_tiered_review():
 
     results.update(fresh)
     _save_cache(cache, phash, changed=bool(fresh or repost_hits), triage_model=TRIAGE_TIER)
+    archive_postings(cache, ENRICHED_PATH)
 
     kept, skipped, failed, hidden = _apply_results(matches, results, deferred, MIN_REVIEW_SCORE)
     for job in kept:

@@ -33,6 +33,7 @@ _PRICING_CFG = _LLM_CFG.get("pricing") or {}
 
 PROFILE_PATH = get_path("candidate_profile")
 CACHE_PATH = get_path("review_cache")
+ARCHIVE_PATH = get_path("reviewed_postings")
 SPEND_PATH = get_path("llm_spend")
 SPEND_KEEP_DAYS = 90
 # A cached review is reused for a repost (new URL, same company and title) when the JD texts are this similar
@@ -882,6 +883,35 @@ def cache_entry(phash, result, job, jd, triage_model=""):
     return entry
 
 
+def archive_postings(cache, enriched_path, archive_path=None, limit=None):
+    """Keep a copy of each reviewed posting in data/reviewed_postings.json, keyed like the review cache.
+
+    filtered/enriched_jobs.json only hold the last `sources.lookback_days` of postings, so without this a
+    review outlives its posting text within days and `--calibrate` can no longer replay the rules on it.
+    Entries follow the cache (a pruned review drops its posting) and the newest `limit` are kept
+    (llm_review.posting_archive_max; 0 turns archiving off). Returns the number of postings archived.
+    """
+    archive_path = archive_path or ARCHIVE_PATH
+    limit = int(_LLM_CFG.get("posting_archive_max", 1000)) if limit is None else limit
+    if limit <= 0:
+        return 0
+    archive = load_json(archive_path, default={})
+    archive = archive if isinstance(archive, dict) else {}
+    before = dict(archive)
+    for job in load_json(enriched_path, default=[]) or []:
+        key = _url_key(job) if isinstance(job, dict) else ""
+        if key and key in cache and key not in archive and job.get("description_full") \
+                and not (job.get("description_ai") or "").startswith("Posting expired"):
+            archive[key] = {k: v for k, v in job.items() if k != "score"}
+    archive = {k: v for k, v in archive.items() if k in cache and isinstance(v, dict)}
+    if len(archive) > limit:
+        newest = sorted(archive, key=lambda k: archive[k].get("first_seen") or "", reverse=True)[:limit]
+        archive = {k: archive[k] for k in newest}
+    if archive != before:
+        atomic_write_json(archive_path, archive)
+    return len(archive)
+
+
 def _save_cache(cache, phash, changed, triage_model=""):
     """Drop entries that can never be read again (another profile, prompt, model or provider, or a triage
     skip from a triage model no longer in use), and write the cache when anything changed."""
@@ -964,6 +994,10 @@ def review_matches(matches, enriched_path, min_score=55, stats=None):
             cache[key] = cache_entry(phash, fresh[key], job, jd_by_url.get(key) or "", triage_model)
     results.update(fresh)
     _save_cache(cache, phash, changed=bool(todo or repost_hits), triage_model=triage_model)
+    try:
+        archive_postings(cache, enriched_path)
+    except OSError as error:  # the archive only feeds --calibrate; never fail a run over it
+        print(f"[AI review] could not update the posting archive: {error}", file=sys.stderr)
 
     kept, skipped, failed, hidden = _apply_results(matches, results, deferred, min_score)
     summary = {
