@@ -19,7 +19,8 @@ _DATA_FILES = {
     "blocklist": "blocklist.json", "role_blocklist": "blocklist_roles.json",
     "review_cache": "review_cache.json", "reviewed_postings": "reviewed_postings.json",
     "run_history": "run_history.json",
-    "linkedin_details_cache": "linkedin_details_cache.json", "candidate_profile": "candidate_profile.md",
+    "linkedin_details_cache": "linkedin_details_cache.json", "throttle_state": "throttle_state.json",
+    "candidate_profile": "candidate_profile.md",
     "text_export": "job_matches.txt", "llm_spend": "llm_spend.json",
     "html_digest": "digest.html", "digest_store": "digest_matches.json",
 }

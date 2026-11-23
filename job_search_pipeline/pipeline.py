@@ -63,6 +63,14 @@ def _feed_warnings(feed):
     return warnings
 
 
+def _short_time(iso):
+    """'Nov 24 19:12' in local time for an ISO timestamp, or None."""
+    try:
+        return datetime.fromisoformat(iso).astimezone().strftime("%b %d %H:%M")
+    except (TypeError, ValueError):
+        return None
+
+
 def source_health(path=SOURCE_STATS_PATH):
     """One line of per-source counts from the last fetch, plus warnings for sources that look broken or stale."""
     stats = load_json(path)
@@ -80,12 +88,19 @@ def source_health(path=SOURCE_STATS_PATH):
         part = f"{label} {s.get('kept', 0)}"
         if s.get("rate_limited"):
             part += f" ({s['rate_limited']} rate-limited)"
-        if s.get("skipped_queries"):
-            warnings.append(f"{label} rate-limited: skipped {s['skipped_queries']} remaining queries")
+        until = _short_time(s.get("cooldown_until"))
+        cooling = s.get("cooldown_queries") is not None
+        if cooling:
+            part += " (cooling down)"
+            warnings.append(f"{label} cooling down after a block: skipped all {s['cooldown_queries']} queries"
+                            + (f", next try after {until}" if until else ""))
+        elif s.get("skipped_queries") or (s.get("rate_limited") and until):
+            warnings.append(f"{label} rate-limited: skipped {s.get('skipped_queries', 0)} remaining queries"
+                            + (f"; paused until {until}" if until else ""))
         parts.append(part)
         if s.get("error"):
             warnings.append(f"{label} fetch failed: {s['error']}")
-        elif key in ("linkedin", "indeed", "glassdoor") and s.get("raw", 0) == 0:
+        elif key in ("linkedin", "indeed", "glassdoor") and not cooling and s.get("raw", 0) == 0:
             warnings.append(f"{label} returned no rows at all (blocked, or jobspy needs an update?)")
     return {"line": "Sources (postings that passed filters): " + " · ".join(parts), "warnings": warnings}
 
