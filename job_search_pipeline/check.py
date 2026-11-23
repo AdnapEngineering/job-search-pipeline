@@ -98,7 +98,7 @@ def check_config(report):
     cfg = config.CFG
     if not os.path.exists(path):
         report.add(FAIL, "Config", f"no {os.path.relpath(path, ROOT_DIR) if path.startswith(ROOT_DIR) else path} yet; "
-                                   "draft one with --init-config, or `cp config.example.json config.json` and edit it")
+                                   "run `python3 -m job_search_pipeline.setup` to create one")
         return config, cfg
     report.add(OK, "Config", os.path.relpath(path, ROOT_DIR) if path.startswith(ROOT_DIR) else path)
     raw = config.load_json(path, default={}) or {}

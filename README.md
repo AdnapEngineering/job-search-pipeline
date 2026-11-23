@@ -7,7 +7,7 @@ Each run pulls postings from about 1.4 million company job boards (through [job-
 
 > **Credit:** the ATS listings, come from Riley Dorrington's [job-board-aggregator](https://github.com/Riley-Dorrington/job-board-aggregator) (MIT). It indexes 1M+ active postings from 20,000+ companies' Greenhouse, Lever, Ashby, Workday and other boards, refreshed daily by GitHub Actions and published to [job-board-data](https://github.com/Riley-Dorrington/job-board-data). If this pipeline helps you, give that project a star.
 
-Everything specific to your search lives in two files you own: `config.json` (titles, skills, scoring, pay and experience limits, locations, companies to skip, the AI rubric) and `candidate_profile.md` (your background). Both start as copies of tracked templates, [`config.example.json`](config.example.json) and [`candidate_profile.example.md`](candidate_profile.example.md). None of the Python code is tied to one career.
+Your search settings live in `config.json`, which guided setup creates for you. An optional `candidate_profile.md` describes your background for AI review. Both files stay on your computer and are ignored by git. None of the Python code is tied to one career.
 
 Every run also writes a page of matches you can open in a browser, with no account needed. This one uses made-up data:
 
@@ -17,29 +17,31 @@ Every run also writes a page of matches you can open in a browser, with no accou
 
 ## Quickstart
 
-Get a first list of matches in your browser, with no Notion, AI reviewer or push notifications. Each can be added later.
+Get a first list in your browser without Notion, an AI account, or notifications. The guided setup is for **US-based searches**; other countries need [additional configuration](docs/configuration.md#location-rules).
+
+1. Install [Git](https://git-scm.com/install/), [Python 3.10 or newer](https://www.python.org/downloads/), and [uv](https://docs.astral.sh/uv/getting-started/installation/). The commands below are for macOS or Linux.
+2. Open Terminal and paste these commands, then answer the setup questions when prompted:
 
 ```bash
 git clone https://github.com/AdnapEngineering/job-search-pipeline.git
 cd job-search-pipeline
-uv sync                              # creates .venv with the locked dependencies (no uv? see Install options)
-source .venv/bin/activate
-
-cp config.example.json config.json   # then edit it (see below), or draft it with --init-config
-python3 -m job_search_pipeline --check   # flags typos and settings still at their placeholders
-python3 -m job_search_pipeline --no-notion --no-llm-review --no-notify
-xdg-open data/digest.html            # macOS: open data/digest.html
+python3 -m job_search_pipeline.setup
 ```
 
-In your copy, replace the placeholders in the settings you have to change:
+Setup never replaces an existing config. Your answers are stored locally; searches send your job titles and search location to job sources.
 
-- `sources.search_terms` / `searches`: the job titles to search LinkedIn and Indeed for, and where (your city, or `Remote`).
-- `location`: your metro area's name and cities, and `home_states` / `home_timezones` if remote roles must match them.
-- `titles`: regexes for titles to keep (`target_patterns`), titles that score highest (`strong_target_patterns`, `primary_role_groups`) and levels to skip.
-- `skills_and_scoring`: your skills (`core_strengths`), weighted domain terms (`focus_keywords`) and skills that rule a job out (`hard_exclude_skills`).
-- `compensation.min_salary` / `experience.max_min_yoe`: the pay floor and the most years of experience a posting may ask for.
+3. When setup finishes, paste these commands:
 
-Every other setting in the template shows its built-in default (from [`job_search_pipeline/defaults.py`](job_search_pipeline/defaults.py)), so you can delete the ones you leave alone; see [Configuration](docs/configuration.md). Next steps: write [`candidate_profile.md`](docs/configuration.md#candidate_profilemd) and [choose an LLM provider](docs/configuration.md#ai-reviewer) for the AI review, add [Notion](docs/outputs.md) or [Obsidian](docs/outputs.md#obsidian) and [ntfy](#environment-variables), and [schedule it with cron](#cron).
+```bash
+uv sync
+source .venv/bin/activate
+python3 -m job_search_pipeline --check
+python3 -m job_search_pipeline --no-notion --no-llm-review --no-notify
+```
+
+The check may warn that optional AI features are missing; that is fine for this first search. When the search finishes, open `data/digest.html` in your browser (on Linux run `xdg-open data/digest.html`; on macOS run `open data/digest.html`).
+
+The starter looks for the exact title phrases you enter and scores jobs by matching your skills. Add title variations and several specific skills for better results. It searches remote roles, plus local roles if you enter a city; remote roles restricted to other states or time zones are not automatically excluded. Some default sources focus on software jobs, so coverage varies by career. Existing filters also reject jobs requiring security clearance or a foreign language by default. See [Configuration](docs/configuration.md) to adjust these rules or search outside the US.
 
 ---
 
@@ -164,6 +166,10 @@ pip install ruff==0.15.20     # for development (see Tests)
 ```
 
 ### Your config and profile
+
+For a guided first config, run `python3 -m job_search_pipeline.setup`. It creates a small `config.json` without requiring AI or editing JSON. It does not replace an existing config. To change it later, edit it as described in [Configuration](docs/configuration.md); to start over, first move or rename your existing config.
+
+Alternatively, create the full template and optional profile manually:
 
 ```bash
 cp config.example.json config.json         # or draft it with --init-config (below)
