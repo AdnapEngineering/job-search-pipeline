@@ -9,19 +9,34 @@ import re
 import sys
 import time
 from concurrent.futures import ThreadPoolExecutor
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 
 import pandas as pd
 from jobspy import scrape_jobs
 
+from job_search_pipeline.config import (
+    CFG,
+    atomic_write_json,
+    compile_alternation,
+    compile_regex_list,
+    get_path,
+    load_json,
+    term_regex,
+)
 from job_search_pipeline.evaluate import (
-    JD_HYBRID_ONSITE_RE, JD_US_REMOTE_RE, _excluded_skill_mentions, distinct_skills, hard_onsite_passage,
+    JD_HYBRID_ONSITE_RE,
+    JD_US_REMOTE_RE,
+    _excluded_skill_mentions,
+    distinct_skills,
+    hard_onsite_passage,
 )
 from job_search_pipeline.sources.filter import (
-    FILTERED_JOBS_PATH, LOOKBACK_DAYS, MIN_SALARY, is_local_metro, is_valid_company, names_foreign_place,
-)
-from job_search_pipeline.config import (
-    CFG, atomic_write_json, compile_alternation, compile_regex_list, get_path, load_json, term_regex,
+    FILTERED_JOBS_PATH,
+    LOOKBACK_DAYS,
+    MIN_SALARY,
+    is_local_metro,
+    is_valid_company,
+    names_foreign_place,
 )
 from job_search_pipeline.urls import is_aggregator_url, normalize_url
 
@@ -39,13 +54,13 @@ _JD_STRONG_REMOTE_RE = re.compile(
     r'\b(?:fully|100%|completely|entirely) remote\b|\bremote[- ](?:first|friendly)\b'
     r'|\bremote\s*[-–(]\s*(?:us|usa|united states)\b|\((?:fully )?remote\)|\blocation:\s*remote\b'
     r'|\bwork(?:ing)? from home\b|\bwork(?:ing)? remotely\b'
-    r'|\bremote (?:work|onboarding|position|role|opportunity|employees?)\b', re.I
+    r'|\bremote (?:work|onboarding|position|role|opportunity|employees?)\b', re.IGNORECASE
 )
-_JD_WEAK_REMOTE_RE = re.compile(r'\bremote(?:ly)?\b', re.I)
+_JD_WEAK_REMOTE_RE = re.compile(r'\bremote(?:ly)?\b', re.IGNORECASE)
 _JD_OFFICE_RE = re.compile(
     r'\bin[- ]office perks\b|\brelocation (?:expense|assistance|package|support|coverage)'
     r'|\bfree (?:meals|lunch)\b[^.\n]{0,30}\b(?:hub|office)\b|\bteam (?:is )?based in\b'
-    r'|\b(?:\d+|three|four|five) days? (?:a|per) week\b', re.I
+    r'|\b(?:\d+|three|four|five) days? (?:a|per) week\b', re.IGNORECASE
 )
 
 
@@ -76,7 +91,7 @@ BLOCK_COOLDOWN_MAX_FACTOR = 4
 
 def cooldown_until(site, state, now=None):
     """The time a throttled site's cooldown ends, or None when it may be queried now."""
-    now = now or datetime.now(timezone.utc)
+    now = now or datetime.now(UTC)
     try:
         until = datetime.fromisoformat((state.get(site) or {})["until"])
     except (KeyError, TypeError, ValueError):
@@ -89,7 +104,7 @@ def record_block_outcome(site, blocked, state, now=None):
     if not blocked:
         state.pop(site, None)
         return None
-    now = now or datetime.now(timezone.utc)
+    now = now or datetime.now(UTC)
     strikes = int((state.get(site) or {}).get("strikes", 0)) + 1
     hours = BLOCK_COOLDOWN_HOURS * min(2 ** (strikes - 1), BLOCK_COOLDOWN_MAX_FACTOR)
     until = now + timedelta(hours=hours)
@@ -192,7 +207,7 @@ def _install_linkedin_details_cache():
         return lambda: 0
     original = getattr(LinkedIn, method)
 
-    cutoff = datetime.now(timezone.utc).timestamp() - LI_DETAILS_CACHE_DAYS * 86400
+    cutoff = datetime.now(UTC).timestamp() - LI_DETAILS_CACHE_DAYS * 86400
     stored_cache = load_json(LI_DETAILS_CACHE_PATH, default={})
     cache = {k: v for k, v in stored_cache.items() if v.get("fetched", 0) >= cutoff}
     hits = 0
@@ -215,7 +230,7 @@ def _install_linkedin_details_cache():
             stored["job_type"] = [t.name for t in details.get("job_type") or []]
             if isinstance(details.get("interval"), CompensationInterval):
                 stored["interval"] = details["interval"].name
-            cache[job_id] = {"fetched": datetime.now(timezone.utc).timestamp(), "details": stored}
+            cache[job_id] = {"fetched": datetime.now(UTC).timestamp(), "details": stored}
         return details
 
     setattr(LinkedIn, method, cached_details)
@@ -272,7 +287,6 @@ def _dropped(counts, reason):
     if counts is not None:
         dropped = counts.setdefault("dropped", {})
         dropped[reason] = dropped.get(reason, 0) + 1
-    return None
 
 
 def _row_to_job(row, counts=None):
@@ -322,7 +336,7 @@ def _row_to_job(row, counts=None):
         "remote": evidence == "remote",
         "salary": _salary_from_row(sal_min, sal_max),
         "url": url,
-        "first_seen": datetime.now(timezone.utc).isoformat(),
+        "first_seen": datetime.now(UTC).isoformat(),
         "posted": str(row["date_posted"])[:10] if pd.notna(row.get("date_posted")) else None,
         "description_ai": desc,
         "description_full": desc,

@@ -444,7 +444,7 @@ def _cli_response(executable, provider, model, prompt, timeout=None):
         raise ValueError("unsupported CLI provider")
     with tempfile.TemporaryDirectory() as cwd:
         result = subprocess.run(command, input=stdin, capture_output=True, text=True,
-                                timeout=timeout or TIMEOUT_SECONDS, cwd=cwd)
+                                timeout=timeout or TIMEOUT_SECONDS, cwd=cwd, check=False)
     if result.returncode != 0:
         raise RuntimeError(f"CLI exited with code {result.returncode}")
     if provider == "openai":
@@ -474,7 +474,8 @@ def _cli_response(executable, provider, model, prompt, timeout=None):
                 raise RuntimeError("Claude reported failure")
             response = envelope.get("result")
     if not isinstance(response, str):
-        raise ValueError("CLI returned no text")
+        # ValueError, not TypeError: init_config and calibrate catch ValueError for a bad CLI reply
+        raise ValueError("CLI returned no text")  # noqa: TRY004
     return response, usage
 
 
@@ -503,7 +504,7 @@ def _parse_triage(text, salary=None):
     if hard_reqs > 0 and logistics_ok and not pay_blocked and not (HIDE_THIRD_PARTY and third_party):
         return None, True
     parts = {"hard_reqs": hard_reqs, "core_work": 0, "evidence": 0, "level": level}
-    score, verdict = score_components(parts, logistics_ok, pay)
+    score, _verdict = score_components(parts, logistics_ok, pay)
     blockers = obj.get("blockers") or []
     blockers = [str(b)[:60] for b in blockers][:6] if isinstance(blockers, list) else []
     if _below_pay_floor(pay):

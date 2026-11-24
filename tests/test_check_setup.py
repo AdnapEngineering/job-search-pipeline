@@ -1,9 +1,9 @@
 """Setup check: config typos and placeholders, env-file loading, and the Notion property list."""
-import _fixture_config  # noqa: F401  (must come before any pipeline import)
-
 import os
 import tempfile
 import unittest
+
+import _fixture_config  # noqa: F401  (must come before any pipeline import)
 
 import job_search_pipeline.check as cs
 import job_search_pipeline.outputs.notion as sync

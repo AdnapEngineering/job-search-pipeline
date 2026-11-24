@@ -10,12 +10,26 @@ from urllib.parse import urlparse
 
 import aiohttp
 
-from job_search_pipeline.blocklist import is_blocked, load_blocklist, load_role_blocklist
+from job_search_pipeline.blocklist import (
+    is_blocked,
+    load_blocklist,
+    load_role_blocklist,
+)
 from job_search_pipeline.config import CFG, get_path, load_json
-from job_search_pipeline.evaluate import (DROP_RULES, SECONDARY_FLOOR, STRONG_FLOOR, evaluate_job_traced,
-                                          score_breakdown)
-from job_search_pipeline.sources.filter import (is_recent, is_valid_company, is_valid_location, is_valid_salary,
-                                                title_reject_reason)
+from job_search_pipeline.evaluate import (
+    DROP_RULES,
+    SECONDARY_FLOOR,
+    STRONG_FLOOR,
+    evaluate_job_traced,
+    score_breakdown,
+)
+from job_search_pipeline.sources.filter import (
+    is_recent,
+    is_valid_company,
+    is_valid_location,
+    is_valid_salary,
+    title_reject_reason,
+)
 from job_search_pipeline.urls import normalize_url
 
 ENRICHED_JOBS = get_path("enriched_jobs")
@@ -110,7 +124,7 @@ def explain(url, title=None, company=None, location=None, rescrape=False, out=pr
     """Print the full trace for one posting. Returns 0, or 1 when the posting could not be built."""
     try:
         job, origin = build_job(url, title, company, location, rescrape)
-    except (aiohttp.ClientError, asyncio.TimeoutError, OSError) as e:
+    except (TimeoutError, aiohttp.ClientError, OSError) as e:
         out(f"Could not fetch {url}: {type(e).__name__}: {e}")
         return 1
 

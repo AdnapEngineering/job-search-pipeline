@@ -1,11 +1,11 @@
 """--calibrate and --auto-calibrate: replaying and auto-tuning Stage 3 rules over cached AI reviews."""
-import _fixture_config  # noqa: F401  (must come before any pipeline import)
-
 import json
 import os
 import tempfile
 import unittest
 from unittest.mock import patch
+
+import _fixture_config  # noqa: F401  (must come before any pipeline import)
 
 import job_search_pipeline.calibrate as cal
 
@@ -178,7 +178,7 @@ class HoldoutTests(unittest.TestCase):
         train, held = cal.split_holdout(HOLDOUT_SET)
         self.assertEqual(len(train) + len(held), len(HOLDOUT_SET))
         self.assertEqual(sorted(r["verdict"] for _, r in held), ["apply", "skip", "stretch"])
-        again_train, again_held = cal.split_holdout(list(reversed(HOLDOUT_SET)))
+        _again_train, again_held = cal.split_holdout(list(reversed(HOLDOUT_SET)))
         self.assertEqual({j["url"] for j, _ in held}, {j["url"] for j, _ in again_held})
 
     def test_single_review_verdicts_stay_in_train_and_zero_disables(self):

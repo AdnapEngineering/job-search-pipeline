@@ -1,15 +1,14 @@
 """Stage 5: Notion rate limits, per-page blocklisting, held reviews, and honest summary counts."""
-import _fixture_config  # noqa: F401  (must come before any pipeline import)
-
 import contextlib
 import io
 import unittest
 from unittest.mock import patch
 
-import job_search_pipeline.blocklist as blocklist
-import job_search_pipeline.pipeline as run_pipeline
-import job_search_pipeline.review as review
+import _fixture_config  # noqa: F401  (must come before any pipeline import)
+
 import job_search_pipeline.outputs.notion as sync
+import job_search_pipeline.pipeline as run_pipeline
+from job_search_pipeline import blocklist, review
 from job_search_pipeline.config import atomic_write_json, load_json
 
 

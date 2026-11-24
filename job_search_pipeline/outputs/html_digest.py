@@ -8,7 +8,7 @@ applied or hidden is remembered in that browser only.
 import html
 import json
 import os
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 
 from job_search_pipeline.config import CFG, atomic_write_json, get_path, load_json
 from job_search_pipeline.urls import normalize_url
@@ -51,7 +51,7 @@ def update_store(eval_results, synced_urls=(), exported_urls=(), path=None, now=
 
     Matches not seen this run keep their last record until KEEP_DAYS after they were last seen."""
     path = path or DIGEST_STORE_PATH
-    now = now or datetime.now(timezone.utc).isoformat(timespec="seconds")
+    now = now or datetime.now(UTC).isoformat(timespec="seconds")
     store = load_json(path, default={})
     if not isinstance(store, dict):
         store = {}
@@ -117,7 +117,7 @@ def render_html(data):
 def write_digest(eval_results, synced_urls=(), exported_urls=(), path=None, min_score=80, spend=None):
     """Update the match store and rewrite the HTML page; returns the page path."""
     path = path or HTML_DIGEST_PATH
-    now = datetime.now(timezone.utc).isoformat(timespec="seconds")
+    now = datetime.now(UTC).isoformat(timespec="seconds")
     store = update_store(eval_results, synced_urls, exported_urls, now=now)
     os.makedirs(os.path.dirname(os.path.abspath(path)), exist_ok=True)
     tmp = path + ".tmp"

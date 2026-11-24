@@ -1,11 +1,11 @@
 """Job-board sources: salary parsing (it feeds the pay floor), the Hacker News "Who is hiring?" parser,
 and the Himalayas and We Work Remotely fetchers."""
-import _fixture_config  # noqa: F401  (must come before any pipeline import)
-
 import unittest
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from email.utils import format_datetime
 from unittest.mock import patch
+
+import _fixture_config  # noqa: F401  (must come before any pipeline import)
 
 import job_search_pipeline.sources.job_boards as jb
 
@@ -40,7 +40,7 @@ class RemoteBoardLocationTests(unittest.TestCase):
 
 
 def _iso(days_ago):
-    return (datetime.now(timezone.utc) - timedelta(days=days_ago)).isoformat().replace("+00:00", "Z")
+    return (datetime.now(UTC) - timedelta(days=days_ago)).isoformat().replace("+00:00", "Z")
 
 
 def comment(cid, text, days_ago=0):
@@ -102,7 +102,7 @@ def hima(title, days_ago=0, **extra):
     item = {"title": title, "companyName": "Acme", "employmentType": "Full Time",
             "locationRestrictions": ["United States"], "currency": "USD", "minSalary": None, "maxSalary": None,
             "salaryPeriod": "annual", "description": "<p>React and TypeScript.</p>",
-            "pubDate": int((datetime.now(timezone.utc) - timedelta(days=days_ago)).timestamp()),
+            "pubDate": int((datetime.now(UTC) - timedelta(days=days_ago)).timestamp()),
             "guid": f"https://himalayas.app/companies/acme/jobs/{title.lower().replace(' ', '-')}"}
     item.update(extra)
     return item
@@ -155,7 +155,7 @@ class HimalayasTests(unittest.TestCase):
 
 
 def wwr_item(title, region="USA Only", days_ago=0, job_type="Full-Time"):
-    when = format_datetime(datetime.now(timezone.utc) - timedelta(days=days_ago))
+    when = format_datetime(datetime.now(UTC) - timedelta(days=days_ago))
     slug = title.lower().replace(" ", "-").replace(":", "")
     return (f"<item><title>{title}</title><region>{region}</region><country></country><type>{job_type}</type>"
             f"<description>&lt;p&gt;React.&lt;/p&gt;</description><pubDate>{when}</pubDate>"

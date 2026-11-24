@@ -4,10 +4,10 @@ They run against tests/fixtures/search_config.json (a made-up Denver-metro front
 hold whatever the real config.json says. Each case is the phrasing of a posting a rule once got wrong;
 add one whenever a rule changes.
 """
-import _fixture_config  # noqa: F401  (must come before any pipeline import)
-
 import unittest
 import unittest.mock
+
+import _fixture_config  # noqa: F401  (must come before any pipeline import)
 
 import job_search_pipeline.evaluate as ev
 import job_search_pipeline.sources.filter as ff
@@ -104,11 +104,11 @@ class TitleTests(unittest.TestCase):
             ("Location: Hybrid in Denver, CO", False),  # hybrid in the home metro is fine
             ("### Location On-site, five days per week in New York, New York.", True),
             ("We're remote-first, with the opportunity to work anywhere in Australia.", True),
-            ("Build interfaces for US-based clients. You'll work 100% remotely from LATAM, collaborating closely "
-             "with design and backend teams.", True),
+            (("Build interfaces for US-based clients. You'll work 100% remotely from LATAM, collaborating closely "
+              "with design and backend teams."), True),
             ("This is a remote role open to candidates based in Manitoba.", True),
-            ("We are unable to consider applications from candidates based in France, Italy, or Germany. "
-             "Join a remote-first, global team.", False),
+            (("We are unable to consider applications from candidates based in France, Italy, or Germany. "
+              "Join a remote-first, global team."), False),
         ]
         for desc, want in cases:
             with self.subTest(desc=desc[:60]):

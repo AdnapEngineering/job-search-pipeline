@@ -1,15 +1,21 @@
 """Glassdoor links re-pointed at the employer's Greenhouse / Lever / Ashby posting before sync."""
-import _fixture_config  # noqa: F401  (must come before any pipeline import)
-
 import contextlib
 import io
 import unittest
 
-import job_search_pipeline.blocklist as blocklist
+import _fixture_config  # noqa: F401  (must come before any pipeline import)
+
 import job_search_pipeline.outputs.notion as sync
+from job_search_pipeline import blocklist
 from job_search_pipeline.config import atomic_write_json, load_json
-from job_search_pipeline.direct_links import (Resolver, board_from_url, known_boards, match_posting,
-                                              resolve_direct_links, slug_guesses)
+from job_search_pipeline.direct_links import (
+    Resolver,
+    board_from_url,
+    known_boards,
+    match_posting,
+    resolve_direct_links,
+    slug_guesses,
+)
 
 GD = "https://www.glassdoor.com/job-listing/j?jl=101"
 

@@ -1,6 +1,4 @@
 """Guided setup creates usable searches without overwriting existing settings."""
-import _fixture_config  # noqa: F401
-
 import json
 import os
 import subprocess
@@ -8,6 +6,8 @@ import sys
 import tempfile
 import unittest
 from unittest.mock import patch
+
+import _fixture_config  # noqa: F401
 
 from job_search_pipeline import setup
 
@@ -37,17 +37,17 @@ class GuidedSetupTest(unittest.TestCase):
         env = dict(os.environ, JOB_PIPELINE_CONFIG=self.path)
         result = subprocess.run(
             [sys.executable, "-c",
-             "from job_search_pipeline.sources.filter import is_valid_title; "
-             "from job_search_pipeline.sources.linkedin_indeed import is_valid_jobspy_title; "
-             "from job_search_pipeline.evaluate import evaluate_job_traced; "
-             "assert is_valid_title('Senior Product Manager'); "
-             "assert is_valid_jobspy_title('Senior Product Manager'); "
-             "assert not is_valid_title('Software Engineer'); "
-             "job = {'company': 'Example', 'title': 'Product Manager', 'location': 'Remote', "
-             "'description_ai': 'Remote work. Planning, SQL and budgeting. ' * 4}; "
-             "result, rejection = evaluate_job_traced(job); "
-             "assert result and result['score'] >= 55, rejection"],
-            env=env, capture_output=True, text=True,
+             ("from job_search_pipeline.sources.filter import is_valid_title; "
+              "from job_search_pipeline.sources.linkedin_indeed import is_valid_jobspy_title; "
+              "from job_search_pipeline.evaluate import evaluate_job_traced; "
+              "assert is_valid_title('Senior Product Manager'); "
+              "assert is_valid_jobspy_title('Senior Product Manager'); "
+              "assert not is_valid_title('Software Engineer'); "
+              "job = {'company': 'Example', 'title': 'Product Manager', 'location': 'Remote', "
+              "'description_ai': 'Remote work. Planning, SQL and budgeting. ' * 4}; "
+              "result, rejection = evaluate_job_traced(job); "
+              "assert result and result['score'] >= 55, rejection")],
+            env=env, capture_output=True, text=True, check=False,
         )
         self.assertEqual(result.returncode, 0, result.stderr)
 
@@ -63,12 +63,12 @@ class GuidedSetupTest(unittest.TestCase):
         env = dict(os.environ, JOB_PIPELINE_CONFIG=self.path)
         result = subprocess.run(
             [sys.executable, "-c",
-             "from job_search_pipeline.sources.filter import is_valid_title, is_local_metro; "
-             "from job_search_pipeline.evaluate import jd_location_ok; "
-             "assert is_valid_title('C++ Developer'); assert not is_valid_title('CXX Developer'); "
-             "assert is_local_metro('St. Louis, MO'); "
-             "assert jd_location_ok('This position is onsite in St. Louis.')"],
-            env=env, capture_output=True, text=True,
+             ("from job_search_pipeline.sources.filter import is_valid_title, is_local_metro; "
+              "from job_search_pipeline.evaluate import jd_location_ok; "
+              "assert is_valid_title('C++ Developer'); assert not is_valid_title('CXX Developer'); "
+              "assert is_local_metro('St. Louis, MO'); "
+              "assert jd_location_ok('This position is onsite in St. Louis.')")],
+            env=env, capture_output=True, text=True, check=False,
         )
         self.assertEqual(result.returncode, 0, result.stderr)
 
@@ -83,12 +83,12 @@ class GuidedSetupTest(unittest.TestCase):
         env = dict(os.environ, JOB_PIPELINE_CONFIG=self.path)
         result = subprocess.run(
             [sys.executable, "-c",
-             "from job_search_pipeline.sources.filter import is_valid_title, is_local_metro, STRONG_TARGET_RE; "
-             "assert is_valid_title('Senior Software Engineer'); "
-             "assert not is_valid_title('Software Engineering Manager'); "
-             "assert is_valid_title('.NET Developer'); assert STRONG_TARGET_RE.search('.net developer'); "
-             "assert is_local_metro('Round Rock, TX'); assert not is_local_metro('Houston, TX')"],
-            env=env, capture_output=True, text=True,
+             ("from job_search_pipeline.sources.filter import is_valid_title, is_local_metro, STRONG_TARGET_RE; "
+              "assert is_valid_title('Senior Software Engineer'); "
+              "assert not is_valid_title('Software Engineering Manager'); "
+              "assert is_valid_title('.NET Developer'); assert STRONG_TARGET_RE.search('.net developer'); "
+              "assert is_local_metro('Round Rock, TX'); assert not is_local_metro('Houston, TX')")],
+            env=env, capture_output=True, text=True, check=False,
         )
         self.assertEqual(result.returncode, 0, result.stderr)
 

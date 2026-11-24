@@ -1,6 +1,4 @@
 """Config loading: your own config.json is laid over the built-in defaults; the template is never read."""
-import _fixture_config  # noqa: F401  (must come before any pipeline import)
-
 import contextlib
 import io
 import json
@@ -8,6 +6,8 @@ import os
 import tempfile
 import unittest
 from unittest.mock import patch
+
+import _fixture_config  # noqa: F401  (must come before any pipeline import)
 
 import job_search_pipeline.config as pipeline_config
 import job_search_pipeline.outputs.notion as sync

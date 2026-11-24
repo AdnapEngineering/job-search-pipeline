@@ -1,23 +1,21 @@
 """Stage 1: LinkedIn/Indeed remote evidence and stack detection, and surviving a feed outage."""
-import _fixture_config  # noqa: F401  (must come before any pipeline import)
-
 import asyncio
 import contextlib
 import io
 import json
 import logging
 import unittest
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from unittest.mock import patch
 
+import _fixture_config  # noqa: F401  (must come before any pipeline import)
 import aiohttp
 import pandas as pd
-
 from jobspy.linkedin import LinkedIn
 
+import job_search_pipeline.pipeline as run_pipeline
 import job_search_pipeline.sources.filter as ff
 import job_search_pipeline.sources.linkedin_indeed as fi
-import job_search_pipeline.pipeline as run_pipeline
 
 
 class RemoteEvidenceTests(unittest.TestCase):
@@ -126,7 +124,7 @@ class LinkedInRateLimitTests(unittest.TestCase):
 
 
 class BlockCooldownTests(unittest.TestCase):
-    NOW = datetime(2026, 11, 23, 12, 0, tzinfo=timezone.utc)
+    NOW = datetime(2026, 11, 23, 12, 0, tzinfo=UTC)
 
     def test_each_block_in_a_row_doubles_the_wait_up_to_the_cap(self):
         state, hours = {}, []
@@ -182,7 +180,7 @@ class BlockCooldownTests(unittest.TestCase):
                             for w in warnings), warnings)
 
     def test_a_cooling_site_is_not_queried_and_the_others_still_are(self):
-        until = (datetime.now(timezone.utc) + timedelta(hours=5)).isoformat()
+        until = (datetime.now(UTC) + timedelta(hours=5)).isoformat()
         state = {"linkedin": {"strikes": 1, "until": until}}
         calls, stats, saved = self.run_fetch(state)
         self.assertEqual(calls, ["indeed", "indeed"])
@@ -246,7 +244,7 @@ class FeedOutageTests(unittest.TestCase):
 
     def test_manifest_failure_keeps_the_other_sources(self):
         for error in (json.JSONDecodeError("Expecting value", "", 0), aiohttp.ClientError("503"),
-                      asyncio.TimeoutError()):
+                      TimeoutError()):
             with self.subTest(error=type(error).__name__):
                 saved, stats, err = self.run_main(error)
                 self.assertEqual([j["url"] for j in saved], ["https://www.linkedin.com/jobs/view/42"])
@@ -254,7 +252,7 @@ class FeedOutageTests(unittest.TestCase):
                 self.assertIn("GitHub feed fetch failed", err)
 
     def test_feed_failure_is_a_source_warning(self):
-        _, stats, _ = self.run_main(aiohttp.ClientError("503"))
+        _, _stats, _ = self.run_main(aiohttp.ClientError("503"))
         health = run_pipeline.source_health(ff.SOURCE_STATS_PATH)
         self.assertTrue(any("GitHub feed fetch failed" in w for w in health["warnings"]))
 
@@ -264,6 +262,7 @@ class LinkedInDetailsCacheTests(unittest.TestCase):
 
     def test_cache_round_trips_a_job_page_through_json(self):
         import tempfile
+
         from jobspy.linkedin import LinkedIn
         from jobspy.model import CompensationInterval, JobType
         page = {"description": "Build React apps", "job_type": [JobType.FULL_TIME],

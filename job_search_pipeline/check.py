@@ -89,7 +89,7 @@ def check_dependencies(report):
 def check_config(report):
     """Load the config the way a run does; returns (config module, cfg) or (None, None)."""
     try:
-        import job_search_pipeline.config as config
+        from job_search_pipeline import config
     except SystemExit as e:  # a malformed config.json stops the run with this message
         report.add(FAIL, "Config", str(e.code))
         return None, None

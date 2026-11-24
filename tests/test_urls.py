@@ -1,9 +1,13 @@
 """Canonical URLs: the same posting must normalize to one key across sources, runs and the blocklist."""
-import _fixture_config  # noqa: F401  (must come before any pipeline import)
-
 import unittest
 
-from job_search_pipeline.urls import is_aggregator_url, normalize_url, normalize_url_list
+import _fixture_config  # noqa: F401  (must come before any pipeline import)
+
+from job_search_pipeline.urls import (
+    is_aggregator_url,
+    normalize_url,
+    normalize_url_list,
+)
 
 
 class NormalizeUrlTests(unittest.TestCase):

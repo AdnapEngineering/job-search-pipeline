@@ -1,5 +1,3 @@
-import _fixture_config  # noqa: F401  (must come before any pipeline import)
-
 import contextlib
 import hashlib
 import io
@@ -12,8 +10,9 @@ from datetime import datetime, timedelta
 from pathlib import Path
 from unittest.mock import patch
 
-import job_search_pipeline.review as review
+import _fixture_config  # noqa: F401  (must come before any pipeline import)
 
+from job_search_pipeline import review
 
 JOB = {"url": "https://example.com/jobs/123", "company": "Example", "title": "Engineer", "score": 80}
 QUOTE = "Build reliable services for customers and partners."
@@ -313,12 +312,12 @@ class MissingProfileTests(unittest.TestCase):
     def test_review_is_skipped_and_points_at_the_template(self):
         jobs = [{"company": "Acme", "title": "Frontend Engineer", "score": 90, "url": "https://example.com/1"}]
         stderr = io.StringIO()
-        with tempfile.TemporaryDirectory() as tmp:
-            with (patch.object(review, "PROFILE_PATH", str(Path(tmp) / "candidate_profile.md")),
-                  patch.object(review, "_provider_config", return_value="/test/cli"),
-                  patch.object(review.subprocess, "run", side_effect=AssertionError("no review without a profile")),
-                  contextlib.redirect_stderr(stderr)):
-                kept, skipped = review.review_matches(jobs, str(Path(tmp) / "jobs.json"))
+        with (tempfile.TemporaryDirectory() as tmp,
+              patch.object(review, "PROFILE_PATH", str(Path(tmp) / "candidate_profile.md")),
+              patch.object(review, "_provider_config", return_value="/test/cli"),
+              patch.object(review.subprocess, "run", side_effect=AssertionError("no review without a profile")),
+              contextlib.redirect_stderr(stderr)):
+            kept, skipped = review.review_matches(jobs, str(Path(tmp) / "jobs.json"))
         self.assertEqual((kept, skipped), (jobs, []))
         self.assertIn("candidate_profile.example.md", stderr.getvalue())
 
@@ -344,7 +343,7 @@ class CacheAndHoldTests(unittest.TestCase):
         run.return_value = completed(AGY_OUTPUT)
         current = {"verdict": "skip", "score": 25, "reason": "r", "blockers": [],
                    "components": {"hard_reqs": 1, "core_work": 1, "evidence": 1, "level": 0, "logistics_ok": True}}
-        seed = lambda phash: {  # noqa: E731
+        seed = lambda phash: {
             "https://example.com/jobs/old-1": {"profile": "0123456789abcdef", "result": {"verdict": "apply"}},
             "https://example.com/jobs/old-2": {"profile": "fedcba9876543210", "result": {"verdict": "skip"}},
             "https://example.com/jobs/current": {"profile": phash, "result": current},
