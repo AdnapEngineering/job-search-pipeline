@@ -8,20 +8,20 @@ version = "0.1.0"
 description = "Fetch, filter, score and AI-review job postings against your profile, then send matches to Notion, a web page or a text file."
 readme = "README.md"
 license = { file = "LICENSE" }
-requires-python = ">=3.10"
+requires-python = ">=3.15"
 # Exact versions live in uv.lock; `uv sync` installs them, `pip install -e .` resolves these ranges instead
 dependencies = [
-    "aiohttp>=3.9.0",
-    "beautifulsoup4>=4.12.0",
-    "pandas>=2.0.0",
+    "aiohttp>=3.14.5",
+    "beautifulsoup4>=4.15.0",
+    "pandas>=3.1.1",
     # LinkedIn/Indeed scraping breaks often across jobspy releases; test before raising this bound
-    "python-jobspy>=1.4.1,<1.5",
-    "requests>=2.31.0",
+    "python-jobspy>=1.5.0,<1.6",
+    "requests>=2.34.2",
 ]
 
 [dependency-groups]
 # Installed by `uv sync` (skip with --no-dev); pinned to the version CI uses
-dev = ["ruff==0.15.20"]
+dev = ["ruff==0.17.6"]
 
 [project.scripts]
 # Optional: `pip install -e .` adds this command; `python3 -m job_search_pipeline` works without installing
@@ -31,4 +31,8 @@ job-search = "job_search_pipeline.__main__:main"
 include = ["job_search_pipeline*"]
 
 [tool.ruff]
-target-version = "py310"
+target-version = "py315"
+
+[tool.ruff.lint]
+# ruff 0.17 widened its default rules; keep the pre-0.17 defaults until the new ones are adopted deliberately
+select = ["E4", "E7", "E9", "F"]

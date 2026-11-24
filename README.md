@@ -19,7 +19,7 @@ Every run also writes a page of matches you can open in a browser, with no accou
 
 Get a first list in your browser without Notion, an AI account, or notifications. The guided setup is for **US-based searches**; other countries need [additional configuration](docs/configuration.md#location-rules).
 
-1. Install Git and [uv](https://docs.astral.sh/uv/getting-started/installation/) for your system ([macOS](#macos), [Windows](#windows) or [Linux](#linux) below). uv downloads a suitable Python (3.10 or newer) for you, so you don't need to install Python yourself.
+1. Install Git and [uv](https://docs.astral.sh/uv/getting-started/installation/) for your system ([macOS](#macos), [Windows](#windows) or [Linux](#linux) below). uv downloads a suitable Python (3.15 or newer) for you, so you don't need to install Python yourself.
 2. In a terminal, paste these commands, then answer the setup questions when prompted:
 
 ```bash
@@ -47,7 +47,7 @@ The check may warn that optional AI features are missing; that is fine for this 
 2. Install Apple's command-line developer tools, which include Git: run `xcode-select --install` and click **Install** in the dialog. Skip this if `git --version` already prints a version.
 3. Install uv: `curl -LsSf https://astral.sh/uv/install.sh | sh`, then close and reopen Terminal.
 
-Use `uv run python` as shown above rather than the system `python3`: the one bundled with Apple's developer tools can be older than 3.10.
+Use `uv run python` as shown above rather than the system `python3`: the one bundled with Apple's developer tools can be older than 3.15.
 
 #### Windows
 
@@ -169,7 +169,7 @@ With `--no-llm-review` (or no AI reviewer installed), the keyword score is the M
 
 ## Setup
 
-The [Quickstart](#quickstart) covers cloning, dependencies and your first config. This section covers the rest: updates, install options, secrets and the setup check ([Notion](docs/outputs.md#notion) has its own page). Python 3.10+ is required.
+The [Quickstart](#quickstart) covers cloning, dependencies and your first config. This section covers the rest: updates, install options, secrets and the setup check ([Notion](docs/outputs.md#notion) has its own page). Python 3.15+ is required.
 
 ### Updating
 
@@ -302,7 +302,7 @@ uv run ruff check .
 uv run python -m unittest discover -s tests
 ```
 
-GitHub Actions runs the same lint and tests on Python 3.10 and 3.13 for every pull request and push to `main`, installing from `uv.lock` ([`.github/workflows/ci.yml`](.github/workflows/ci.yml)). It fails when `pyproject.toml` changed without a matching lockfile, so run `uv lock` after editing dependencies and commit `uv.lock` with them; `uv lock --upgrade-package NAME` moves one dependency to its newest allowed version.
+GitHub Actions runs the same lint and tests on Python 3.15 for every pull request and push to `main`, installing from `uv.lock` ([`.github/workflows/ci.yml`](.github/workflows/ci.yml)). It fails when `pyproject.toml` changed without a matching lockfile, so run `uv lock` after editing dependencies and commit `uv.lock` with them; `uv lock --upgrade-package NAME` moves one dependency to its newest allowed version.
 
 The tests load `tests/fixtures/search_config.json` (a made-up search) through `tests/_fixture_config.py` and write only to a temporary directory, so they pass whatever your own `config.json` says and never touch `data/`.
 
