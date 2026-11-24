@@ -70,8 +70,8 @@ def placeholder_issues(cfg, template):
 
 def check_python(report):
     v = sys.version_info
-    if v < (3, 10):
-        report.add(FAIL, "Python", f"{v.major}.{v.minor} found; 3.10 or newer is required")
+    if v < (3, 13):
+        report.add(FAIL, "Python", f"{v.major}.{v.minor} found; 3.13 or newer is required")
     else:
         report.add(OK, "Python", f"{v.major}.{v.minor}.{v.micro}")
 
