@@ -1,6 +1,4 @@
 """Stage 5 Obsidian output: note contents, never overwriting, blocklisting, the summary note and the setup check."""
-import _fixture_config  # noqa: F401  (must come before any pipeline import)
-
 import contextlib
 import io
 import os
@@ -8,11 +6,13 @@ import tempfile
 import unittest
 from unittest.mock import patch
 
-import job_search_pipeline.blocklist as blocklist
+import _fixture_config  # noqa: F401  (must come before any pipeline import)
+
 import job_search_pipeline.check as cs
-import job_search_pipeline.outputs.obsidian as obsidian
 import job_search_pipeline.pipeline as run_pipeline
+from job_search_pipeline import blocklist
 from job_search_pipeline.config import atomic_write_json
+from job_search_pipeline.outputs import obsidian
 
 
 def match(n, score=90, **extra):

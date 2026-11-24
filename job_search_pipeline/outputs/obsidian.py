@@ -7,7 +7,7 @@ run-summary note in the same folder. Nothing needs Obsidian to be running: the v
 import os
 import re
 import sys
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 from job_search_pipeline.blocklist import record_exported, select_new_matches
 from job_search_pipeline.config import CFG
@@ -47,7 +47,7 @@ def _yaml_str(value) -> str:
 def build_note(job: dict) -> str:
     """Frontmatter mirroring the Notion database's properties, then the match reasoning as the body."""
     first_seen = job.get("first_seen")
-    added = first_seen[:10] if first_seen else datetime.now(timezone.utc).strftime("%Y-%m-%d")
+    added = first_seen[:10] if first_seen else datetime.now(UTC).strftime("%Y-%m-%d")
     lines = [
         "---",
         f"company: {_yaml_str((job.get('company') or 'Unknown').title())}",
@@ -152,11 +152,11 @@ def build_summary(eval_results, written_urls, min_score=65, history=None) -> str
     out = [
         "---", f"updated: {datetime.now():%Y-%m-%dT%H:%M:%S}", "tags:", f"  - {TAG}-summary", "---", "",
         f"# 📋 Job Search Run Summary — {datetime.now():%Y-%m-%d %H:%M}", "",
-        "| Evaluated | Open matches | At {0}%+ | Added to vault | Held (AI review failed) | Manual reviews "
-        "| AI skipped | Location/onsite dropped |".format(min_score),
+        (f"| Evaluated | Open matches | At {min_score}%+ | Added to vault | Held (AI review failed) | Manual reviews "
+         "| AI skipped | Location/onsite dropped |"),
         "|---|---|---|---|---|---|---|---|",
-        f"| {total_eval} | {len(top_matches)} | {tally['at_threshold']} | {len(written_urls)} | {tally['held']} "
-        f"| {len(manual_reviews)} | {len(ai_skipped)} | {len(location_filtered)} |", "",
+        (f"| {total_eval} | {len(top_matches)} | {tally['at_threshold']} | {len(written_urls)} | {tally['held']} "
+         f"| {len(manual_reviews)} | {len(ai_skipped)} | {len(location_filtered)} |"), "",
     ]
 
     health = eval_results.get("source_health")

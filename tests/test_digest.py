@@ -1,5 +1,3 @@
-import _fixture_config  # noqa: F401  (must come before any pipeline import)
-
 import contextlib
 import io
 import json
@@ -8,6 +6,8 @@ import tempfile
 import unittest
 from pathlib import Path
 from unittest.mock import patch
+
+import _fixture_config  # noqa: F401  (must come before any pipeline import)
 
 import job_search_pipeline.outputs.html_digest as digest
 
@@ -59,7 +59,7 @@ class DigestTests(unittest.TestCase):
                                 path=str(out), min_score=80, spend=spend)
         page = out.read_text(encoding="utf-8")
         self.assertEqual(page.count("</script>"), 2)  # only the two real closing tags
-        raw = re.search(r'<script id="digest-data" type="application/json">(.*?)</script>', page, re.S).group(1)
+        raw = re.search(r'<script id="digest-data" type="application/json">(.*?)</script>', page, re.DOTALL).group(1)
         data = json.loads(raw)
         self.assertEqual(data["matches"][0]["title"], hostile["title"])
         self.assertEqual(data["matches"][0]["reason"], "a & b <!-- c")

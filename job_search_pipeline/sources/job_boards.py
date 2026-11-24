@@ -13,14 +13,20 @@ import time
 import urllib.parse
 import urllib.request
 import xml.etree.ElementTree as ET
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from email.utils import parsedate_to_datetime
 
+from job_search_pipeline.config import CFG
 from job_search_pipeline.scrape import HEADERS, clean_html
 from job_search_pipeline.sources.filter import (
-    FOREIGN_RE, LOOKBACK_DAYS, US_PATTERN, is_local_metro, is_valid_company, is_valid_salary, is_valid_title,
+    FOREIGN_RE,
+    LOOKBACK_DAYS,
+    US_PATTERN,
+    is_local_metro,
+    is_valid_company,
+    is_valid_salary,
+    is_valid_title,
 )
-from job_search_pipeline.config import CFG
 
 _SOURCES_CFG = CFG["sources"]
 _TITLES_CFG = CFG["titles"]
@@ -40,19 +46,19 @@ SEARCH_TERMS = list(_SOURCES_CFG["search_terms"])
 
 _US_ELIGIBLE_RE = re.compile(
     _LOC_CFG["global_eligible_pattern"],
-    re.I
+    re.IGNORECASE
 )
 
 _SALARY_RE = re.compile(
     r'\$\s?(\d[\d,.]*)\s*(k)?\s*(?:-|–|—|to)\s*\$?\s?(\d[\d,.]*)\s*(k)?'
     r'|\$\s?(\d[\d,.]*)\s*(k)\b',
-    re.I,
+    re.IGNORECASE,
 )
-_HOURLY_RE = re.compile(r'/\s*(hr|hour)\b|per\s+hour|hourly', re.I)
+_HOURLY_RE = re.compile(r'/\s*(hr|hour)\b|per\s+hour|hourly', re.IGNORECASE)
 
 _HN_ROLE_RE = re.compile(
     _TITLES_CFG["hn_role_pattern"],
-    re.I,
+    re.IGNORECASE,
 )
 _HN_NO_REMOTE_RE = re.compile(r'\b(no remote|not remote|remote not|part(?:ial|ially)? remote)\b')
 _HN_EXTRA_FOREIGN_RE = re.compile(r'\b(eu|european|cet|germany|netherlands|india|brazil)\b')
@@ -62,7 +68,7 @@ _HN_NON_FULLTIME_RE = re.compile(r'\b(part[- ]time|contract|freelance)\b')
 _HN_FULLTIME_RE = re.compile(r'\bfull[- ]?time\b')
 _LOCAL_DISPLAY_NAME = _LOC_CFG["local_display_name"]
 # WWR regions are a fixed list ("USA Only", "Europe Only", "Anywhere in the World", ...); "X Only" is a restriction
-_WWR_US_REGION_RE = re.compile(r'\b(usa|us|united states|north america|americas)\b', re.I)
+_WWR_US_REGION_RE = re.compile(r'\b(usa|us|united states|north america|americas)\b', re.IGNORECASE)
 
 
 def _get_json(url, timeout=30):
@@ -83,14 +89,14 @@ def _parse_date(value):
     if not value:
         return None
     try:
-        dt = datetime.fromisoformat(str(value).replace('Z', '+00:00'))
+        dt = datetime.fromisoformat(str(value))
     except ValueError:
         return None
-    return dt if dt.tzinfo else dt.replace(tzinfo=timezone.utc)
+    return dt if dt.tzinfo else dt.replace(tzinfo=UTC)
 
 
 def _is_recent(dt, days=LOOKBACK_DAYS):
-    return dt is not None and datetime.now(timezone.utc) - dt <= timedelta(days=days)
+    return dt is not None and datetime.now(UTC) - dt <= timedelta(days=days)
 
 
 def _to_number(num, k_suffix):
@@ -208,7 +214,7 @@ def fetch_jobicy():
 def _himalayas_job(item):
     """One Himalayas search hit as a pipeline job, or None when it is stale, not full time or not US-eligible."""
     try:
-        posted = datetime.fromtimestamp(int(item.get('pubDate')), timezone.utc)
+        posted = datetime.fromtimestamp(int(item.get('pubDate')), UTC)
     except (TypeError, ValueError):
         return None
     if not _is_recent(posted):
@@ -258,7 +264,7 @@ def fetch_himalayas(terms=None):
                     seen.add(job['url'])
                     jobs.append(job)
             oldest = min((int(i.get('pubDate') or 0) for i in items), default=0)
-            if len(items) < 20 or not _is_recent(datetime.fromtimestamp(oldest, timezone.utc)):
+            if len(items) < 20 or not _is_recent(datetime.fromtimestamp(oldest, UTC)):
                 break
     return jobs
 
@@ -281,7 +287,7 @@ def _wwr_job(item):
     loc = ", ".join(v for v in (text('region'), text('country')) if v)
     if not _is_us_eligible(loc.lower()):
         return None
-    if re.search(r'\bonly\b', text('region'), re.I) and not _WWR_US_REGION_RE.search(text('region')):
+    if re.search(r'\bonly\b', text('region'), re.IGNORECASE) and not _WWR_US_REGION_RE.search(text('region')):
         return None
     desc = clean_html(html.unescape(text('description')))
     return {

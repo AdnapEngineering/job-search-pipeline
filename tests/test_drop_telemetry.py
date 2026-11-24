@@ -1,6 +1,4 @@
 """Structured drop reasons, the drop funnel in the digest and summary, --explain and --init-config."""
-import _fixture_config  # noqa: F401  (must come before any pipeline import)
-
 import contextlib
 import gzip
 import io
@@ -8,8 +6,10 @@ import json
 import os
 import tempfile
 import unittest
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from unittest.mock import patch
+
+import _fixture_config  # noqa: F401  (must come before any pipeline import)
 
 import job_search_pipeline.evaluate as ev
 import job_search_pipeline.explain as ex
@@ -19,7 +19,7 @@ import job_search_pipeline.pipeline as pl
 import job_search_pipeline.sources.filter as ff
 
 FILLER = " We build accessible SaaS products with React and TypeScript for thousands of customers." * 12
-NOW = datetime.now(timezone.utc).isoformat()
+NOW = datetime.now(UTC).isoformat()
 
 
 def job(title="Frontend Engineer", desc=FILLER, **extra):
@@ -191,7 +191,7 @@ class ExplainTests(unittest.TestCase):
 
     def test_traces_a_match_to_the_review(self):
         posting = job()
-        code, text = self.run_explain([posting], posting["url"] + "?utm_source=x")
+        _code, text = self.run_explain([posting], posting["url"] + "?utm_source=x")
         self.assertIn("Score breakdown", text)
         self.assertIn("✓ jd_logistics", text)
         self.assertIn("Result: Secondary match at 55%; goes to the AI review", text)
@@ -200,7 +200,7 @@ class ExplainTests(unittest.TestCase):
         async def fake_scrape(j):
             j["description_full"] = j["description_ai"] = FILLER
         with patch.object(ex, "_scrape", fake_scrape):
-            code, text = self.run_explain([], "https://jobs.lever.co/acme-co/123", title="Frontend Engineer",
+            _code, text = self.run_explain([], "https://jobs.lever.co/acme-co/123", title="Frontend Engineer",
                                           location="Remote")
         self.assertIn("Company:  acme co", text)
         self.assertIn("description scraped now", text)

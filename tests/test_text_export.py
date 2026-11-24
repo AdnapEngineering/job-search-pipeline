@@ -1,15 +1,15 @@
 """Stage 5 text export: appended runs, the score floor, and blocklisting so later runs add only new matches."""
-import _fixture_config  # noqa: F401  (must come before any pipeline import)
-
 import contextlib
 import io
 import os
 import tempfile
 import unittest
 
-import job_search_pipeline.blocklist as blocklist
-import job_search_pipeline.outputs.text_export as text_export
+import _fixture_config  # noqa: F401  (must come before any pipeline import)
+
+from job_search_pipeline import blocklist
 from job_search_pipeline.config import atomic_write_json
+from job_search_pipeline.outputs import text_export
 
 
 def match(n, score=90, **extra):

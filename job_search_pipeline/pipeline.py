@@ -5,21 +5,48 @@ import os
 import subprocess
 import sys
 import time
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 import requests
 
-from job_search_pipeline.blocklist import is_blocked, load_blocklist, load_role_blocklist
+from job_search_pipeline.blocklist import (
+    is_blocked,
+    load_blocklist,
+    load_role_blocklist,
+)
+from job_search_pipeline.config import CFG, CONFIG_PATH, ROOT_DIR, get_path, load_json
 from job_search_pipeline.direct_links import resolve_direct_links
 from job_search_pipeline.evaluate import evaluate_jobs, generate_markdown
-from job_search_pipeline.outputs.html_digest import HTML_DIGEST_ENABLED, HTML_DIGEST_PATH, HTML_DIGEST_URL, write_digest
-from job_search_pipeline.review import PROVIDER, reason_for_notion, review_matches, spend_line
-from job_search_pipeline.config import CFG, CONFIG_PATH, ROOT_DIR, get_path, load_json
-from job_search_pipeline.outputs.notion import (DEFAULT_DB_ID, log_run_summary_to_notion, match_tally, record_run,
-                                                sync_jobs_to_notion)
-from job_search_pipeline.outputs.obsidian import (OBSIDIAN_ENABLED, VAULT_PATH, log_run_summary_to_obsidian,
-                                                  sync_jobs_to_obsidian)
-from job_search_pipeline.outputs.text_export import TEXT_EXPORT_ENABLED, TEXT_EXPORT_PATH, export_jobs_to_text
+from job_search_pipeline.outputs.html_digest import (
+    HTML_DIGEST_ENABLED,
+    HTML_DIGEST_PATH,
+    HTML_DIGEST_URL,
+    write_digest,
+)
+from job_search_pipeline.outputs.notion import (
+    DEFAULT_DB_ID,
+    log_run_summary_to_notion,
+    match_tally,
+    record_run,
+    sync_jobs_to_notion,
+)
+from job_search_pipeline.outputs.obsidian import (
+    OBSIDIAN_ENABLED,
+    VAULT_PATH,
+    log_run_summary_to_obsidian,
+    sync_jobs_to_obsidian,
+)
+from job_search_pipeline.outputs.text_export import (
+    TEXT_EXPORT_ENABLED,
+    TEXT_EXPORT_PATH,
+    export_jobs_to_text,
+)
+from job_search_pipeline.review import (
+    PROVIDER,
+    reason_for_notion,
+    review_matches,
+    spend_line,
+)
 from job_search_pipeline.sources.filter import PREFILTER_RULES
 
 FILTERED_JOBS = get_path("filtered_jobs")
@@ -54,8 +81,8 @@ def _feed_warnings(feed):
     if feed.get("failed_chunks"):
         warnings.append(f"GitHub feed: {feed['failed_chunks']} of {feed.get('chunks')} chunks failed to download")
     try:
-        updated = datetime.fromisoformat(feed["last_updated"].replace("Z", "+00:00"))
-        age_hours = (datetime.now(timezone.utc) - updated).total_seconds() / 3600
+        updated = datetime.fromisoformat(feed["last_updated"])
+        age_hours = (datetime.now(UTC) - updated).total_seconds() / 3600
         if age_hours > FEED_STALE_HOURS:
             warnings.append(f"GitHub feed last updated {age_hours:.0f}h ago (stale upstream?)")
     except (KeyError, TypeError, ValueError, AttributeError):
@@ -155,7 +182,7 @@ def run_step(step_name, cmd, cwd=ROOT_DIR):
     """Run a stage script as a subprocess; returns True on exit code 0."""
     print_banner(step_name, f"Running: {' '.join(cmd)}")
     started = time.monotonic()
-    res = subprocess.run(cmd, cwd=cwd)
+    res = subprocess.run(cmd, cwd=cwd, check=False)
     print(f"--> [Step: {step_name}] took {time.monotonic() - started:.0f}s")
     if res.returncode != 0:
         print(f"Error during step '{step_name}' (exit code {res.returncode})", file=sys.stderr)

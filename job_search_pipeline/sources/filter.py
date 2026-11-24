@@ -10,12 +10,19 @@ import json
 import re
 import sys
 from collections import Counter
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 
 import aiohttp
 
 from job_search_pipeline.blocklist import load_blocklist, role_key
-from job_search_pipeline.config import CFG, atomic_write_json, compile_alternation, compile_regex_list, get_path, load_json
+from job_search_pipeline.config import (
+    CFG,
+    atomic_write_json,
+    compile_alternation,
+    compile_regex_list,
+    get_path,
+    load_json,
+)
 from job_search_pipeline.urls import is_aggregator_url, normalize_url
 
 _SOURCES_CFG = CFG["sources"]
@@ -90,12 +97,12 @@ def is_recent(first_seen_str):
     if not first_seen_str:
         return False
     try:
-        fs_date = datetime.fromisoformat(first_seen_str.replace('Z', '+00:00'))
+        fs_date = datetime.fromisoformat(first_seen_str)
         if fs_date.tzinfo is None:
-            fs_date = fs_date.replace(tzinfo=timezone.utc)
+            fs_date = fs_date.replace(tzinfo=UTC)
     except (AttributeError, TypeError, ValueError):
         return False
-    return datetime.now(timezone.utc) - fs_date <= timedelta(days=LOOKBACK_DAYS)
+    return datetime.now(UTC) - fs_date <= timedelta(days=LOOKBACK_DAYS)
 
 
 def is_remote(loc):
@@ -395,7 +402,7 @@ async def main():
     if _SOURCES_CFG["github_feed_enabled"]:
         try:
             filtered, ats_index = await fetch_github_feed(stats)
-        except (aiohttp.ClientError, asyncio.TimeoutError, ValueError, KeyError) as e:
+        except (TimeoutError, aiohttp.ClientError, ValueError, KeyError) as e:
             # A down or malformed feed manifest must not cost the run its other sources
             print(f"GitHub feed fetch failed, continuing with the other sources: {type(e).__name__}: {e}",
                   file=sys.stderr)
@@ -407,7 +414,7 @@ async def main():
         filtered.extend(fetch_boards(stats))
         print(f"Combined total (GitHub + Indeed/LinkedIn + boards): {len(filtered)}")
 
-    stats["fetched_at"] = datetime.now(timezone.utc).isoformat()
+    stats["fetched_at"] = datetime.now(UTC).isoformat()
     try:
         atomic_write_json(SOURCE_STATS_PATH, stats)
     except OSError as e:

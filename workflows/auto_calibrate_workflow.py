@@ -21,7 +21,7 @@ ROOT = "/home/justin/projects/job-search-pipeline"
 if ROOT not in sys.path:
     sys.path.insert(0, ROOT)
 
-from job_search_pipeline.calibrate import (  # noqa: E402
+from job_search_pipeline.calibrate import (
     DEFAULT_CALIBRATED_OUTPUT,
     HOLDOUT_FRACTION,
     _metrics_line,
@@ -34,8 +34,8 @@ from job_search_pipeline.calibrate import (  # noqa: E402
     split_holdout,
     verify_proposal,
 )
-from job_search_pipeline.config import CFG, CONFIG_PATH, atomic_write_json, load_json  # noqa: E402
-from job_search_pipeline.review import PROFILE_PATH  # noqa: E402
+from job_search_pipeline.config import CFG, CONFIG_PATH, atomic_write_json, load_json
+from job_search_pipeline.review import PROFILE_PATH
 
 WORKFLOW_ARGS = globals().get("args") or {}
 phase = globals().get("phase")
@@ -175,6 +175,7 @@ async def run_auto_calibrate():
         cwd=ROOT,
         capture_output=True,
         text=True,
+        check=False,
     )
     tests_ok = test_res.returncode == 0
     log(f"Unit test suite check: {'PASSED' if tests_ok else 'FAILED'}")

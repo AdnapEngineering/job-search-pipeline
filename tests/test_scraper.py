@@ -1,6 +1,4 @@
 """Stage 2: closed-posting detection on redirects, and ATS API failures that are reported, not swallowed."""
-import _fixture_config  # noqa: F401  (must come before any pipeline import)
-
 import asyncio
 import contextlib
 import io
@@ -8,6 +6,7 @@ import unittest
 from types import SimpleNamespace
 from urllib.parse import urlparse
 
+import _fixture_config  # noqa: F401  (must come before any pipeline import)
 import aiohttp
 
 import job_search_pipeline.scrape as bs
@@ -91,7 +90,7 @@ class GetJsonTests(unittest.TestCase):
         self.assertEqual(self.call(_Response(200, ["not", "an", "object"])), (None, "", {}))
 
     def test_failures_are_logged_and_counted(self):
-        cases = [(_Response(503), "HTTP 503"), (_Response(error=asyncio.TimeoutError()), "timeout"),
+        cases = [(_Response(503), "HTTP 503"), (_Response(error=TimeoutError()), "timeout"),
                  (_Response(error=aiohttp.ClientError("boom")), "ClientError"),
                  (_Response(200, ValueError("bad json")), "ValueError")]
         for response, why in cases:

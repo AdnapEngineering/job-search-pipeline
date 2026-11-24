@@ -70,10 +70,10 @@ _AFTER_REQUIREMENTS_HEADING_RE = re.compile(
 _EEO_BOILERPLATE_RE = re.compile(
     r'(?i)without regard to|race, color|equal (?:employment )?opportunity|reasonable accommodation'
 )
-_JOB_DESC_CLASS_RE = re.compile(r'job-description|description', re.I)
+_JOB_DESC_CLASS_RE = re.compile(r'job-description|description', re.IGNORECASE)
 _CLOSED_POSTING_RE = re.compile(
     r'current openings at|no longer (?:accepting applications|available|open)'
-    r'|job (?:not found|has been filled|is closed)|position has been filled', re.I
+    r'|job (?:not found|has been filled|is closed)|position has been filled', re.IGNORECASE
 )
 _FOR_PARAM_RE = re.compile(r'for=([^&]+)')
 _TOKEN_PARAM_RE = re.compile(r'token=([^&]+)')
@@ -141,7 +141,7 @@ async def _get_json(session, url, headers=None, timeout=None):
                 return data if isinstance(data, dict) else None
             if r.status not in (404, 410):
                 _note_api_failure(url, f"HTTP {r.status}")
-    except asyncio.TimeoutError:
+    except TimeoutError:
         _note_api_failure(url, "timeout")
     except (aiohttp.ClientError, ValueError) as e:
         _note_api_failure(url, type(e).__name__)
@@ -257,7 +257,7 @@ def _description_from_html(html):
         desc = clean_html(html)
         if len(desc) > 200:
             return desc
-    except Exception:
+    except Exception:  # noqa: S110 -- any parse failure falls through to the next description source
         pass
     return None
 
@@ -285,7 +285,7 @@ async def _fetch_html(session, url, path):
             if _redirected_to_board(path, r.url.path if r.history else None):
                 return "Posting expired (redirected to job board)"
             return _description_from_html(await r.text(errors='replace')) or _NO_DESCRIPTION
-    except asyncio.TimeoutError:
+    except TimeoutError:
         return "Error: timeout on direct scrape"
     except Exception as e:
         return f"Error: {e}"
@@ -362,7 +362,7 @@ async def main():
     input_file = sys.argv[1] if len(sys.argv) > 1 else get_path("filtered_jobs")
     output_file = sys.argv[2] if len(sys.argv) > 2 else get_path("enriched_jobs")
 
-    with open(input_file, encoding='utf-8') as f:
+    with open(input_file, encoding='utf-8') as f:  # noqa: ASYNC230 -- one small read before any fetches start
         jobs = json.load(f)
 
     existing_by_url = _load_enriched(output_file)

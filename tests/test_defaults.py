@@ -1,8 +1,8 @@
-import _fixture_config  # noqa: F401  (must come before any pipeline import)
-
 import json
 import os
 import unittest
+
+import _fixture_config
 
 from job_search_pipeline import config
 from job_search_pipeline.defaults import DEFAULTS, PERSONAL_KEYS

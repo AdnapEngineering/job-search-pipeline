@@ -8,16 +8,30 @@ import hashlib
 import json
 import os
 import re
-from urllib.parse import urlparse
 import sys
 from typing import NamedTuple
+from urllib.parse import urlparse
 
 from job_search_pipeline.blocklist import role_key
-from job_search_pipeline.sources.filter import (
-    FOREIGN_CITY_RE, FOREIGN_PLACES, FOREIGN_RE, STRONG_TARGET_RE, UNSPECIFIED_LOCATIONS, US_PATTERN, is_local_metro,
-    is_recent, names_foreign_place, title_reject_reason,
+from job_search_pipeline.config import (
+    CFG,
+    atomic_write_json,
+    compile_alternation,
+    get_path,
+    term_regex,
 )
-from job_search_pipeline.config import CFG, atomic_write_json, compile_alternation, get_path, term_regex
+from job_search_pipeline.sources.filter import (
+    FOREIGN_CITY_RE,
+    FOREIGN_PLACES,
+    FOREIGN_RE,
+    STRONG_TARGET_RE,
+    UNSPECIFIED_LOCATIONS,
+    US_PATTERN,
+    is_local_metro,
+    is_recent,
+    names_foreign_place,
+    title_reject_reason,
+)
 from job_search_pipeline.urls import is_aggregator_url
 
 _SKILLS_CFG = CFG["skills_and_scoring"]
@@ -87,7 +101,7 @@ _SENIOR_PATTERN = compile_alternation(
 )
 
 _JD_LOCAL_METRO_PATTERN = _LOC_CFG["jd_local_metro_pattern"]
-_JD_LOCAL_METRO_RE = re.compile(_JD_LOCAL_METRO_PATTERN, re.I) if _JD_LOCAL_METRO_PATTERN else None
+_JD_LOCAL_METRO_RE = re.compile(_JD_LOCAL_METRO_PATTERN, re.IGNORECASE) if _JD_LOCAL_METRO_PATTERN else None
 
 _US_TOKEN = _LOC_CFG["country_token_pattern"]
 JD_US_REMOTE_RE = re.compile(
@@ -96,7 +110,7 @@ JD_US_REMOTE_RE = re.compile(
     r'|(?i:anywhere in the (?:u\.?s\.?|united states))'
 )
 _JD_GENERIC_REMOTE_RE = re.compile(
-    r'\b(?:fully|100%|completely|entirely) remote\b|\bremote[- ]first\b|\bremote(?:ly)?\b', re.I
+    r'\b(?:fully|100%|completely|entirely) remote\b|\bremote[- ]first\b|\bremote(?:ly)?\b', re.IGNORECASE
 )
 # Foreign residency wording ("remote within Canada", "based in Australia"): places from location.foreign_places
 _FOREIGN_PLACES = '|'.join(FOREIGN_PLACES)
@@ -104,21 +118,21 @@ _JD_FOREIGN_REMOTE_RE = re.compile(
     r'\b(?:remote(?:ly)?|based)\s+(?:(?:with)?in|from)\s+(?:the\s+)?(?:' + _FOREIGN_PLACES + r')\b'
     r'|\banywhere (?:with)?in\s+(?:the\s+)?(?:' + _FOREIGN_PLACES + r')\b'
     r'|\b(?:located|based|reside|residing|living)\s+in\s+(?:[\w .]{0,30},\s*)?(?:the\s+)?(?:'
-    + _FOREIGN_PLACES + r')\b', re.I
+    + _FOREIGN_PLACES + r')\b', re.IGNORECASE
 )
 JD_HYBRID_ONSITE_RE = re.compile(
     r'\bhybrid (?:work(?:place)? )?(?:schedule|role|position|model|setting|environment|flexibility|arrangement)'
     r'|\blocal to (?:our|the) [\w .,]{1,40} office'
     r'|\b\d+ days? (?:a |per )?(?:week )?(?:in|on)[- ]?(?:site|office|person)'
     r'|\bon[- ]?site (?:role|position|requirement|required)|\bmust (?:be able to )?(?:commute|relocate)'
-    r'|\bin[- ]office (?:role|position)', re.I
+    r'|\bin[- ]office (?:role|position)', re.IGNORECASE
 )
 
 
 # "unable to consider applications from candidates based in France": an exclusion, not a requirement
 _FOREIGN_EXCLUSION_BEFORE_RE = re.compile(
     r"\b(?:unable to|cannot|can't|can not|won't|will not|do not|don't|not able to)\b[^.\n]{0,60}$"
-    r"|\b(?:except|excluding|other than|outside(?: of)?)\b[^.\n]{0,30}$", re.I
+    r"|\b(?:except|excluding|other than|outside(?: of)?)\b[^.\n]{0,30}$", re.IGNORECASE
 )
 
 
@@ -150,7 +164,7 @@ _JD_HARD_ONSITE_RE = re.compile(
     r'|\bno remote\b|\bnot (?:a remote|eligible for remote|open to remote|remote[- ]eligible)\b'
     r'|\bmust (?:be able to )?(?:commute|relocate)\b'
     r'|\bmust (?:reside|live) within (?:approximately |about |roughly )?(?:an? )?(?:\d|commut|driving|reasonable)'
-    r'|\brelocation (?:to [\w ,]{2,30} )?is required\b', re.I
+    r'|\brelocation (?:to [\w ,]{2,30} )?is required\b', re.IGNORECASE
 )
 _JD_SOFT_ONSITE_RE = re.compile(
     r'\b' + _IN_PLACE + r'\s+(?:role|position|job|requirement|only|presence is required)\b'
@@ -158,18 +172,18 @@ _JD_SOFT_ONSITE_RE = re.compile(
     r'|\b' + _DAYS_A_WEEK + r'\s+(?:in|at|from|on)[- ](?:the |our |an? )?(?:office|site|hq|headquarters|studio|campus)'
     r'|\b' + _IN_PLACE + r',?\s+(?:at least\s+)?' + _DAYS_A_WEEK +
     r'|\bhybrid (?:work(?:place)? |office |in-office )?(?:schedule|role|position|model|arrangement|approach|policy|requirement)\b',
-    re.I
+    re.IGNORECASE
 )
 _JD_OPTIONS_RE = re.compile(
     r'\bor (?:fully |100% )?remote(?:ly)?\b|\bremote(?:ly)?,? (?:or|and) (?:hybrid|on-?site)'
-    r'|\bremote,\s*hybrid\b', re.I
+    r'|\bremote,\s*hybrid\b', re.IGNORECASE
 )
-_JD_NEGATED_BEFORE_RE = re.compile(r"\b(?:not|no|never|isn't|without)\s+(?:an?\s+|the\s+)?$", re.I)
-_JD_OPTIONAL_RE = re.compile(r'\boptional\b', re.I)
-_INDEED_WORK_LOCATION_RE = re.compile(r'\bwork location:\s*((?:in person|hybrid remote in|on the road)[^\n]{0,50})', re.I)
-_JD_LOCATION_LINE_RE = re.compile(r'\blocations?\s*:\s*([^\n|]{2,60})', re.I)
-_OFFICE_LOCATIONS_RE = re.compile(r'\b(?:office|offices|other|our|hub|headquarters)\s*$', re.I)
-_LOCATION_LINE_END_RE = re.compile(r'\s{2,}|\s+(?:type|job type|department|team|employment|salary|compensation|about|reports)\b', re.I)
+_JD_NEGATED_BEFORE_RE = re.compile(r"\b(?:not|no|never|isn't|without)\s+(?:an?\s+|the\s+)?$", re.IGNORECASE)
+_JD_OPTIONAL_RE = re.compile(r'\boptional\b', re.IGNORECASE)
+_INDEED_WORK_LOCATION_RE = re.compile(r'\bwork location:\s*((?:in person|hybrid remote in|on the road)[^\n]{0,50})', re.IGNORECASE)
+_JD_LOCATION_LINE_RE = re.compile(r'\blocations?\s*:\s*([^\n|]{2,60})', re.IGNORECASE)
+_OFFICE_LOCATIONS_RE = re.compile(r'\b(?:office|offices|other|our|hub|headquarters)\s*$', re.IGNORECASE)
+_LOCATION_LINE_END_RE = re.compile(r'\s{2,}|\s+(?:type|job type|department|team|employment|salary|compensation|about|reports)\b', re.IGNORECASE)
 # A location line naming hybrid/onsite work ("Location: Durham, NC (Hybrid - 2 weeks onsite)"), unless remote is
 # offered first or as an alternative ("Remote (US) or hybrid in NYC")
 _LOCATION_ARRANGEMENT_RE = re.compile(r'\b(?:hybrid|on[- ]?site|in[- ]office|in[- ]person)\b')
@@ -238,9 +252,9 @@ _TZ_LIST = _TZ_NAMES + r'(?:\s*(?:,|/|,?\s*(?:or|and))\s*' + _TZ_NAMES + r')*'
 _RESIDENCY_TZ_RE = re.compile(
     r'\b(?:(?:located|based|resid\w+|live|living)\s+(?:with)?in|restricted to|limited to)\s+(?:the\s+)?'
     r'(?:(' + _TZ_LIST + r')\s+(?:standard\s+)?time(?:\s*zones?)?\b'
-    r'|(' + _TZ_ABBRS + r'(?:\s*(?:,|/|,?\s*(?:or|and))\s*' + _TZ_ABBRS + r')*)(?!\s+(?:hours|business))\b)', re.I
+    r'|(' + _TZ_ABBRS + r'(?:\s*(?:,|/|,?\s*(?:or|and))\s*' + _TZ_ABBRS + r')*)(?!\s+(?:hours|business))\b)', re.IGNORECASE
 )
-_TZ_NAME_RE = re.compile(_TZ_NAMES, re.I)
+_TZ_NAME_RE = re.compile(_TZ_NAMES, re.IGNORECASE)
 
 
 def _tz_zones(listed):
@@ -254,11 +268,11 @@ _TZ_CONNECTOR = r'\s*(?:,|/|&|,?\s*(?:or|and))\s*'
 _TZ_ONLY_ABBRS = r'(?-i:(?:' + '|'.join(sorted((a.upper() for a in _TZ_ABBR_TO_NAME if a not in _US_STATES),
                                                key=len, reverse=True)) + r')\b)'
 _TZ_AFTER_STATES_RE = re.compile(
-    r'(?:\s+(?:standard\s+)?time\b|(?:' + _TZ_CONNECTOR + r'[A-Z]{2}\b)*' + _TZ_CONNECTOR + _TZ_ONLY_ABBRS + r')', re.I
+    r'(?:\s+(?:standard\s+)?time\b|(?:' + _TZ_CONNECTOR + r'[A-Z]{2}\b)*' + _TZ_CONNECTOR + _TZ_ONLY_ABBRS + r')', re.IGNORECASE
 )
 # Further zones after a time zone match: "in MT time zone or PT time zone", "in the Eastern time zone or Pacific"
 _TZ_CONTINUATION_RE = re.compile(
-    _TZ_CONNECTOR + r'(?:the\s+)?(' + _TZ_NAMES + r')(?:\s+(?:standard\s+)?time(?:\s*zones?)?\b)?', re.I
+    _TZ_CONNECTOR + r'(?:the\s+)?(' + _TZ_NAMES + r')(?:\s+(?:standard\s+)?time(?:\s*zones?)?\b)?', re.IGNORECASE
 )
 
 
@@ -269,7 +283,7 @@ def _residency_tz_zones(text, m):
         zones |= _tz_zones(more.group(1))
         end = more.end()
     return zones
-_REMOTE_ALTERNATIVE_RE = re.compile(r'\bremote(?:ly)?\b|\b(?:anywhere|elsewhere)\b', re.I)
+_REMOTE_ALTERNATIVE_RE = re.compile(r'\bremote(?:ly)?\b|\b(?:anywhere|elsewhere)\b', re.IGNORECASE)
 
 
 def _other_states_only(state_list):
@@ -347,14 +361,14 @@ def jd_logistics_block(job):
 _PRIMARY_ROLE_GROUPS = [
     {
         "label": g.get("label", "Target Role"),
-        "re": re.compile(g["pattern"], re.I),
+        "re": re.compile(g["pattern"], re.IGNORECASE),
         "points": int(g.get("points", 20)),
     }
     for g in (_TITLES_CFG.get("primary_role_groups") or [])
     if g.get("pattern")
 ]
 
-_FAILED_SCRAPE_PATTERN = re.compile(r'^(no description extracted|error\b)', re.I)
+_FAILED_SCRAPE_PATTERN = re.compile(r'^(no description extracted|error\b)', re.IGNORECASE)
 GENERIC_TITLE_BODY_SIGNALS = int(_TITLES_CFG["generic_body_signal_min"])
 _GENERIC_ROLE_PATTERN = compile_alternation(
     _TITLES_CFG["generic_role_patterns"],
@@ -362,7 +376,7 @@ _GENERIC_ROLE_PATTERN = compile_alternation(
 )
 _GENERIC_REQUIRED_SKILLS = [s.lower() for s in (_TITLES_CFG.get("generic_role_required_skills") or [])]
 _GENERIC_BODY_SIGNAL_RES = [
-    re.compile(p, re.I) for p in (_TITLES_CFG.get("generic_body_signal_patterns") or []) if p
+    re.compile(p, re.IGNORECASE) for p in (_TITLES_CFG.get("generic_body_signal_patterns") or []) if p
 ]
 
 _REJECT_CLEARANCE = bool(_EXP_CFG["reject_clearance"])
@@ -402,9 +416,9 @@ _LANGUAGE_REQ_RE = re.compile(
 _SPECIALTY_REJECT_RULES = []
 for rule in (_SKILLS_CFG.get("specialty_reject_rules") or []):
     _SPECIALTY_REJECT_RULES.append({
-        "title_re": re.compile(rule["title_pattern"], re.I) if rule.get("title_pattern") else None,
-        "yoe_re": re.compile(rule["jd_yoe_pattern"], re.I) if rule.get("jd_yoe_pattern") else None,
-        "term_re": re.compile(rule["jd_term_pattern"], re.I) if rule.get("jd_term_pattern") else None,
+        "title_re": re.compile(rule["title_pattern"], re.IGNORECASE) if rule.get("title_pattern") else None,
+        "yoe_re": re.compile(rule["jd_yoe_pattern"], re.IGNORECASE) if rule.get("jd_yoe_pattern") else None,
+        "term_re": re.compile(rule["jd_term_pattern"], re.IGNORECASE) if rule.get("jd_term_pattern") else None,
         "min_mentions": int(rule.get("min_mentions", 3)),
     })
 
@@ -480,9 +494,9 @@ STRONG_FLOOR = int(_SKILLS_CFG["strong_floor"])
 SECONDARY_FLOOR = int(_SKILLS_CFG["secondary_floor"])
 
 _SECONDARY_YOE_CTX = _EXP_CFG["secondary_yoe_context_pattern"]
-_SECONDARY_YOE_CONTEXT_RE = re.compile(_SECONDARY_YOE_CTX, re.I) if _SECONDARY_YOE_CTX else None
+_SECONDARY_YOE_CONTEXT_RE = re.compile(_SECONDARY_YOE_CTX, re.IGNORECASE) if _SECONDARY_YOE_CTX else None
 _PRIMARY_YOE_CTX = _EXP_CFG["primary_yoe_context_pattern"]
-_PRIMARY_YOE_CONTEXT_RE = re.compile(_PRIMARY_YOE_CTX, re.I) if _PRIMARY_YOE_CTX else None
+_PRIMARY_YOE_CONTEXT_RE = re.compile(_PRIMARY_YOE_CTX, re.IGNORECASE) if _PRIMARY_YOE_CTX else None
 
 _DEGREE_EQUIV_RE = re.compile(r'degree[^\n]{0,45}\b(?:or|equivalent)\b')
 
@@ -553,26 +567,26 @@ def _requires_high_yoe(text):
 _HARD_ASK_PENALTIES = [
     {
         "label": item["label"],
-        "re": re.compile(item["pattern"], re.I),
+        "re": re.compile(item["pattern"], re.IGNORECASE),
         "penalty": int(item.get("penalty", 10)),
         "ignore_multi_level": bool(item.get("ignore_multi_level", False)),
     }
     for item in (_SKILLS_CFG.get("hard_ask_penalties") or [])
     if item.get("pattern") and item.get("label")
 ]
-_MULTI_LEVEL_RE = re.compile(r'\ball levels\b|\b(?:through|to) (?:tech )?lead\b', re.I)
+_MULTI_LEVEL_RE = re.compile(r'\ball levels\b|\b(?:through|to) (?:tech )?lead\b', re.IGNORECASE)
 
 _OFF_CENTER_CFG = _SKILLS_CFG.get("off_center_role_check") or {}
 _OFF_CENTER_ROLE_RE = (
-    re.compile(_OFF_CENTER_CFG["role_statement_pattern"], re.I)
+    re.compile(_OFF_CENTER_CFG["role_statement_pattern"], re.IGNORECASE)
     if _OFF_CENTER_CFG.get("role_statement_pattern") else None
 )
 _OFF_CENTER_WORD_RE = (
-    re.compile(_OFF_CENTER_CFG["off_center_words_pattern"], re.I)
+    re.compile(_OFF_CENTER_CFG["off_center_words_pattern"], re.IGNORECASE)
     if _OFF_CENTER_CFG.get("off_center_words_pattern") else None
 )
 _TARGET_WORD_RE = (
-    re.compile(_OFF_CENTER_CFG["target_words_pattern"], re.I)
+    re.compile(_OFF_CENTER_CFG["target_words_pattern"], re.IGNORECASE)
     if _OFF_CENTER_CFG.get("target_words_pattern") else None
 )
 _OFF_CENTER_MIN_MENTIONS = int(_OFF_CENTER_CFG.get("min_mentions", 6))
@@ -1178,8 +1192,8 @@ def generate_markdown(result, limit=25):
     if near_misses:
         lines.extend([
             "",
-            f"<details><summary>Dropped by a Title Rule Despite a Keyword Score of {STRONG_FLOOR}%+ "
-            f"({len(near_misses)})</summary>",
+            (f"<details><summary>Dropped by a Title Rule Despite a Keyword Score of {STRONG_FLOOR}%+ "
+             f"({len(near_misses)})</summary>"),
             "",
             "| Company | Title | Keyword % | Rule | Link |",
             "|---|---|---|---|---|"
@@ -1193,8 +1207,8 @@ def generate_markdown(result, limit=25):
     if funnel:
         lines.extend([
             "",
-            "<details><summary>Dropped by Deterministic Rules "
-            f"({sum(d['count'] for d in funnel)})</summary>",
+            ("<details><summary>Dropped by Deterministic Rules "
+             f"({sum(d['count'] for d in funnel)})</summary>"),
             "",
             "| Stage | Rule | Count | Example |",
             "|---|---|---|---|"
@@ -1212,7 +1226,9 @@ def generate_markdown(result, limit=25):
         lines.extend(f"- ⚠️ {w}" for w in health["warnings"])
 
     if result.get("ai_spend"):
-        from job_search_pipeline.review import spend_line  # deferred: evaluate.py runs standalone without the review stage
+        from job_search_pipeline.review import (
+            spend_line,  # deferred: evaluate.py runs standalone without the review stage
+        )
         lines.extend(["", "### AI Review Spend", "", spend_line(result["ai_spend"])])
 
     return "\n".join(lines)

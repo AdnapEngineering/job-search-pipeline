@@ -25,10 +25,10 @@ RESOLVE_HOSTS = tuple(h.lower() for h in CFG["url_normalization"]["resolve_direc
 ATS_NAMES = {"greenhouse": "Greenhouse", "lever": "Lever", "ashby": "Ashby"}
 
 _NON_ALNUM_RE = re.compile(r'[^a-z0-9]+')
-_LEGAL_SUFFIX_RE = re.compile(r'[,\s]+(?:inc|llc|ltd|corp|corporation|co|company|plc|gmbh|lp)\.?$', re.I)
+_LEGAL_SUFFIX_RE = re.compile(r'[,\s]+(?:inc|llc|ltd|corp|corporation|co|company|plc|gmbh|lp)\.?$', re.IGNORECASE)
 # Glassdoor titles often carry a location or remote tag the employer's title lacks
-_TITLE_TAG_RE = re.compile(r'\s*[\(\[][^)\]]*(?:remote|hybrid|onsite|on-site|us|usa)[^)\]]*[\)\]]\s*$', re.I)
-_TITLE_TAIL_RE = re.compile(r'\s+[-–—|]\s+(?:remote|hybrid|us|usa|united states)\b.*$', re.I)
+_TITLE_TAG_RE = re.compile(r'\s*[\(\[][^)\]]*(?:remote|hybrid|onsite|on-site|us|usa)[^)\]]*[\)\]]\s*$', re.IGNORECASE)
+_TITLE_TAIL_RE = re.compile(r'\s+[-–—|]\s+(?:remote|hybrid|us|usa|united states)\b.*$', re.IGNORECASE)
 
 
 def _norm_title(title):

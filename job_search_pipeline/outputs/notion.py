@@ -3,13 +3,23 @@ import json
 import os
 import sys
 import time
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 import requests
 
-from job_search_pipeline.blocklist import also_open_text, record_exported, select_new_matches
+from job_search_pipeline.blocklist import (
+    also_open_text,
+    record_exported,
+    select_new_matches,
+)
+from job_search_pipeline.config import (
+    CFG,
+    CONFIG_PATH,
+    atomic_write_json,
+    get_path,
+    load_json,
+)
 from job_search_pipeline.evaluate import skip_reason
-from job_search_pipeline.config import CFG, CONFIG_PATH, atomic_write_json, get_path, load_json
 
 _NOTION_CFG = CFG["notion"]
 
@@ -67,7 +77,7 @@ def _rich_text(content: str) -> dict:
 def _build_notion_payload(job: dict, database_id: str) -> dict:
     """Build the Notion page-create payload from a job dict."""
     first_seen = job.get("first_seen")
-    date_str = first_seen[:10] if first_seen else datetime.now(timezone.utc).strftime("%Y-%m-%d")
+    date_str = first_seen[:10] if first_seen else datetime.now(UTC).strftime("%Y-%m-%d")
     why = " ".join(filter(None, [job.get("reason") or "Matches target criteria", also_open_text(job),
                                  job.get("direct_link_note")]))
 

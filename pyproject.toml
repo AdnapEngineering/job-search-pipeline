@@ -34,5 +34,11 @@ include = ["job_search_pipeline*"]
 target-version = "py313"
 
 [tool.ruff.lint]
-# ruff 0.17 widened its default rules; keep the pre-0.17 defaults until the new ones are adopted deliberately
-select = ["E4", "E7", "E9", "F"]
+# Broad excepts are deliberate fault isolation: one failing source, posting or lookup must not end the run
+ignore = ["BLE001"]
+
+[tool.ruff.lint.per-file-ignores]
+# Antigravity runs these scripts with top-level await, and blocking calls there run before any concurrency
+"workflows/*" = ["PLE1142", "ASYNC"]
+# Fixture tables as class attributes are read-only test data
+"tests/*" = ["RUF012"]

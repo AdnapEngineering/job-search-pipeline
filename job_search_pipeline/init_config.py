@@ -12,8 +12,15 @@ import sys
 
 from job_search_pipeline.check import PLACEHOLDER_KEYS
 from job_search_pipeline.config import ROOT_DIR, load_json
-from job_search_pipeline.review import (CLI_NAMES, DEFAULT_MODEL, PROFILE_PATH, PROVIDER, _cli_path, _cli_response,
-                                        priced_usd)
+from job_search_pipeline.review import (
+    CLI_NAMES,
+    DEFAULT_MODEL,
+    PROFILE_PATH,
+    PROVIDER,
+    _cli_path,
+    _cli_response,
+    priced_usd,
+)
 
 EXAMPLE_PATH = os.path.join(ROOT_DIR, "config.example.json")
 DEFAULT_OUTPUT = os.path.join(ROOT_DIR, "config.draft.json")

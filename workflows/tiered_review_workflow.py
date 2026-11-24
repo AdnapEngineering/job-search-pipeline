@@ -28,9 +28,13 @@ ROOT = "/home/justin/projects/job-search-pipeline"
 if ROOT not in sys.path:
     sys.path.insert(0, ROOT)
 
-from job_search_pipeline.config import CFG, atomic_write_json, get_path, load_json  # noqa: E402
-from job_search_pipeline.outputs.html_digest import HTML_DIGEST_ENABLED, HTML_DIGEST_PATH, write_digest  # noqa: E402
-from job_search_pipeline.review import (  # noqa: E402
+from job_search_pipeline.config import CFG, atomic_write_json, get_path, load_json
+from job_search_pipeline.outputs.html_digest import (
+    HTML_DIGEST_ENABLED,
+    HTML_DIGEST_PATH,
+    write_digest,
+)
+from job_search_pipeline.review import (
     CACHE_PATH,
     DEFAULT_MODEL,
     PROMPT,
@@ -45,10 +49,10 @@ from job_search_pipeline.review import (  # noqa: E402
     _reuse_reposts,
     _salary_text,
     _save_cache,
-    archive_postings,
-    cache_entry,
     _split_cached,
     _url_key,
+    archive_postings,
+    cache_entry,
     reason_for_notion,
 )
 
@@ -197,7 +201,7 @@ async def run_tiered_review():
     _save_cache(cache, phash, changed=bool(fresh or repost_hits), triage_model=TRIAGE_TIER)
     archive_postings(cache, ENRICHED_PATH)
 
-    kept, skipped, failed, hidden = _apply_results(matches, results, deferred, MIN_REVIEW_SCORE)
+    kept, skipped, _failed, _hidden = _apply_results(matches, results, deferred, MIN_REVIEW_SCORE)
     for job in kept:
         if job.get("verdict") or job.get("review_failed"):
             job["keyword_reason"] = job.get("reason", "")
