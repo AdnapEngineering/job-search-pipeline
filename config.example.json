@@ -28,6 +28,7 @@
     "country_indeed": "USA",
     "linkedin_pause_seconds": 10,
     "block_cooldown_hours": 24,
+    "proxy": "",
     "search_terms": [
       "Target Role Title 1",
       "Senior Target Role Title",

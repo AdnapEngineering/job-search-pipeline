@@ -199,6 +199,30 @@ class BlockCooldownTests(unittest.TestCase):
         self.assertEqual(calls.count("linkedin"), 2)
         self.assertEqual(saved, {})
 
+    def test_a_proxied_run_ignores_the_direct_cooldown_and_keeps_its_own(self):
+        direct = {"linkedin": {"strikes": 2, "until": (datetime.now(UTC) + timedelta(hours=5)).isoformat()}}
+        with patch.object(fi, "PROXY", "http://127.0.0.1:8888"):
+            calls, stats, saved = self.run_fetch(direct, blocked_sites=("linkedin",))
+        self.assertEqual(calls.count("linkedin"), 1)
+        self.assertEqual(saved["linkedin"], direct["linkedin"])
+        self.assertEqual(saved["linkedin via proxy"]["strikes"], 1)
+        self.assertEqual(stats["linkedin"]["cooldown_until"], saved["linkedin via proxy"]["until"])
+
+    def test_the_proxy_goes_to_throttled_sites_only(self):
+        seen = {}
+
+        def fake_scrape(**kwargs):
+            seen[kwargs["site_name"][0]] = kwargs.get("proxies")
+            return pd.DataFrame()
+
+        searches = [("linkedin", "United States", " remote", 10), ("indeed", "Remote", "", 10)]
+        with patch.object(fi, "PROXY", "http://127.0.0.1:8888"), patch.object(fi, "scrape_jobs", fake_scrape), \
+                patch.object(fi, "SEARCHES", searches), patch.object(fi, "LINKEDIN_PAUSE_SECONDS", 0), \
+                patch.object(fi, "_install_linkedin_details_cache", lambda counter=None: (lambda: 0)):
+            fi._scrape_site("linkedin", 72, ["A"])
+            fi._scrape_site("indeed", 72, ["A"])
+        self.assertEqual(seen, {"linkedin": ["http://127.0.0.1:8888"], "indeed": None})
+
 
 class JobspySiteTests(unittest.TestCase):
     def test_sites_come_from_searches_and_unknown_ones_are_skipped(self):

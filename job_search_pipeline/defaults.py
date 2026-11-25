@@ -89,6 +89,7 @@ DEFAULTS = {
         "country_indeed": "USA",
         "linkedin_pause_seconds": 10,
         "block_cooldown_hours": 24,
+        "proxy": "",
         "search_terms": ["Software Engineer"],
         "searches": [["linkedin", "United States", " remote", 40], ["indeed", "Remote", "", 40]],
         "job_boards_enabled": True,

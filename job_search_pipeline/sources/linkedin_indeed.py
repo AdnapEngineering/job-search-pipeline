@@ -5,6 +5,7 @@ disk between runs to avoid HTTP 429s, and rows without a verifiable remote/local
 location are kept only when the JD text supports it.
 """
 import logging
+import os
 import random
 import re
 import sys
@@ -91,6 +92,15 @@ LI_DETAIL_PAUSE_SECONDS = (2.0, 5.0)
 THROTTLE_STATE_PATH = get_path("throttle_state")
 BLOCK_COOLDOWN_HOURS = float(_SOURCES_CFG["block_cooldown_hours"])
 BLOCK_COOLDOWN_MAX_FACTOR = 4
+
+# An HTTP proxy for the throttled sites only (e.g. a VPN container's proxy). JOB_PIPELINE_PROXY overrides
+# sources.proxy for a one-off run. A proxied site keeps its own cooldown, since a block is per IP address.
+PROXY = (os.environ.get("JOB_PIPELINE_PROXY") or _SOURCES_CFG.get("proxy") or "").strip()
+
+
+def throttle_key(site, proxy=None):
+    """The throttle_state.json key for a site: separate entries for direct and proxied requests."""
+    return f"{site} via proxy" if (PROXY if proxy is None else proxy) else site
 
 
 def cooldown_until(site, state, now=None):
@@ -382,6 +392,7 @@ def _scrape_site(site, lookback_hours, terms):
                     country_indeed=COUNTRY_INDEED,
                     fetch_description=True,
                     enforce_annual_salary=True,
+                    **({"proxies": [PROXY]} if PROXY and site in THROTTLED_SITES else {}),
                 )
             except Exception as e:
                 failed += 1
@@ -434,7 +445,10 @@ def fetch_indeed_jobs(lookback_hours=LOOKBACK_DAYS * 24, stats=None, terms=None)
     if not isinstance(throttle_state, dict):
         throttle_state = {}
     cooling = {site: until for site in sites if site in THROTTLED_SITES
-               and (until := cooldown_until(site, throttle_state))}
+               and (until := cooldown_until(throttle_key(site), throttle_state))}
+    if PROXY and any(site in THROTTLED_SITES for site in sites):
+        print(f"  Sending {', '.join(s for s in sites if s in THROTTLED_SITES)} requests through the configured proxy",
+              file=sys.stderr)
     active = [site for site in sites if site not in cooling]
     with ThreadPoolExecutor(max_workers=max(1, len(active))) as pool:
         futures = {site: pool.submit(_scrape_site, site, lookback_hours, terms) for site in active}
@@ -443,7 +457,7 @@ def fetch_indeed_jobs(lookback_hours=LOOKBACK_DAYS * 24, stats=None, terms=None)
     state_before = dict(throttle_state)
     for site in active:
         if site in THROTTLED_SITES:
-            until = record_block_outcome(site, bool(results[site][1]["rate_limited"]), throttle_state)
+            until = record_block_outcome(throttle_key(site), bool(results[site][1]["rate_limited"]), throttle_state)
             if until:
                 results[site][1]["cooldown_until"] = until.isoformat()
                 print(f"  {site}: pausing this site until {until:%Y-%m-%d %H:%M} UTC so the block can expire",
