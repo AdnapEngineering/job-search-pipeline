@@ -101,7 +101,7 @@ class LinkedInRateLimitTests(unittest.TestCase):
         searches = [("linkedin", "United States", " remote", 10), ("linkedin", "Portland, OR", "", 10)]
         with patch.object(fi, "scrape_jobs", fake_scrape), patch.object(fi, "SEARCHES", searches), \
                 patch.object(fi, "LINKEDIN_PAUSE_SECONDS", 0), \
-                patch.object(fi, "_install_linkedin_details_cache", lambda: (lambda: 0)), \
+                patch.object(fi, "_install_linkedin_details_cache", lambda counter=None: (lambda: 0)), \
                 contextlib.redirect_stderr(io.StringIO()):
             _, stats = fi._scrape_site("linkedin", 72, terms)
         self.assertEqual(calls, ["A remote", "B remote"])
@@ -163,7 +163,7 @@ class BlockCooldownTests(unittest.TestCase):
             searches = [("linkedin", "United States", " remote", 10), ("indeed", "Remote", "", 10)]
             with patch.object(fi, "scrape_jobs", fake_scrape), patch.object(fi, "SEARCHES", searches), \
                     patch.object(fi, "THROTTLE_STATE_PATH", path), patch.object(fi, "LINKEDIN_PAUSE_SECONDS", 0), \
-                    patch.object(fi, "_install_linkedin_details_cache", lambda: (lambda: 0)), \
+                    patch.object(fi, "_install_linkedin_details_cache", lambda counter=None: (lambda: 0)), \
                     contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
                 fi.fetch_indeed_jobs(stats=stats, terms=["A", "B"])
             saved = fi.load_json(path, default=None)
@@ -271,6 +271,7 @@ class LinkedInDetailsCacheTests(unittest.TestCase):
         method = "_fetch_details" if hasattr(LinkedIn, "_fetch_details") else "_get_job_details"
         with tempfile.TemporaryDirectory() as tmp, \
                 patch.object(fi, "LI_DETAILS_CACHE_PATH", f"{tmp}/cache.json"), \
+                patch.object(fi, "LI_DETAIL_PAUSE_SECONDS", (0, 0)), \
                 patch.object(LinkedIn, method, lambda self, job_id: calls.append(job_id) or dict(page)):
             fake = getattr(LinkedIn, method)
             finish = fi._install_linkedin_details_cache()
@@ -284,6 +285,44 @@ class LinkedInDetailsCacheTests(unittest.TestCase):
             self.assertEqual(finish(), 1)
         self.assertEqual(calls, ["1"])
         self.assertEqual(cached, page)
+
+    def test_job_pages_stop_after_a_429_and_the_search_is_ended(self):
+        import tempfile
+        from types import SimpleNamespace
+
+        from jobspy.linkedin import LinkedIn
+        method = "_fetch_details" if hasattr(LinkedIn, "_fetch_details") else "_get_job_details"
+        calls, sleeps = [], []
+        counter = fi._ErrorCounter()
+        scraper = SimpleNamespace(scraper_input=SimpleNamespace(results_wanted=40))
+        with tempfile.TemporaryDirectory() as tmp, \
+                patch.object(fi, "LI_DETAILS_CACHE_PATH", f"{tmp}/cache.json"), \
+                patch.object(fi.time, "sleep", sleeps.append), \
+                patch.object(LinkedIn, method, lambda self, job_id: calls.append(job_id) or {}):
+            finish = fi._install_linkedin_details_cache(counter)
+            fetch = getattr(LinkedIn, method)
+            fetch(scraper, "1")
+            counter.handle(logging.LogRecord("jobspy.linkedin", logging.WARNING, "", 0,
+                                             "job 2: response status code 429 (blocked: use a proxy)", None, None))
+            self.assertEqual(fetch(scraper, "2"), {})
+            finish()
+        self.assertEqual(calls, ["1"])
+        self.assertEqual(len(sleeps), 1, "uncached job pages should be spaced out")
+        self.assertEqual(scraper.scraper_input.results_wanted, 0)
+
+
+class ErrorCounterTests(unittest.TestCase):
+    def emit(self, counter, level, message):
+        counter.handle(logging.LogRecord("jobspy.linkedin", level, "", 0, message, None, None))
+
+    def test_a_429_on_a_job_page_warning_counts_as_rate_limited_but_not_as_an_error(self):
+        counter = fi._ErrorCounter()
+        self.emit(counter, logging.WARNING, "job 4485613398: response status code 429 (blocked: use a proxy)")
+        self.emit(counter, logging.WARNING, "empty page at start=50 (the end of the results, or throttled)")
+        self.emit(counter, logging.INFO, "search page: 2")
+        self.assertEqual((counter.count, counter.rate_limited), (0, 1))
+        self.emit(counter, logging.ERROR, "response status code 429 (blocked: use a proxy)")
+        self.assertEqual((counter.count, counter.rate_limited), (1, 2))
 
 
 if __name__ == "__main__":

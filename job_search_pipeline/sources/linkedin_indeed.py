@@ -5,6 +5,7 @@ disk between runs to avoid HTTP 429s, and rows without a verifiable remote/local
 location are kept only when the JD text supports it.
 """
 import logging
+import random
 import re
 import sys
 import time
@@ -81,6 +82,9 @@ COUNTRY_INDEED = _SOURCES_CFG["country_indeed"]
 
 LI_DETAILS_CACHE_PATH = get_path("linkedin_details_cache")
 LI_DETAILS_CACHE_DAYS = LOOKBACK_DAYS + 1
+# jobspy pauses between LinkedIn search pages but fetches each result's job page back to back, and that
+# burst is what trips the 429. Uncached job pages are spaced out by a random wait in this range (seconds).
+LI_DETAIL_PAUSE_SECONDS = (2.0, 5.0)
 
 # After a block, a throttled site is left alone for a while: asking again on every run keeps the block alive.
 # Each block in a row doubles the wait, up to BLOCK_COOLDOWN_MAX_FACTOR times the base.
@@ -193,8 +197,11 @@ def score_job(title, desc):
     return normalized, list(matched)
 
 
-def _install_linkedin_details_cache():
-    """Wrap jobspy's LinkedIn job-page fetch with a disk cache keyed by job id."""
+def _install_linkedin_details_cache(counter=None):
+    """Wrap jobspy's LinkedIn job-page fetch with a disk cache keyed by job id.
+
+    Uncached pages are fetched with a pause between them. Once `counter` has seen a 429, no more pages
+    are requested and jobspy's search is ended early, since each further request extends the block."""
     try:
         from jobspy.linkedin import LinkedIn
         from jobspy.model import CompensationInterval, JobType
@@ -224,6 +231,12 @@ def _install_linkedin_details_cache():
             if details.get("interval") in CompensationInterval.__members__:
                 details["interval"] = CompensationInterval[details["interval"]]
             return details
+        if counter is not None and counter.rate_limited:
+            # Stop the search loop too: results_wanted is what jobspy checks before its next card and page
+            if getattr(self, "scraper_input", None) is not None:
+                self.scraper_input.results_wanted = 0
+            return {}
+        time.sleep(random.uniform(*LI_DETAIL_PAUSE_SECONDS))
         details = original(self, job_id)
         if details.get("description"):
             stored = dict(details)
@@ -246,14 +259,16 @@ def _install_linkedin_details_cache():
 
 
 class _ErrorCounter(logging.Handler):
-    """Counts jobspy ERROR records (429s and 403 blocks are logged, not raised)."""
+    """Counts jobspy ERROR records, and 429s and blocks at any level from WARNING up (they are logged,
+    not raised; a blocked job page is only a WARNING, a blocked search page an ERROR)."""
     def __init__(self):
-        super().__init__(level=logging.ERROR)
+        super().__init__(level=logging.WARNING)
         self.count = 0
         self.rate_limited = 0
 
     def emit(self, record):
-        self.count += 1
+        if record.levelno >= logging.ERROR:
+            self.count += 1
         message = record.getMessage()
         if "429" in message or "blocked" in message:
             self.rate_limited += 1
@@ -352,7 +367,7 @@ def _scrape_site(site, lookback_hours, terms):
     logger = logging.getLogger(f"jobspy.{site}")
     counter = _ErrorCounter()
     logger.addHandler(counter)
-    finish_cache = _install_linkedin_details_cache() if site == "linkedin" else (lambda: 0)
+    finish_cache = _install_linkedin_details_cache(counter) if site == "linkedin" else (lambda: 0)
     jobs, raw, failed, skipped, counts = [], 0, 0, 0, {}
     queries = [(loc, sfx, n, term) for s, loc, sfx, n in SEARCHES if s == site for term in terms]
     try:
