@@ -88,6 +88,8 @@ DEFAULTS = {
         "jobspy_enabled": True,
         "country_indeed": "USA",
         "linkedin_pause_seconds": 10,
+        "linkedin_detail_pause_seconds": [6, 12],
+        "linkedin_max_detail_fetches": 15,
         "block_cooldown_hours": 24,
         "proxy": "",
         "search_terms": ["Software Engineer"],

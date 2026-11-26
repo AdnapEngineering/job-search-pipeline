@@ -121,9 +121,13 @@ def source_health(path=SOURCE_STATS_PATH):
             part += " (cooling down)"
             warnings.append(f"{label} cooling down after a block: skipped all {s['cooldown_queries']} queries"
                             + (f", next try after {until}" if until else ""))
-        elif s.get("skipped_queries") or (s.get("rate_limited") and until):
+        elif s.get("rate_limited") and (s.get("skipped_queries") or until):
             warnings.append(f"{label} rate-limited: skipped {s.get('skipped_queries', 0)} remaining queries"
                             + (f"; paused until {until}" if until else ""))
+        elif s.get("detail_cap_reached"):
+            # Expected, not a fault: the cap keeps the site under its block threshold
+            part += (f" (job-page cap reached, {s['skipped_queries']} queries left for the next run)"
+                     if s.get("skipped_queries") else " (job-page cap reached)")
         parts.append(part)
         if s.get("error"):
             warnings.append(f"{label} fetch failed: {s['error']}")
