@@ -101,7 +101,7 @@ class LinkedInRateLimitTests(unittest.TestCase):
         searches = [("linkedin", "United States", " remote", 10), ("linkedin", "Portland, OR", "", 10)]
         with patch.object(fi, "scrape_jobs", fake_scrape), patch.object(fi, "SEARCHES", searches), \
                 patch.object(fi, "LINKEDIN_PAUSE_SECONDS", 0), \
-                patch.object(fi, "_install_linkedin_details_cache", lambda counter=None: (lambda: 0)), \
+                patch.object(fi, "_install_linkedin_details_cache", lambda *a, **k: (lambda: 0)), \
                 contextlib.redirect_stderr(io.StringIO()):
             _, stats = fi._scrape_site("linkedin", 72, terms)
         self.assertEqual(calls, ["A remote", "B remote"])
@@ -121,6 +121,40 @@ class LinkedInRateLimitTests(unittest.TestCase):
             _, stats = fi._scrape_site("glassdoor", 72, ["A", "B", "C"])
         self.assertEqual(calls, ["A remote"])
         self.assertEqual((stats["rate_limited"], stats["skipped_queries"]), (1, 2))
+
+
+    def test_the_job_page_cap_leaves_the_remaining_queries_without_a_block(self):
+        calls = []
+
+        def install(counter=None, budget=None):
+            budget.used = budget.limit  # the first query spends the whole cap
+            return lambda: 0
+
+        def fake_scrape(**kwargs):
+            calls.append(kwargs["search_term"])
+            return pd.DataFrame()
+
+        import tempfile
+        with tempfile.TemporaryDirectory() as tmp:
+            path = f"{tmp}/throttle.json"
+            stats = {}
+            with patch.object(fi, "scrape_jobs", fake_scrape), \
+                    patch.object(fi, "SEARCHES", [("linkedin", "United States", " remote", 10)]), \
+                    patch.object(fi, "THROTTLE_STATE_PATH", path), patch.object(fi, "LINKEDIN_PAUSE_SECONDS", 0), \
+                    patch.object(fi, "LI_MAX_DETAIL_FETCHES", 15), \
+                    patch.object(fi, "_install_linkedin_details_cache", install), \
+                    contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
+                fi.fetch_indeed_jobs(stats=stats, terms=["A", "B", "C"])
+            saved = fi.load_json(path, default=None)
+        self.assertEqual(calls, ["A remote"])
+        li = stats["linkedin"]
+        self.assertEqual((li["rate_limited"], li["skipped_queries"], li["detail_cap_reached"]), (0, 2, True))
+        self.assertNotIn("cooldown_until", li)
+        self.assertIsNone(saved, "reaching the cap must not start a cooldown")
+        with patch.object(run_pipeline, "load_json", lambda path: stats):
+            health = run_pipeline.source_health()
+        self.assertIn("LinkedIn 0 (job-page cap reached, 2 queries left for the next run)", health["line"])
+        self.assertFalse(any("rate-limited" in w for w in health["warnings"]), health["warnings"])
 
 
 class BlockCooldownTests(unittest.TestCase):
@@ -163,7 +197,7 @@ class BlockCooldownTests(unittest.TestCase):
             searches = [("linkedin", "United States", " remote", 10), ("indeed", "Remote", "", 10)]
             with patch.object(fi, "scrape_jobs", fake_scrape), patch.object(fi, "SEARCHES", searches), \
                     patch.object(fi, "THROTTLE_STATE_PATH", path), patch.object(fi, "LINKEDIN_PAUSE_SECONDS", 0), \
-                    patch.object(fi, "_install_linkedin_details_cache", lambda counter=None: (lambda: 0)), \
+                    patch.object(fi, "_install_linkedin_details_cache", lambda *a, **k: (lambda: 0)), \
                     contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
                 fi.fetch_indeed_jobs(stats=stats, terms=["A", "B"])
             saved = fi.load_json(path, default=None)
@@ -218,7 +252,7 @@ class BlockCooldownTests(unittest.TestCase):
         searches = [("linkedin", "United States", " remote", 10), ("indeed", "Remote", "", 10)]
         with patch.object(fi, "PROXY", "http://127.0.0.1:8888"), patch.object(fi, "scrape_jobs", fake_scrape), \
                 patch.object(fi, "SEARCHES", searches), patch.object(fi, "LINKEDIN_PAUSE_SECONDS", 0), \
-                patch.object(fi, "_install_linkedin_details_cache", lambda counter=None: (lambda: 0)):
+                patch.object(fi, "_install_linkedin_details_cache", lambda *a, **k: (lambda: 0)):
             fi._scrape_site("linkedin", 72, ["A"])
             fi._scrape_site("indeed", 72, ["A"])
         self.assertEqual(seen, {"linkedin": ["http://127.0.0.1:8888"], "indeed": None})
@@ -333,6 +367,39 @@ class LinkedInDetailsCacheTests(unittest.TestCase):
         self.assertEqual(calls, ["1"])
         self.assertEqual(len(sleeps), 1, "uncached job pages should be spaced out")
         self.assertEqual(scraper.scraper_input.results_wanted, 0)
+
+
+    def test_uncached_job_pages_stop_at_the_cap_and_cached_ones_are_still_served(self):
+        import tempfile
+        from types import SimpleNamespace
+
+        from jobspy.linkedin import LinkedIn
+        method = "_fetch_details" if hasattr(LinkedIn, "_fetch_details") else "_get_job_details"
+        calls = []
+        budget = fi._DetailBudget(2)
+        scraper = SimpleNamespace(scraper_input=SimpleNamespace(results_wanted=40))
+        with tempfile.TemporaryDirectory() as tmp:
+            with open(f"{tmp}/cache.json", "w") as f:
+                json.dump({"9": {"fetched": datetime.now(UTC).timestamp(), "details": {"description": "cached"}}}, f)
+            with patch.object(fi, "LI_DETAILS_CACHE_PATH", f"{tmp}/cache.json"), \
+                    patch.object(fi.time, "sleep", lambda s: None), \
+                    patch.object(LinkedIn, method, lambda self, job_id: calls.append(job_id) or {"description": "x"}):
+                finish = fi._install_linkedin_details_cache(budget=budget)
+                fetch = getattr(LinkedIn, method)
+                fetch(scraper, "1")
+                self.assertEqual(scraper.scraper_input.results_wanted, 40)
+                fetch(scraper, "2")
+                self.assertEqual(scraper.scraper_input.results_wanted, 0, "the page that spends the cap ends the search")
+                self.assertEqual(fetch(scraper, "3"), {})
+                self.assertEqual(fetch(scraper, "9")["description"], "cached")
+                finish()
+        self.assertEqual(calls, ["1", "2"])
+        self.assertEqual((budget.used, budget.spent), (2, True))
+
+    def test_a_cap_of_zero_means_no_cap(self):
+        budget = fi._DetailBudget(0)
+        budget.used = 500
+        self.assertFalse(budget.spent)
 
 
 class ErrorCounterTests(unittest.TestCase):

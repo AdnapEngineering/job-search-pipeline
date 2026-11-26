@@ -85,7 +85,10 @@ LI_DETAILS_CACHE_PATH = get_path("linkedin_details_cache")
 LI_DETAILS_CACHE_DAYS = LOOKBACK_DAYS + 1
 # jobspy pauses between LinkedIn search pages but fetches each result's job page back to back, and that
 # burst is what trips the 429. Uncached job pages are spaced out by a random wait in this range (seconds).
-LI_DETAIL_PAUSE_SECONDS = (2.0, 5.0)
+LI_DETAIL_PAUSE_SECONDS = tuple(sorted(float(v) for v in _SOURCES_CFG["linkedin_detail_pause_seconds"]))
+# LinkedIn blocks after a few dozen uncached job pages however they are spaced, so a run fetches at most this
+# many (0: no cap) and leaves the rest for later runs; the cache means each run gets further. Not a block.
+LI_MAX_DETAIL_FETCHES = max(0, int(_SOURCES_CFG["linkedin_max_detail_fetches"]))
 
 # After a block, a throttled site is left alone for a while: asking again on every run keeps the block alive.
 # Each block in a row doubles the wait, up to BLOCK_COOLDOWN_MAX_FACTOR times the base.
@@ -207,11 +210,29 @@ def score_job(title, desc):
     return normalized, list(matched)
 
 
-def _install_linkedin_details_cache(counter=None):
+class _DetailBudget:
+    """How many uncached LinkedIn job pages one run may fetch; a limit of 0 means no cap."""
+    def __init__(self, limit):
+        self.limit = limit
+        self.used = 0
+
+    @property
+    def spent(self):
+        return bool(self.limit) and self.used >= self.limit
+
+
+def _end_search(scraper):
+    """Stop jobspy's search loop: results_wanted is what it checks before its next card and page."""
+    if getattr(scraper, "scraper_input", None) is not None:
+        scraper.scraper_input.results_wanted = 0
+
+
+def _install_linkedin_details_cache(counter=None, budget=None):
     """Wrap jobspy's LinkedIn job-page fetch with a disk cache keyed by job id.
 
     Uncached pages are fetched with a pause between them. Once `counter` has seen a 429, no more pages
-    are requested and jobspy's search is ended early, since each further request extends the block."""
+    are requested and jobspy's search is ended early, since each further request extends the block.
+    The search is also ended once `budget` is spent, right after the page that spends it."""
     try:
         from jobspy.linkedin import LinkedIn
         from jobspy.model import CompensationInterval, JobType
@@ -241,13 +262,15 @@ def _install_linkedin_details_cache(counter=None):
             if details.get("interval") in CompensationInterval.__members__:
                 details["interval"] = CompensationInterval[details["interval"]]
             return details
-        if counter is not None and counter.rate_limited:
-            # Stop the search loop too: results_wanted is what jobspy checks before its next card and page
-            if getattr(self, "scraper_input", None) is not None:
-                self.scraper_input.results_wanted = 0
+        if (counter is not None and counter.rate_limited) or (budget is not None and budget.spent):
+            _end_search(self)
             return {}
         time.sleep(random.uniform(*LI_DETAIL_PAUSE_SECONDS))
         details = original(self, job_id)
+        if budget is not None:
+            budget.used += 1
+            if budget.spent:
+                _end_search(self)
         if details.get("description"):
             stored = dict(details)
             stored["job_type"] = [t.name for t in details.get("job_type") or []]
@@ -377,7 +400,8 @@ def _scrape_site(site, lookback_hours, terms):
     logger = logging.getLogger(f"jobspy.{site}")
     counter = _ErrorCounter()
     logger.addHandler(counter)
-    finish_cache = _install_linkedin_details_cache(counter) if site == "linkedin" else (lambda: 0)
+    budget = _DetailBudget(LI_MAX_DETAIL_FETCHES if site == "linkedin" else 0)
+    finish_cache = _install_linkedin_details_cache(counter, budget=budget) if site == "linkedin" else (lambda: 0)
     jobs, raw, failed, skipped, counts = [], 0, 0, 0, {}
     queries = [(loc, sfx, n, term) for s, loc, sfx, n in SEARCHES if s == site for term in terms]
     try:
@@ -412,6 +436,12 @@ def _scrape_site(site, lookback_hours, terms):
                     print(f"  {site}: rate-limited or blocked; skipping the remaining {skipped} queries this run",
                           file=sys.stderr)
                 break
+            if budget.spent:
+                skipped = len(queries) - i - 1
+                if skipped:
+                    print(f"  {site}: fetched {budget.limit} new job pages (sources.linkedin_max_detail_fetches); "
+                          f"leaving the remaining {skipped} queries for the next run", file=sys.stderr)
+                break
             if site in THROTTLED_SITES:
                 time.sleep(LINKEDIN_PAUSE_SECONDS)
     finally:
@@ -419,6 +449,7 @@ def _scrape_site(site, lookback_hours, terms):
         cache_hits = finish_cache()
     return jobs, {"raw": raw, "kept": len(jobs), "failed_queries": failed,
                   "onsite_dropped": counts.get("onsite_dropped", 0), "errors": counter.count, "rate_limited": counter.rate_limited, "skipped_queries": skipped, "cached_details": cache_hits,
+                  "fetched_details": budget.used, "detail_cap_reached": budget.spent,
                   "dropped": counts.get("dropped", {})}
 
 
@@ -484,6 +515,8 @@ def fetch_indeed_jobs(lookback_hours=LOOKBACK_DAYS * 24, stats=None, terms=None)
               + (f", {site_stats['onsite_dropped']} dropped for a stated onsite requirement"
                  if site_stats.get('onsite_dropped') else "")
               + (f", {site_stats['cached_details']} job pages from cache" if site_stats['cached_details'] else "")
+              + (f", {site_stats['fetched_details']} fetched" if site_stats.get('fetched_details') else "")
+              + (" (job-page cap reached)" if site_stats.get('detail_cap_reached') else "")
               + (f", {site_stats['rate_limited']} rate-limited (429)" if site_stats['rate_limited'] else "")
               + (f", {site_stats['failed_queries']} failed queries" if site_stats['failed_queries'] else "")
               + (f", {site_stats['skipped_queries']} queries skipped" if site_stats.get('skipped_queries') else ""))
