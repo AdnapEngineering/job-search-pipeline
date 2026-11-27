@@ -189,7 +189,7 @@ Without uv, install into a virtualenv with pip. This resolves the version ranges
 ```bash
 python3 -m venv .venv && source .venv/bin/activate
 pip install -e .              # runtime dependencies and the `job-search` command
-pip install ruff==0.15.20     # for development (see Tests)
+pip install ruff==0.17.6      # for development (see Tests)
 ```
 
 ### Your config and profile
@@ -251,7 +251,7 @@ Every way of starting the pipeline (`run_job_search.sh`, cron, `python3 -m job_s
 python3 -m job_search_pipeline --check
 ```
 
-The check fetches no jobs, spends no AI quota and writes nothing. It reports, one line each: Python version and installed dependencies; which config file is read, unknown keys (with a "did you mean" for typos) and career settings still at the template's placeholder values; whether `candidate_profile.md` exists; whether the AI reviewer's CLI is found; when Notion is configured, whether the token works and the database has every property the sync writes (its only network call); and, when Obsidian is on, whether the vault folder exists and is writable. It reads `.env` and `~/.config/notion/job-search.env` the way the cron wrapper does. It exits 1 when something would make a run fail (✗), and 0 when there are only warnings (!).
+The check fetches no jobs, spends no AI quota and writes nothing. It reports, one line each: Python version and installed dependencies; which config file is read, unknown keys (with a "did you mean" for typos) and career settings still at the template's placeholder values; whether `candidate_profile.md` exists; whether the AI reviewer's CLI is found; when Notion is configured, whether the token works and the database has every property the sync writes (its only network call); and, when Obsidian is on, whether the vault folder exists and is writable. It reads the same env files as a run: `$JOB_SEARCH_ENV_FILE` when set, then `.env`. It exits 1 when something would make a run fail (✗), and 0 when there are only warnings (!).
 
 ---
 

@@ -2,8 +2,10 @@
 to read each JD against `candidate_profile.md` and return apply / stretch / skip
 with a structured rubric and reason.
 
-Fail-open by design: if the provider is unavailable, times out, or returns something
-unparseable, the job keeps its keyword verdict and the pipeline carries on.
+When one job's review fails (timeout, CLI error, unparseable reply) or a budget cap defers it, the job
+stays visible with review_failed=True but is held back from Notion, Obsidian and the text export, so it
+is retried next run. Only when the whole stage cannot run (no CLI, no candidate_profile.md) do matches
+keep their keyword scores, and the run says so loudly.
 """
 import difflib
 import hashlib
