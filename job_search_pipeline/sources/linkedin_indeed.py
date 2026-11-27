@@ -238,12 +238,11 @@ def _install_linkedin_details_cache(counter=None, budget=None):
         from jobspy.model import CompensationInterval, JobType
     except ImportError:
         return lambda: 0
-    # Named _fetch_details since jobspy 1.2 (_get_job_details before); a rename would silently drop the cache
-    method = next((m for m in ("_fetch_details", "_get_job_details") if hasattr(LinkedIn, m)), None)
-    if method is None:
+    # A private jobspy method (pinned in pyproject.toml): if a release renames it, run without the cache
+    original = getattr(LinkedIn, "_fetch_details", None)
+    if original is None:
         print("WARNING: jobspy's LinkedIn job-page fetch was not found; the details cache is off", file=sys.stderr)
         return lambda: 0
-    original = getattr(LinkedIn, method)
 
     cutoff = datetime.now(UTC).timestamp() - LI_DETAILS_CACHE_DAYS * 86400
     stored_cache = load_json(LI_DETAILS_CACHE_PATH, default={})
@@ -279,10 +278,10 @@ def _install_linkedin_details_cache(counter=None, budget=None):
             cache[job_id] = {"fetched": datetime.now(UTC).timestamp(), "details": stored}
         return details
 
-    setattr(LinkedIn, method, cached_details)
+    LinkedIn._fetch_details = cached_details
 
     def finish():
-        setattr(LinkedIn, method, original)
+        LinkedIn._fetch_details = original
         try:
             atomic_write_json(LI_DETAILS_CACHE_PATH, cache)
         except (OSError, TypeError) as e:
@@ -396,7 +395,7 @@ def _row_to_job(row, counts=None):
 
 
 def _scrape_site(site, lookback_hours, terms):
-    # jobspy logs as "jobspy.<site>" since 1.2 ("JobSpy:LinkedIn" before); a rename hides 429s from the counter
+    # jobspy logs 429s instead of raising them, so count them from its logger
     logger = logging.getLogger(f"jobspy.{site}")
     counter = _ErrorCounter()
     logger.addHandler(counter)
@@ -428,29 +427,37 @@ def _scrape_site(site, lookback_hours, terms):
                     job = _row_to_job(row, counts)
                     if job:
                         jobs.append(job)
+            # A block lasts well past this run, and every later query would spend ~2 minutes in jobspy's
+            # retries before coming back empty, so stop asking. A spent page cap also ends the run's queries.
             if site in THROTTLED_SITES and counter.rate_limited:
-                # A block lasts well past this run, and every later query would spend ~2 minutes in
-                # jobspy's retries before coming back empty, so stop asking.
+                stop = "rate-limited or blocked; skipping"
+            elif budget.spent:
+                stop = f"fetched {budget.limit} new job pages (sources.linkedin_max_detail_fetches); leaving"
+            else:
+                stop = ""
+            if stop:
                 skipped = len(queries) - i - 1
                 if skipped:
-                    print(f"  {site}: rate-limited or blocked; skipping the remaining {skipped} queries this run",
-                          file=sys.stderr)
-                break
-            if budget.spent:
-                skipped = len(queries) - i - 1
-                if skipped:
-                    print(f"  {site}: fetched {budget.limit} new job pages (sources.linkedin_max_detail_fetches); "
-                          f"leaving the remaining {skipped} queries for the next run", file=sys.stderr)
+                    print(f"  {site}: {stop} the remaining {skipped} queries for the next run", file=sys.stderr)
                 break
             if site in THROTTLED_SITES:
                 time.sleep(LINKEDIN_PAUSE_SECONDS)
     finally:
         logger.removeHandler(counter)
         cache_hits = finish_cache()
-    return jobs, {"raw": raw, "kept": len(jobs), "failed_queries": failed,
-                  "onsite_dropped": counts.get("onsite_dropped", 0), "errors": counter.count, "rate_limited": counter.rate_limited, "skipped_queries": skipped, "cached_details": cache_hits,
-                  "fetched_details": budget.used, "detail_cap_reached": budget.spent,
-                  "dropped": counts.get("dropped", {})}
+    return jobs, {
+        "raw": raw,
+        "kept": len(jobs),
+        "failed_queries": failed,
+        "onsite_dropped": counts.get("onsite_dropped", 0),
+        "errors": counter.count,
+        "rate_limited": counter.rate_limited,
+        "skipped_queries": skipped,
+        "cached_details": cache_hits,
+        "fetched_details": budget.used,
+        "detail_cap_reached": budget.spent,
+        "dropped": counts.get("dropped", {}),
+    }
 
 
 def searched_sites(searches=None):

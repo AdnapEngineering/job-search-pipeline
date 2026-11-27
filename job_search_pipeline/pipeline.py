@@ -398,6 +398,15 @@ def notify_results(eval_results, synced_urls, exported_urls, health, notion_enab
                       click=HTML_DIGEST_URL if digest_path else "")
 
 
+def step(name, enabled, skip_note="", banner_note=""):
+    """Print the step's banner and return True, or print that it was skipped and return False."""
+    if enabled:
+        print_banner(name + banner_note)
+    else:
+        print(f"\n--> [Step: {name}] Skipped{skip_note}.")
+    return enabled
+
+
 def run(args):
     # 1. Fetch and filter
     if args.skip_fetch:
@@ -431,57 +440,43 @@ def run(args):
     else:
         ai_review(eval_results, args.review_min_score, triage_model=args.triage_model)
 
-    tally = match_tally(eval_results["top_matches"], args.min_score)
-    deferred = sum(1 for j in eval_results["top_matches"] if j.get("review_deferred"))
-    print(f"Open matches: {len(eval_results['top_matches'])} ({tally['at_threshold']} at {args.min_score}%+, "
+    matches = eval_results["top_matches"]
+    tally = match_tally(matches, args.min_score)
+    deferred = sum(1 for j in matches if j.get("review_deferred"))
+    print(f"Open matches: {len(matches)} ({tally['at_threshold']} at {args.min_score}%+, "
           f"{tally['held'] - deferred} held for a failed AI review, "
           + (f"{deferred} held by the AI review budget, " if deferred else "")
           + f"{tally['third_party']} from third-party posters)")
     print(f"Total manual reviews needed: {len(eval_results.get('manual_reviews', []))}")
 
     # Glassdoor (resolve_direct_hosts) links on roles about to be written point at the employer's posting
-    if resolve_direct_links(eval_results["top_matches"], args.min_score):
+    if resolve_direct_links(matches, args.min_score):
         print("Re-pointed job-board links at the employer's posting (see [direct links] above).")
 
     # 5. Export to .txt / Obsidian / Notion. Only the last active output blocklists what it wrote, so a
     # role that fails there is retried next run instead of being dropped. Obsidian never overwrites a
     # note, so retrying a role it already wrote is harmless.
+    txt_path, vault = text_export_path(args), obsidian_vault(args)
     notion_active = not args.no_notion and bool(DEFAULT_DB_ID)
-    vault = obsidian_vault(args)
-    exported_urls = []
-    txt_path = text_export_path(args)
-    if txt_path:
-        print_banner(f"Export to Text File (Min Score: {args.min_score}%)")
-        exported_urls = export_jobs_to_text(eval_results["top_matches"], txt_path, min_score=args.min_score,
-                                            record_in_blocklist=not (notion_active or vault))
-    else:
-        print("\n--> [Step: Export to Text File] Skipped.")
+    last_output = "notion" if notion_active else "obsidian" if vault else "txt"
+    min_score = f" (Min Score: {args.min_score}%)"
+    exported_urls, obsidian_urls, synced_urls = [], [], []
 
-    obsidian_urls = []
-    if vault:
-        print_banner(f"Write Notes to Obsidian (Min Score: {args.min_score}%)")
-        obsidian_urls = sync_jobs_to_obsidian(eval_results["top_matches"], vault, min_score=args.min_score,
-                                              record_in_blocklist=not notion_active)
-    else:
-        print("\n--> [Step: Write Notes to Obsidian] Skipped.")
-
-    synced_urls = []
-    if args.no_notion:
-        print("\n--> [Step: Batch Sync to Notion] Skipped (--no-notion flag passed).")
-    else:
-        print_banner(f"Batch Sync to Notion (Min Score: {args.min_score}%)")
-        synced_urls = sync_jobs_to_notion(eval_results["top_matches"], min_score=args.min_score)
+    if step("Export to Text File", bool(txt_path), banner_note=min_score):
+        exported_urls = export_jobs_to_text(matches, txt_path, min_score=args.min_score,
+                                            record_in_blocklist=last_output == "txt")
+    if step("Write Notes to Obsidian", bool(vault), banner_note=min_score):
+        obsidian_urls = sync_jobs_to_obsidian(matches, vault, min_score=args.min_score,
+                                              record_in_blocklist=last_output == "obsidian")
+    if step("Batch Sync to Notion", not args.no_notion, " (--no-notion flag passed)", min_score):
+        synced_urls = sync_jobs_to_notion(matches, min_score=args.min_score)
         print(f"Successfully synced {len(synced_urls)} new prospect(s) to Notion.")
 
     # 6. HTML digest, Markdown summary and Notion / Obsidian run logs
     digest_path = html_digest_path(args)
-    if digest_path:
-        print_banner("Write HTML Digest")
+    if step("Write HTML Digest", bool(digest_path)):
         write_digest(eval_results, synced_urls, [*exported_urls, *obsidian_urls], digest_path, min_score=args.min_score,
                      spend=eval_results.get("ai_spend"))
-    else:
-        print("\n--> [Step: Write HTML Digest] Skipped.")
-
     if args.md_output:
         write_markdown(eval_results, args.md_output)
 
@@ -489,17 +484,11 @@ def run(args):
     obsidian_log = bool(vault) and not args.no_obsidian_log
     # Record the run once, so the shared run history gets one entry however many logs are written
     history = record_run(eval_results, synced_urls or obsidian_urls, args.min_score) if notion_log or obsidian_log else None
-    if notion_log:
-        print_banner("Log Run Summary to Notion")
+    if step("Log Run Summary to Notion", notion_log):
         log_run_summary_to_notion(eval_results, synced_urls, min_score=args.min_score, history=history)
-    else:
-        print("\n--> [Step: Log Run Summary to Notion] Skipped.")
-    if obsidian_log:
-        print_banner("Log Run Summary to Obsidian")
+    if step("Log Run Summary to Obsidian", obsidian_log):
         log_run_summary_to_obsidian(eval_results, obsidian_urls, min_score=args.min_score, history=history,
                                     vault_path=vault)
-    else:
-        print("\n--> [Step: Log Run Summary to Obsidian] Skipped.")
 
     # 7. Push notification
     if not args.no_notify:
