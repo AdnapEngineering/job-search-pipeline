@@ -717,7 +717,8 @@ class Budget:
             tokens, usd = self._estimate(prompt_chars, stage, model)
             run_tokens, run_usd = self.tokens + self.reserved_tokens + tokens, self.usd + self.reserved_usd + usd
             checks = (
-                ("reviews/run", self.max_reviews, self.started + 1),
+                # A triage call is not a review: only Pass-2 calls count against reviews/run
+                ("reviews/run", self.max_reviews if stage == PASS_REVIEW else 0, self.started + 1),
                 ("tokens/run", self.max_tokens_run, run_tokens),
                 ("tokens/day", self.max_tokens_day, self.today_tokens + run_tokens),
                 ("USD/run", self.max_usd_run, run_usd),
@@ -727,7 +728,8 @@ class Budget:
                 if cap and value > cap:
                     self.stopped_by = name
                     return None
-            self.started += 1
+            if stage == PASS_REVIEW:
+                self.started += 1
             self.reserved_tokens += tokens
             self.reserved_usd += usd
             return tokens, usd

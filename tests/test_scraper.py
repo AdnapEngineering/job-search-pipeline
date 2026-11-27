@@ -151,9 +151,11 @@ class GreenhouseUrlTests(unittest.TestCase):
 
 class StoredJdTests(unittest.TestCase):
     def test_prescraped_sources_backfill_the_full_jd(self):
-        job = {"ats": "LinkedIn", "description_ai": "x" * 200}
-        self.assertTrue(bs._has_complete_jd(job))
-        self.assertEqual(job["description_full"], "x" * 200)
+        for ats in ("LinkedIn", "Indeed", "Glassdoor"):
+            with self.subTest(ats=ats):
+                job = {"ats": ats, "description_ai": "x" * 200}
+                self.assertTrue(bs._has_complete_jd(job))
+                self.assertEqual(job["description_full"], "x" * 200)
 
     def test_ats_jobs_without_a_full_jd_are_rescraped(self):
         self.assertFalse(bs._has_complete_jd({"ats": "Greenhouse", "description_ai": "x" * 200}))

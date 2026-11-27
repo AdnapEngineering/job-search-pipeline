@@ -71,8 +71,12 @@ class RemoteRestrictionTests(unittest.TestCase):
         self.assertFalse(self.blocked(location="Remote, US"))
         self.assertFalse(self.blocked(title="Frontend Engineer (Remote)"))
 
-    def test_linkedin_and_indeed_display_locations_are_not_restrictions(self):
-        self.assertFalse(self.blocked(location="Remote (Austin, TX)", ats="Linkedin", remote=False))
+    def test_jobspy_display_locations_are_not_restrictions(self):
+        for ats in ("Linkedin", "Indeed", "Glassdoor"):
+            with self.subTest(ats=ats):
+                self.assertFalse(self.blocked(location="Remote (Austin, TX)", ats=ats, remote=False))
+                self.assertFalse(self.blocked(location="Remote - TX", ats=ats, remote=False))
+        self.assertTrue(self.blocked(location="Remote - TX", ats="Greenhouse", remote=False))
 
     def test_residency_wording_in_the_jd(self):
         self.assertTrue(self.blocked("Applicants must reside in MA, IN, or TX."))

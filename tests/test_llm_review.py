@@ -451,6 +451,16 @@ class SpendAndRepostTests(unittest.TestCase):
         self.assertEqual((stats["deferred"], stats["stopped_by"]), (1, "reviews/run"))
         self.assertIn("deferred by the reviews/run cap", review.spend_line(stats))
 
+    def test_triage_calls_do_not_count_against_the_review_cap(self):
+        with patch.dict(review._BUDGET_CFG, {"max_reviews_per_run": 2}, clear=True):
+            budget = review.Budget()
+        for _ in range(5):
+            self.assertIsNotNone(budget.reserve(100, review.PASS_TRIAGE, "fast-model"))
+        self.assertIsNotNone(budget.reserve(100, review.PASS_REVIEW))
+        self.assertIsNotNone(budget.reserve(100, review.PASS_REVIEW))
+        self.assertIsNone(budget.reserve(100, review.PASS_REVIEW))
+        self.assertEqual(budget.stopped_by, "reviews/run")
+
     @patch("job_search_pipeline.review.subprocess.run")
     def test_daily_token_cap_counts_earlier_runs_today_only(self, run):
         run.return_value = completed(AGY_OUTPUT)

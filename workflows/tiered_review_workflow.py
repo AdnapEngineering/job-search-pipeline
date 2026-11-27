@@ -9,8 +9,8 @@ Replaces single-turn CLI subprocess calls with a schema-validated two-pass agent
 
 Run via Antigravity `run_workflow`:
     run_workflow(
-        ScriptPath="/home/justin/projects/job-search-pipeline/workflows/tiered_review_workflow.py",
-        Cwd="/home/justin/projects/job-search-pipeline",
+        ScriptPath="<repo>/workflows/tiered_review_workflow.py",
+        Cwd="<repo>",
         Description="Run two-stage parallel agent fleet (Flash triage -> Deep rubric review) on evaluated matches",
     )
 
@@ -21,10 +21,12 @@ Optional `Args`:
     - "deep_model" (str): model tier for Pass 2 ("inherit", "pro", "flash"; default "inherit")
 """
 import json
+import os
 import sys
 from datetime import datetime
 
-ROOT = "/home/justin/projects/job-search-pipeline"
+# The repo root: this file's parent folder, or the working directory when the runner gives no __file__
+ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__))) if "__file__" in globals() else os.getcwd()
 if ROOT not in sys.path:
     sys.path.insert(0, ROOT)
 
