@@ -518,8 +518,8 @@ def main():
         from job_search_pipeline.init_config import init_config
         sys.exit(init_config(args.init_config, output=args.init_output, force=args.force))
     if not os.path.exists(CONFIG_PATH):
-        sys.exit(f"No config found at {CONFIG_PATH}. Run `python3 -m job_search_pipeline.setup` to create one, "
-                 "then run `python3 -m job_search_pipeline --check`.")
+        sys.exit(f"No config found at {CONFIG_PATH}. Run `uv run python -m job_search_pipeline.setup` to create one, "
+                 "then run `uv run python -m job_search_pipeline --check`.")
     try:
         run(args)
     except Exception as e:

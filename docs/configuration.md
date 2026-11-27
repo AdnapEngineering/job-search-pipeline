@@ -50,7 +50,7 @@ Alternatively, copy `config.example.json` and edit it, or use `--init-config` to
 
 - The pipeline reads `config.json` from the repository directory. It is your own copy of the tracked template `config.example.json` and is ignored by git. Set `JOB_PIPELINE_CONFIG=/path/to/other.json` to use a different file (e.g. one per career).
 - If `config.json` does not exist yet, a search run stops and says how to create it; the template is never read as your config.
-- If a file named by `JOB_PIPELINE_CONFIG` is missing, a search run stops the same way. If a config file is not valid JSON, the run stops with the file, line and column of the error. `python3 -m job_search_pipeline --check` also catches unknown keys, such as typos, which would otherwise be ignored.
+- If a file named by `JOB_PIPELINE_CONFIG` is missing, a search run stops the same way. If a config file is not valid JSON, the run stops with the file, line and column of the error. `uv run python -m job_search_pipeline --check` also catches unknown keys, such as typos, which would otherwise be ignored.
 - The Notion logger only writes `summary_block_id` back when `config.json` parsed cleanly, so a typo in the file is never overwritten.
 
 ## AI reviewer

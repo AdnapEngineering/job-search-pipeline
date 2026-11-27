@@ -271,7 +271,7 @@ def init_config(sample_urls=(), output=None, force=False, out=print):
     executable = _cli_path(PROVIDER)
     if not executable:
         out(f"The {CLI_NAMES[PROVIDER]} CLI for llm_review.provider {PROVIDER!r} was not found. Install it or set "
-            "llm_review.provider; `python3 -m job_search_pipeline --check` shows what is missing.")
+            "llm_review.provider; `uv run python -m job_search_pipeline --check` shows what is missing.")
         return 1
     template = starter_config(load_json(EXAMPLE_PATH, default={}) or {})
 
@@ -310,7 +310,7 @@ def init_config(sample_urls=(), output=None, force=False, out=print):
         out(f"  Used {tokens:,} tokens" + (f" (${usd:.3f})" if usd is not None else ""))
     if os.path.basename(output) != "config.json":
         out(f"\nReview it, then `cp {os.path.relpath(output)} config.json` (or merge the parts you want into your "
-            "existing config.json), and run `python3 -m job_search_pipeline --check`.")
+            "existing config.json), and run `uv run python -m job_search_pipeline --check`.")
     return 0
 
 

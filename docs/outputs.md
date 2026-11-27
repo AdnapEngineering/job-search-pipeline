@@ -20,7 +20,7 @@ Notion is optional (see [Obsidian](#obsidian) and [other platforms](#without-not
    | `Originally Posted` | Date (optional) |
 
 3. Connect the integration to the database: open the database, choose **••• → Connections** and add your integration. Skipping this is the usual cause of 404 errors.
-4. Run `python3 -m job_search_pipeline --check`. It confirms the token works, the database is reachable, and every property exists with the right type.
+4. Run `uv run python -m job_search_pipeline --check`. It confirms the token works, the database is reachable, and every property exists with the right type.
 
 The first run also adds a run-summary Callout below the database on its parent page, and remembers it in `notion.summary_block_id`.
 
@@ -89,7 +89,7 @@ Or per run from the command line:
 
 ```bash
 # Text file only, no Notion
-python3 -m job_search_pipeline --no-notion --txt-output ~/Documents/job_matches.txt
+uv run python -m job_search_pipeline --no-notion --txt-output ~/Documents/job_matches.txt
 
 # Through the cron wrapper (arguments passed to the wrapper replace its default --md-output)
 ./run_job_search.sh --no-notion --txt-output ~/Documents/job_matches.txt --md-output data/latest_job_summary.md
