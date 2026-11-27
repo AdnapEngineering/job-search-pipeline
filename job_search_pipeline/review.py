@@ -658,53 +658,51 @@ def _new_tally(model):
             "usd": 0.0, "usd_estimated": False, "usd_unknown": False}
 
 
+def _tally_tokens(t):
+    return t["input_tokens"] + t["cached_tokens"] + t["output_tokens"]
+
+
 class Budget:
-    """Running spend for one review pass, checked against the llm_review.budget caps (0 = no cap).
+    """Running spend for the AI review, checked against the llm_review.budget caps (0 = no cap).
 
-    Each review reserves its estimated cost before it starts and settles to the real usage after, so
-    reviews running in parallel cannot jointly pass a cap. The first cap reached stops the pass: the
-    remaining jobs (lower keyword scores, since the pass runs best-first) are deferred to the next run.
-
-    Usage is also tallied per stage (PASS_TRIAGE for the Pass-1 triage model, PASS_REVIEW for the Pass-2
-    model), each priced at its own model's rates, so a cheap triage model's replies neither skew the
-    estimate for a deep review nor get billed at the deep model's price."""
+    Each call reserves its estimated cost before it starts and settles to the real usage after, so
+    calls running in parallel cannot jointly pass a cap. The first cap reached stops the run; the
+    remaining jobs (lower keyword scores, since reviews run best-first) wait for the next run.
+    Usage is tallied per pass (triage, review), each priced at its own model's rates."""
 
     def __init__(self, today_usd=0.0, today_tokens=0):
         self.max_reviews = _cap("max_reviews_per_run", int)
         self.max_usd_run, self.max_usd_day = _cap("max_usd_per_run"), _cap("max_usd_per_day")
         self.max_tokens_run, self.max_tokens_day = _cap("max_tokens_per_run", int), _cap("max_tokens_per_day", int)
         self.today_usd, self.today_tokens = today_usd, today_tokens
-        self.calls = self.input = self.cached = self.output = 0
-        self.usd, self.usd_estimated, self.usd_unknown = 0.0, False, False
+        self.passes = {}  # stage -> tally
         self.started = self.reserved_tokens = 0
         self.reserved_usd = 0.0
         self.stopped_by = ""
-        self.passes = {}
         self._lock = threading.Lock()
+
+    def _total(self, field):
+        return sum(t[field] for t in self.passes.values())
 
     @property
     def tokens(self):
-        return self.input + self.cached + self.output
+        return sum(_tally_tokens(t) for t in self.passes.values())
 
     def caps(self):
         named = {"reviews/run": self.max_reviews, "USD/run": self.max_usd_run, "USD/day": self.max_usd_day,
                  "tokens/run": self.max_tokens_run, "tokens/day": self.max_tokens_day}
         return {k: v for k, v in named.items() if v}
 
-    def _tally(self, stage, model):
-        tally = self.passes.get(stage)
-        if tally is None:
-            tally = self.passes[stage] = _new_tally(model)
-        return tally
-
     def _estimate(self, prompt_chars, stage, model):
-        # Average over this stage's replies when it has any: triage replies are far shorter than reviews
+        # Average over this pass's replies when it has any: triage replies are far shorter than reviews
         tally = self.passes.get(stage)
-        calls, output, usd_sum = ((tally["calls"], tally["output_tokens"], tally["usd"]) if tally and tally["calls"]
-                                  else (self.calls, self.output, self.usd))
-        out = output / calls if calls else EST_OUTPUT_TOKENS
-        tokens = prompt_chars // CHARS_PER_TOKEN + int(out)
-        usd = priced_usd({"input": tokens - int(out), "cached": 0, "output": int(out)}, model=model)
+        if tally and tally["calls"]:
+            calls, output, usd_sum = tally["calls"], tally["output_tokens"], tally["usd"]
+        else:
+            calls, output, usd_sum = self._total("calls"), self._total("output_tokens"), self._total("usd")
+        out = int(output / calls) if calls else EST_OUTPUT_TOKENS
+        tokens = prompt_chars // CHARS_PER_TOKEN + out
+        usd = priced_usd({"input": tokens - out, "cached": 0, "output": out}, model=model)
         if usd is None:  # no pricing set: assume the average reported cost so far
             usd = usd_sum / calls if calls else 0.0
         return tokens, usd
@@ -715,7 +713,8 @@ class Budget:
             if self.stopped_by:
                 return None
             tokens, usd = self._estimate(prompt_chars, stage, model)
-            run_tokens, run_usd = self.tokens + self.reserved_tokens + tokens, self.usd + self.reserved_usd + usd
+            run_tokens = self.tokens + self.reserved_tokens + tokens
+            run_usd = self._total("usd") + self.reserved_usd + usd
             checks = (
                 # A triage call is not a review: only Pass-2 calls count against reviews/run
                 ("reviews/run", self.max_reviews if stage == PASS_REVIEW else 0, self.started + 1),
@@ -742,15 +741,11 @@ class Budget:
     def record(self, usage, stage=PASS_REVIEW, model=None):
         """Add one completed `stage` reply's usage from `model` (None when the CLI reported none)."""
         with self._lock:
-            tally = self._tally(stage, model)
-            self.calls += 1
+            tally = self.passes.setdefault(stage, _new_tally(model))
             tally["calls"] += 1
             if not usage:
-                self.usd_unknown = tally["usd_unknown"] = True
+                tally["usd_unknown"] = True
                 return
-            self.input += usage["input"]
-            self.cached += usage["cached"]
-            self.output += usage["output"]
             tally["input_tokens"] += usage["input"]
             tally["cached_tokens"] += usage["cached"]
             tally["output_tokens"] += usage["output"]
@@ -758,10 +753,9 @@ class Budget:
             if usd is None:
                 usd = priced_usd(usage, model=model)
                 if usd is None:
-                    self.usd_unknown = tally["usd_unknown"] = True
+                    tally["usd_unknown"] = True
                     return
-                self.usd_estimated = tally["usd_estimated"] = True
-            self.usd += usd
+                tally["usd_estimated"] = True
             tally["usd"] += usd
 
     def recorder(self, stage, model):
@@ -769,14 +763,16 @@ class Budget:
         return lambda usage: self.record(usage, stage, model)
 
     def totals(self):
-        """This pass's usage, spend and caps, plus the day's running totals, as summary fields."""
+        """This run's usage, spend and caps, plus the day's running totals, as summary fields."""
+        usd, tokens = float(self._total("usd")), self.tokens
         return {
-            "input_tokens": self.input, "cached_tokens": self.cached, "output_tokens": self.output,
-            "tokens": self.tokens, "usd": round(self.usd, 4), "usd_estimated": self.usd_estimated,
-            "usd_unknown": self.usd_unknown, "stopped_by": self.stopped_by, "caps": self.caps(),
-            "today_usd": round(self.today_usd + self.usd, 4), "today_tokens": self.today_tokens + self.tokens,
-            "passes": {stage: dict(t, usd=round(t["usd"], 4),
-                                   tokens=t["input_tokens"] + t["cached_tokens"] + t["output_tokens"])
+            "input_tokens": self._total("input_tokens"), "cached_tokens": self._total("cached_tokens"),
+            "output_tokens": self._total("output_tokens"), "tokens": tokens, "usd": round(usd, 4),
+            "usd_estimated": any(t["usd_estimated"] for t in self.passes.values()),
+            "usd_unknown": any(t["usd_unknown"] for t in self.passes.values()),
+            "stopped_by": self.stopped_by, "caps": self.caps(),
+            "today_usd": round(self.today_usd + usd, 4), "today_tokens": self.today_tokens + tokens,
+            "passes": {stage: dict(t, usd=round(t["usd"], 4), tokens=_tally_tokens(t))
                        for stage, t in self.passes.items()},
         }
 

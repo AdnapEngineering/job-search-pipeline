@@ -326,7 +326,7 @@ class LinkedInDetailsCacheTests(unittest.TestCase):
         page = {"description": "Build React apps", "job_type": [JobType.FULL_TIME],
                 "interval": CompensationInterval.YEARLY, "min_amount": 150000.0, "max_amount": 180000.0}
         calls = []
-        method = "_fetch_details" if hasattr(LinkedIn, "_fetch_details") else "_get_job_details"
+        method = "_fetch_details"
         with tempfile.TemporaryDirectory() as tmp, \
                 patch.object(fi, "LI_DETAILS_CACHE_PATH", f"{tmp}/cache.json"), \
                 patch.object(fi, "LI_DETAIL_PAUSE_SECONDS", (0, 0)), \
@@ -349,7 +349,7 @@ class LinkedInDetailsCacheTests(unittest.TestCase):
         from types import SimpleNamespace
 
         from jobspy.linkedin import LinkedIn
-        method = "_fetch_details" if hasattr(LinkedIn, "_fetch_details") else "_get_job_details"
+        method = "_fetch_details"
         calls, sleeps = [], []
         counter = fi._ErrorCounter()
         scraper = SimpleNamespace(scraper_input=SimpleNamespace(results_wanted=40))
@@ -374,7 +374,7 @@ class LinkedInDetailsCacheTests(unittest.TestCase):
         from types import SimpleNamespace
 
         from jobspy.linkedin import LinkedIn
-        method = "_fetch_details" if hasattr(LinkedIn, "_fetch_details") else "_get_job_details"
+        method = "_fetch_details"
         calls = []
         budget = fi._DetailBudget(2)
         scraper = SimpleNamespace(scraper_input=SimpleNamespace(results_wanted=40))
