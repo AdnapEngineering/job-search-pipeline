@@ -292,13 +292,16 @@ def _other_states_only(state_list):
     return bool(states) and not (states & _HOME_STATES)
 
 
+# Sites fetched through jobspy (sources/linkedin_indeed.JOBSPY_SITES), whose location field is rewritten
+_JOBSPY_ATS = ('linkedin', 'indeed', 'glassdoor')
+
 def remote_restriction(job, text):
     """Wording that limits a remote role to states or time zones the candidate is not in, or ''.
     These are stated outright in the title, feed location or JD, so they need no AI review."""
     if _HOME_STATES:
         fields = [job.get('title') or '']
-        # LinkedIn/Indeed locations are rewritten by sources/linkedin_indeed.py ("Remote (City, ST)"), not a restriction
-        if (job.get('ats') or '').lower() not in ('linkedin', 'indeed'):
+        # jobspy locations are rewritten by sources/linkedin_indeed.py ("Remote (City, ST)"), not a restriction
+        if (job.get('ats') or '').lower() not in _JOBSPY_ATS:
             fields.append(job.get('location') or '')
         for field in fields:
             m = _REMOTE_STATE_RE.search(field)
@@ -345,7 +348,7 @@ def jd_logistics_block(job):
     if _JD_LOCAL_METRO_RE and _JD_LOCAL_METRO_RE.search(text):
         return ''
 
-    inferred = (job.get('ats') or '').lower() in ('linkedin', 'indeed')
+    inferred = (job.get('ats') or '').lower() in _JOBSPY_ATS
     trusted_remote = not inferred and (job.get('remote') is True or 'remote' in loc.lower())
     patterns = (_JD_HARD_ONSITE_RE,) if trusted_remote else (_JD_HARD_ONSITE_RE, _JD_SOFT_ONSITE_RE)
     passage = _onsite_passage(text, patterns)

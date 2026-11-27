@@ -309,7 +309,7 @@ async def fetch_jd(session, job):
     return await _fetch_html(session, url, parsed.path)
 
 
-_PRESCRAPED_ATS = {'indeed', 'linkedin', 'remoteok', 'remotive', 'jobicy', 'himalayas', 'we work remotely',
+_PRESCRAPED_ATS = {'indeed', 'linkedin', 'glassdoor', 'remoteok', 'remotive', 'jobicy', 'himalayas', 'we work remotely',
                    "hn who's hiring"}
 
 

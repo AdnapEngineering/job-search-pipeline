@@ -2,8 +2,8 @@
 
 Run via Antigravity `run_workflow`:
     run_workflow(
-        ScriptPath="/home/justin/projects/job-search-pipeline/workflows/auto_calibrate_workflow.py",
-        Cwd="/home/justin/projects/job-search-pipeline",
+        ScriptPath="<repo>/workflows/auto_calibrate_workflow.py",
+        Cwd="<repo>",
         Description="Mine cached AI reviews, fan out rule-tuning agents, and verify via replay",
     )
 
@@ -17,7 +17,8 @@ import os
 import subprocess
 import sys
 
-ROOT = "/home/justin/projects/job-search-pipeline"
+# The repo root: this file's parent folder, or the working directory when the runner gives no __file__
+ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__))) if "__file__" in globals() else os.getcwd()
 if ROOT not in sys.path:
     sys.path.insert(0, ROOT)
 
