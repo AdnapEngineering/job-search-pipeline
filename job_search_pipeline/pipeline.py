@@ -492,7 +492,7 @@ def run(args):
 
     # 7. Push notification
     if not args.no_notify:
-        notify_results(eval_results, synced_urls, exported_urls, health, notion_enabled=not args.no_notion,
+        notify_results(eval_results, synced_urls, exported_urls, health, notion_enabled=notion_active,
                        min_score=args.min_score, digest_path=digest_path, obsidian_urls=obsidian_urls)
 
     print("\n[Pipeline Complete] Done.")

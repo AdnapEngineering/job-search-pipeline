@@ -309,6 +309,16 @@ class FeedOutageTests(unittest.TestCase):
                 self.assertIn(type(error).__name__, stats["github_feed"]["error"])
                 self.assertIn("GitHub feed fetch failed", err)
 
+    def test_jobspy_crash_is_recorded_for_every_searched_site(self):
+        searches = [["linkedin", "United States", " remote", 10], ["glassdoor", "Remote", "", 10]]
+        stats = {}
+        with patch.dict(ff._SOURCES_CFG, {"searches": searches}), \
+                patch("job_search_pipeline.sources.linkedin_indeed.fetch_indeed_jobs", side_effect=RuntimeError("boom")), \
+                contextlib.redirect_stdout(io.StringIO()):
+            self.assertEqual(ff.fetch_jobspy(stats), [])
+        self.assertEqual(sorted(stats), ["glassdoor", "linkedin"])
+        self.assertEqual(stats["glassdoor"]["error"], "boom")
+
     def test_feed_failure_is_a_source_warning(self):
         _, _stats, _ = self.run_main(aiohttp.ClientError("503"))
         health = run_pipeline.source_health(ff.SOURCE_STATS_PATH)

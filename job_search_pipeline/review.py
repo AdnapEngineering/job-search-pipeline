@@ -503,7 +503,13 @@ def _parse_triage(text, salary=None):
     third_party = obj.get("third_party") is True
     pay = _pay_band(obj, salary)
     pay_blocked = _below_pay_floor(pay) and pay_floor_cap(pay) < STRETCH_MIN
-    if hard_reqs > 0 and logistics_ok and not pay_blocked and not (HIDE_THIRD_PARTY and third_party):
+    rules = [label for label, fired in (
+        ("missing a hard requirement", hard_reqs == 0),
+        ("location or onsite", not logistics_ok),
+        ("pay below the floor", pay_blocked),
+        ("third-party poster (hidden)", HIDE_THIRD_PARTY and third_party),
+    ) if fired]
+    if not rules:
         return None, True
     parts = {"hard_reqs": hard_reqs, "core_work": 0, "evidence": 0, "level": level}
     score, _verdict = score_components(parts, logistics_ok, pay)
@@ -519,7 +525,9 @@ def _parse_triage(text, salary=None):
         "third_party": third_party,
         "pay": list(pay) if pay else None,
         "model_verdict": "skip",
-        "reason": str(obj.get("reason", "")).strip()[:200] or "Filtered by Pass-1 triage.",
+        # The rule that fired comes first: the model's own reason may point somewhere else
+        "reason": (f"Pass-1 triage: {', '.join(rules)}. " + str(obj.get("reason", "")).strip()[:200]).strip(),
+        "triage_rules": rules,
         "blockers": blockers,
         "triaged_out": True,
     }, True
@@ -865,6 +873,7 @@ def _run_reviews(todo, executable, model, profile, jd_by_url, salary_by_url, bud
     When `triage_model` is set, runs a two-stage fleet: Pass 1 screens all jobs in parallel with
     `triage_model` for hard blockers, and Pass 2 runs deep grading with `model` only on survivors."""
     deferred = set()
+    DEFERRED = object()  # a worker's "a cap was reached" result; the main thread collects these into `deferred`
     prompt_chars = len(profile) + len(PROMPT)
     triage_chars = len(profile) + len(TRIAGE_PROMPT)
 
@@ -873,8 +882,7 @@ def _run_reviews(todo, executable, model, profile, jd_by_url, salary_by_url, bud
         jd = jd_by_url.get(key) or ""
         reservation = budget.reserve(triage_chars + len(jd), PASS_TRIAGE, triage_model)
         if reservation is None:
-            deferred.add(key)
-            return None, False
+            return DEFERRED
         try:
             return _triage_one(executable, triage_model, profile, job, jd, salary_by_url.get(key), PROVIDER,
                                on_usage=budget.recorder(PASS_TRIAGE, triage_model))
@@ -886,8 +894,7 @@ def _run_reviews(todo, executable, model, profile, jd_by_url, salary_by_url, bud
         jd = jd_by_url.get(key) or ""
         reservation = budget.reserve(prompt_chars + len(jd), PASS_REVIEW, model)
         if reservation is None:
-            deferred.add(key)
-            return None
+            return DEFERRED
         try:
             return _review_one(executable, model, profile, job, jd, salary_by_url.get(key), PROVIDER,
                                on_usage=budget.recorder(PASS_REVIEW, model))
@@ -900,10 +907,12 @@ def _run_reviews(todo, executable, model, profile, jd_by_url, salary_by_url, bud
         with ThreadPoolExecutor(max_workers=WORKERS) as pool:
             triage_outs = list(pool.map(run_triage, todo))
         survivors = []
-        for job, (early_skip, ok) in zip(todo, triage_outs, strict=True):
+        for job, out in zip(todo, triage_outs, strict=True):
             key = _url_key(job)
-            if key in deferred:
+            if out is DEFERRED:
+                deferred.add(key)
                 continue
+            early_skip, ok = out
             if early_skip is not None:
                 results[key] = early_skip
             elif ok:
@@ -915,7 +924,9 @@ def _run_reviews(todo, executable, model, profile, jd_by_url, salary_by_url, bud
     with ThreadPoolExecutor(max_workers=WORKERS) as pool:
         outs = list(pool.map(run_one, survivors))
     for job, out in zip(survivors, outs, strict=True):
-        if out:
+        if out is DEFERRED:
+            deferred.add(_url_key(job))
+        elif out:
             results[_url_key(job)] = out
     return results, deferred
 
