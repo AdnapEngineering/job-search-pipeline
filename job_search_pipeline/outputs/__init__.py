@@ -1,1 +1,1 @@
-"""Where matches go: Notion, the HTML digest, and the plain-text export."""
+"""Where matches go: Notion, Obsidian, the HTML digest, and the plain-text export."""

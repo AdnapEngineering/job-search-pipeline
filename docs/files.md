@@ -48,17 +48,19 @@ Your own files sit next to these, ignored by git: `config.json`, `candidate_prof
 | [`calibrate.py`](../job_search_pipeline/calibrate.py) | `--calibrate` and `--auto-calibrate`: replays the Stage 3 rules and keyword score over cached AI reviews, reports discrepancies, and optionally runs a 3-stage agent workflow (Mine → Propose → Replay & Verify) to tune `config.json`. |
 | [`explain.py`](../job_search_pipeline/explain.py) | `--explain URL`: traces one posting through the Stage 1 filters, the Stage 3 rules and the score breakdown. |
 | [`init_config.py`](../job_search_pipeline/init_config.py) | `--init-config`: drafts the career-specific settings from `candidate_profile.md` with the AI reviewer's CLI and validates them into `config.draft.json`. |
+| [`setup.py`](../job_search_pipeline/setup.py) | Interactive, dependency-free first-run setup (`python3 -m job_search_pipeline.setup`): asks a few questions and writes a starter `config.json`. |
 | [`check.py`](../job_search_pipeline/check.py) | Setup check (`--check`): dependencies, config typos and placeholders, profile, AI reviewer CLI, Notion database properties, Obsidian vault, outputs. |
 | [`defaults.py`](../job_search_pipeline/defaults.py) | The built-in default of every setting, which `config.json` is laid over, and `PERSONAL_KEYS`, the career-specific settings whose template value is a placeholder. |
 | [`config.py`](../job_search_pipeline/config.py) | Central loader for `config.json` (laid over `defaults.py`), path resolution (relative `paths` entries resolve from the repository root), shared JSON read/atomic-write helpers, and regex compilation helpers. |
 | [`blocklist.py`](../job_search_pipeline/blocklist.py) | Shared dedup state: `company\|title` role keys plus the URL and role blocklists used by every stage. |
 | [`urls.py`](../job_search_pipeline/urls.py) | Canonical URL normalizer (strips tracking parameters, redundant `gh_jid`, and fragments). |
 | [`sources/filter.py`](../job_search_pipeline/sources/filter.py) | Stage 1 async downloader for the GitHub ATS chunk feed, the location/title/salary filters, and orchestrator for the other sources. |
-| [`sources/linkedin_indeed.py`](../job_search_pipeline/sources/linkedin_indeed.py) | Stage 1 LinkedIn & Indeed scraper (`python-jobspy`) with detail caching and remote evidence checks. |
+| [`sources/linkedin_indeed.py`](../job_search_pipeline/sources/linkedin_indeed.py) | Stage 1 LinkedIn, Indeed & Glassdoor scraper (`python-jobspy`): LinkedIn job-page cache and per-run page cap, 429 detection, cooldowns after a block, optional proxy, and remote evidence checks. |
 | [`sources/job_boards.py`](../job_search_pipeline/sources/job_boards.py) | Stage 1 connector for Remote OK, Jobicy, Himalayas, We Work Remotely, and Hacker News "Who is hiring?". |
 | [`scrape.py`](../job_search_pipeline/scrape.py) | Stage 2 async JD enricher supporting Ashby, Lever, Greenhouse, BambooHR, Workday CXS, and HTML fallback. |
 | [`evaluate.py`](../job_search_pipeline/evaluate.py) | Stage 3 deterministic evaluator, JD logistics/onsite blocker, context-aware requirement parser, and scorer. |
 | [`review.py`](../job_search_pipeline/review.py) | Stage 4 LLM reviewer with SHA-256 caching, verbatim quote verification, and deterministic score calculation. |
+| [`direct_links.py`](../job_search_pipeline/direct_links.py) | Before output, swaps job-board links (Glassdoor by default) on qualifying roles for the employer's own Greenhouse, Lever or Ashby posting. |
 | [`outputs/notion.py`](../job_search_pipeline/outputs/notion.py) | Stage 5 Notion database syncer (records synced roles in the blocklists) and Callout dashboard logger. |
 | [`outputs/obsidian.py`](../job_search_pipeline/outputs/obsidian.py) | Stage 5 Obsidian alternative to Notion: one note per new match with Notion-like Properties, plus a run-summary note; records written roles in the blocklists. |
 | [`outputs/html_digest.py`](../job_search_pipeline/outputs/html_digest.py) | Stage 5 self-contained HTML page of matches (`data/digest.html`), with a store that keeps earlier runs' matches for `keep_days`. |
