@@ -355,7 +355,9 @@ def fetch_jobspy(stats):
         return fetch_indeed_jobs(stats=stats)
     except Exception as e:
         print(f"Notice: Indeed/LinkedIn fetch skipped or encountered an error: {e}")
-        stats["linkedin"] = stats["indeed"] = {"raw": 0, "kept": 0, "error": str(e)[:120]}
+        searched = {s[0] for s in _SOURCES_CFG["searches"]} & {"linkedin", "indeed", "glassdoor"}
+        for site in sorted(searched) or ["linkedin", "indeed"]:
+            stats[site] = {"raw": 0, "kept": 0, "error": str(e)[:120]}
         return []
 
 

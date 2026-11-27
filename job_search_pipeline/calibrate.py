@@ -369,6 +369,12 @@ def apply_proposed_changes(base_cfg, reply):
         if cleaned is not None:
             updated.setdefault(section, {})[key] = cleaned
             changed_keys.append(f"{section}.{key}")
+    # Settings the agent proposed that calibration may not change: report them instead of dropping them silently
+    for section, sec_obj in (changes.items() if isinstance(changes, dict) else []):
+        if section == "rationale" or not isinstance(sec_obj, dict):
+            continue
+        problems.extend(f"{section}.{key}: not a setting calibration may change; ignored"
+                        for key in sec_obj if (section, key) not in CALIBRATE_FIELDS)
     rationale = [str(r).strip() for r in (reply.get("rationale") or []) if isinstance(r, str) and str(r).strip()]
     return updated, changed_keys, rationale, problems
 
@@ -455,6 +461,8 @@ def auto_calibrate(output=None, apply_in_place=False, out=print, holdout=HOLDOUT
         out(f"  ! {p}")
     if not changed_keys:
         out("[Auto-Calibrate] Agent proposed no valid config changes.")
+        for r in rationale:
+            out(f"  • {r}")
         return 0
 
     out(f"[Auto-Calibrate · Stage 3] Replaying proposed changes ({', '.join(changed_keys)}) across "

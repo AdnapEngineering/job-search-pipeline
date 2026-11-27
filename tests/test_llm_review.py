@@ -451,6 +451,20 @@ class SpendAndRepostTests(unittest.TestCase):
         self.assertEqual((stats["deferred"], stats["stopped_by"]), (1, "reviews/run"))
         self.assertIn("deferred by the reviews/run cap", review.spend_line(stats))
 
+    def test_triage_skip_names_the_rule_that_fired(self):
+        reply = {"hard_reqs": 4, "level": 0, "logistics_ok": True, "third_party": True,
+                 "reason": "Lead title over-levels him."}
+        with patch.object(review, "HIDE_THIRD_PARTY", True):
+            skip, ok = review._parse_triage(json.dumps(reply))
+            self.assertTrue(ok)
+            self.assertEqual(skip["triage_rules"], ["third-party poster (hidden)"])
+            self.assertEqual(skip["reason"], "Pass-1 triage: third-party poster (hidden). Lead title over-levels him.")
+            self.assertEqual(review._parse_triage(json.dumps(dict(reply, third_party=False))), (None, True))
+        blocked = dict(reply, hard_reqs=0, logistics_ok=False, third_party=False, reason="")
+        skip, _ = review._parse_triage(json.dumps(blocked))
+        self.assertEqual(skip["triage_rules"], ["missing a hard requirement", "location or onsite"])
+        self.assertEqual(skip["reason"], "Pass-1 triage: missing a hard requirement, location or onsite.")
+
     def test_triage_calls_do_not_count_against_the_review_cap(self):
         with patch.dict(review._BUDGET_CFG, {"max_reviews_per_run": 2}, clear=True):
             budget = review.Budget()

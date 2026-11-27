@@ -114,6 +114,16 @@ class CalibrateTests(unittest.TestCase):
             "hard_exclude_skills": ["c++", "rust", "golang", "c#", ".net", "ruby", *extra]}},
             "rationale": ["test change"]}
 
+    def test_auto_calibrate_reports_ignored_settings_and_its_rationale(self):
+        proposal = {"changes": {"llm_review": {"model": "other-model"}},
+                    "rationale": ["The only drops are low-scoring STRETCH roles; no change needed."]}
+        rc, text, saved, _ = self._auto(proposal)
+        self.assertEqual(rc, 0, text)
+        self.assertIsNone(saved)
+        self.assertIn("llm_review.model: not a setting calibration may change; ignored", text)
+        self.assertIn("no valid config changes", text)
+        self.assertIn("low-scoring STRETCH roles", text)
+
     def test_auto_calibrate_writes_a_change_that_catches_a_skip(self):
         labeled = [(j, r) if r["verdict"] != "skip" else (job(j["title"], j["url"], DESC + PY), r)
                    for j, r in self.labeled]
