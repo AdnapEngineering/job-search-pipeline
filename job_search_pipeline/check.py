@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Check that the pipeline is set up: dependencies, config, profile, AI reviewer, Notion, Obsidian, outputs.
 
-Run `python3 -m job_search_pipeline --check` (or `python3 -m job_search_pipeline.check`). It fetches no jobs, spends no AI
+Run `uv run python -m job_search_pipeline --check` (or `uv run python -m job_search_pipeline.check`). It fetches no jobs, spends no AI
 quota and writes nothing to Notion; the only network call is one read of the Notion database, when
 Notion is configured. Exits 1 when something would make a run fail, 0 otherwise.
 """
@@ -98,7 +98,7 @@ def check_config(report):
     cfg = config.CFG
     if not os.path.exists(path):
         report.add(FAIL, "Config", f"no {os.path.relpath(path, ROOT_DIR) if path.startswith(ROOT_DIR) else path} yet; "
-                                   "run `python3 -m job_search_pipeline.setup` to create one")
+                                   "run `uv run python -m job_search_pipeline.setup` to create one")
         return config, cfg
     report.add(OK, "Config", os.path.relpath(path, ROOT_DIR) if path.startswith(ROOT_DIR) else path)
     raw = config.load_json(path, default={}) or {}

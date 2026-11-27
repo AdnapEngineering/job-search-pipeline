@@ -5,7 +5,7 @@
 
 | Flag | Description |
 | :--- | :--- |
-| `--check` | Check the setup and exit without running (same as `python3 -m job_search_pipeline.check`); see [Checking the setup](../README.md#checking-the-setup). |
+| `--check` | Check the setup and exit without running (same as `uv run python -m job_search_pipeline.check`); see [Checking the setup](../README.md#checking-the-setup). |
 | `--explain URL` | Trace one posting through the Stage 1 filters, every Stage 3 rule and the score breakdown, then exit; see [Why was a posting dropped?](#why-was-a-posting-dropped). `--title`, `--company` and `--location` fill in a posting the pipeline has not seen; `--rescrape` fetches its description again. |
 | `--calibrate` | Replay the current Stage 3 rules and keyword score over the postings the AI reviewer has already graded, with no LLM calls, then exit; see [Tuning the rules against past reviews](#tuning-the-rules-against-past-reviews). |
 | `--auto-calibrate` | Run the 3-stage calibration agent workflow (**Mine → Propose → Replay & Verify**) against cached AI reviews, write `config.calibrated.json`, then exit; `--calibrate-output PATH` writes elsewhere, `--holdout FRACTION` sets the share of reviews kept from the agent for verification (default 0.3), and `--apply` updates `config.json` in place once verified. |
@@ -35,7 +35,7 @@ Every run counts what each deterministic rule dropped: the Stage 1 pre-filters p
 To see exactly why one posting was dropped or scored as it was:
 
 ```bash
-python3 -m job_search_pipeline --explain 'https://jobs.lever.co/acme/123'
+uv run python -m job_search_pipeline --explain 'https://jobs.lever.co/acme/123'
 ```
 
 It prints each Stage 1 filter and Stage 3 rule with ✓ or ✗ and what matched, then the score line by line (base, title credit, each core strength and domain term with its points, each penalty) and the tier it lands in. For a dropped posting it also shows what it would have scored without the rule that dropped it, which tells you whether loosening that rule would let a good match through. A posting that passes goes on to the location-wording check and the blocklist. The posting's company, title and location come from `data/enriched_jobs.json` or `data/filtered_jobs.json` when the pipeline has seen it; for a new one the company is guessed from the URL and `--title` / `--location` fill in the rest. Quote the URL, since shells treat `?` and `&` specially. It reads your current `config.json`, so you can edit a rule and run it again to see the effect.
@@ -45,7 +45,7 @@ It prints each Stage 1 filter and Stage 3 rule with ✓ or ✗ and what matched,
 Every AI review is cached with its grades, so the reviews you have already paid for can tune the free Python rules:
 
 ```bash
-python3 -m job_search_pipeline --calibrate
+uv run python -m job_search_pipeline --calibrate
 ```
 
 It matches each cached review to the saved posting (reviews whose posting has aged out of `data/` are left out) and prints:
@@ -62,8 +62,8 @@ This matters most on a small AI budget (`llm_review.budget`) or none: a few runs
 To let an agent propose and verify rule updates automatically from your cached reviews:
 
 ```bash
-python3 -m job_search_pipeline --auto-calibrate
-python3 -m job_search_pipeline --auto-calibrate --apply   # write verified updates directly to config.json
+uv run python -m job_search_pipeline --auto-calibrate
+uv run python -m job_search_pipeline --auto-calibrate --apply   # write verified updates directly to config.json
 ```
 
 `--auto-calibrate` mines false-negative gates (rules that dropped `APPLY` or `STRETCH` postings) and uncaught `SKIP` blockers, asks the configured AI reviewer CLI for minimal `config.json` changes, validates every regex and type, and **replays Stage 3 in memory**. The cached reviews are split per verdict first: the agent only sees telemetry from the training share, and 30% (`--holdout`) is held back. A proposal is rejected if it would drop more `APPLY` or `STRETCH` roles across all reviews, or if it does not cut uncaught `SKIP`s or dropped roles on the holdout, so rules that only fit the postings the agent saw never get written. With too few reviews the holdout may have nothing to measure, and the run says so. Otherwise the verified config is written to `config.calibrated.json` (or `config.json` with `--apply`).
@@ -94,7 +94,7 @@ Almost all of it is the LinkedIn, Indeed and Glassdoor searches (one per search 
 `pip install -e .` adds `job-search`, which takes the same flags as `python3 -m job_search_pipeline`.
 
 **A posting I expected never showed up.**
-Run `python3 -m job_search_pipeline --explain 'URL'`: it names the rule that dropped it, the phrase that matched, and what it would have scored otherwise. See [Why was a posting dropped?](#why-was-a-posting-dropped).
+Run `uv run python -m job_search_pipeline --explain 'URL'`: it names the rule that dropped it, the phrase that matched, and what it would have scored otherwise. See [Why was a posting dropped?](#why-was-a-posting-dropped).
 
 **I changed `config.json`; do I have to fetch again?**
 No: `--skip-fetch --skip-scrape` re-evaluates the jobs already in `data/enriched_jobs.json`, and cached AI reviews are rescored under the new settings for free.

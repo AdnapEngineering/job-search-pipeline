@@ -370,7 +370,7 @@ def skip_message(provider):
     if not _cli_path(provider):
         return (f"AI review skipped: the {CLI_NAMES[provider]} CLI for provider {provider!r} was not found, so "
                 "matches are ranked on keyword scores only. Install it, set its *_path in llm_review, or change "
-                "llm_review.provider; `python3 -m job_search_pipeline --check` shows what is missing.")
+                "llm_review.provider; `uv run python -m job_search_pipeline --check` shows what is missing.")
     if not os.path.exists(PROFILE_PATH):
         return (f"AI review skipped: {os.path.basename(PROFILE_PATH)} not found, so matches are ranked on keyword "
                 "scores only. Copy candidate_profile.example.md to that path and fill it in.")

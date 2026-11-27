@@ -210,8 +210,8 @@ Edit the copies, not the templates: see [Configuration](docs/configuration.md).
 To skip most of the hand-editing, write `candidate_profile.md` first and let the AI reviewer's CLI draft the career-specific settings from it, optionally reading up to three postings you would want:
 
 ```bash
-python3 -m job_search_pipeline --init-config                       # from candidate_profile.md alone
-python3 -m job_search_pipeline --init-config URL1 URL2 URL3        # also learn from sample postings
+uv run python -m job_search_pipeline --init-config                       # from candidate_profile.md alone
+uv run python -m job_search_pipeline --init-config URL1 URL2 URL3        # also learn from sample postings
 ```
 
 It fills in `sources.search_terms`, the title patterns, `core_strengths` and their weights, `focus_keywords`, `hard_exclude_skills`, `max_min_yoe`, the AI review's `calibration_examples` and, when the profile says where you live, the location settings, on top of the template's career settings. Each field is type-checked and every regex compiled before anything is written; invalid ones are dropped and listed. The draft goes to `config.draft.json` (ignored by git), never over your `config.json`: review it, copy it over or merge in the parts you want, and run `--check`, which flags anything still at a placeholder (`sources.searches` always needs your city). It makes one call to the [configured provider](docs/configuration.md#ai-reviewer), with up to 10 minutes to answer. Until `config.json` exists a search run stops and says how to create it. Until `candidate_profile.md` exists the AI review is skipped (the placeholder profile is never sent to the LLM) and matches are output on their keyword scores.
@@ -248,7 +248,7 @@ Every way of starting the pipeline (`run_job_search.sh`, cron, `python3 -m job_s
 ### Checking the setup
 
 ```bash
-python3 -m job_search_pipeline --check
+uv run python -m job_search_pipeline --check
 ```
 
 The check fetches no jobs, spends no AI quota and writes nothing. It reports, one line each: Python version and installed dependencies; which config file is read, unknown keys (with a "did you mean" for typos) and career settings still at the template's placeholder values; whether `candidate_profile.md` exists; whether the AI reviewer's CLI is found; when Notion is configured, whether the token works and the database has every property the sync writes (its only network call); and, when Obsidian is on, whether the vault folder exists and is writable. It reads the same env files as a run: `$JOB_SEARCH_ENV_FILE` when set, then `.env`. It exits 1 when something would make a run fail (✗), and 0 when there are only warnings (!).
@@ -267,19 +267,19 @@ Or invoke the package directly with flags (`job-search` works the same after `pi
 
 ```bash
 # Dry run: evaluate and generate Markdown without syncing to Notion or sending notifications
-python3 -m job_search_pipeline --no-notion --no-notify --md-output data/latest_job_summary.md
+uv run python -m job_search_pipeline --no-notion --no-notify --md-output data/latest_job_summary.md
 
 # Re-evaluate already-scraped jobs in data/enriched_jobs.json after tweaking config.json
-python3 -m job_search_pipeline --skip-fetch --skip-scrape --no-notion --no-notify --md-output data/latest_job_summary.md
+uv run python -m job_search_pipeline --skip-fetch --skip-scrape --no-notion --no-notify --md-output data/latest_job_summary.md
 
 # Skip the LLM review step (use Stage 3 keyword scores only)
-python3 -m job_search_pipeline --no-llm-review --min-score 75
+uv run python -m job_search_pipeline --no-llm-review --min-score 75
 
 # Two-pass AI review fleet: use a fast model for Pass-1 blocker triage before Pass-2 deep grading
-python3 -m job_search_pipeline --triage-model haiku
+uv run python -m job_search_pipeline --triage-model haiku
 
 # Auto-calibrate Stage 3 rules against cached AI reviews (Mine -> Propose -> Replay & Verify)
-python3 -m job_search_pipeline --auto-calibrate
+uv run python -m job_search_pipeline --auto-calibrate
 ```
 
 ### Cron

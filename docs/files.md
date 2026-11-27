@@ -4,7 +4,7 @@
 
 ```
 job-search-pipeline/
-├── job_search_pipeline/      the code (run with `python3 -m job_search_pipeline`)
+├── job_search_pipeline/      the code (run with `uv run python -m job_search_pipeline`)
 │   ├── sources/              Stage 1: where postings come from              │
 │   └── outputs/              Stage 5: where matches go                      │
 ├── workflows/                Antigravity multi-agent workflow scripts
@@ -48,7 +48,7 @@ Your own files sit next to these, ignored by git: `config.json`, `candidate_prof
 | [`calibrate.py`](../job_search_pipeline/calibrate.py) | `--calibrate` and `--auto-calibrate`: replays the Stage 3 rules and keyword score over cached AI reviews, reports discrepancies, and optionally runs a 3-stage agent workflow (Mine → Propose → Replay & Verify) to tune `config.json`. |
 | [`explain.py`](../job_search_pipeline/explain.py) | `--explain URL`: traces one posting through the Stage 1 filters, the Stage 3 rules and the score breakdown. |
 | [`init_config.py`](../job_search_pipeline/init_config.py) | `--init-config`: drafts the career-specific settings from `candidate_profile.md` with the AI reviewer's CLI and validates them into `config.draft.json`. |
-| [`setup.py`](../job_search_pipeline/setup.py) | Interactive, dependency-free first-run setup (`python3 -m job_search_pipeline.setup`): asks a few questions and writes a starter `config.json`. |
+| [`setup.py`](../job_search_pipeline/setup.py) | Interactive, dependency-free first-run setup (`uv run python -m job_search_pipeline.setup`): asks a few questions and writes a starter `config.json`. |
 | [`check.py`](../job_search_pipeline/check.py) | Setup check (`--check`): dependencies, config typos and placeholders, profile, AI reviewer CLI, Notion database properties, Obsidian vault, outputs. |
 | [`defaults.py`](../job_search_pipeline/defaults.py) | The built-in default of every setting, which `config.json` is laid over, and `PERSONAL_KEYS`, the career-specific settings whose template value is a placeholder. |
 | [`config.py`](../job_search_pipeline/config.py) | Central loader for `config.json` (laid over `defaults.py`), path resolution (relative `paths` entries resolve from the repository root), shared JSON read/atomic-write helpers, and regex compilation helpers. |
